@@ -6,11 +6,13 @@ Together Ledger is a static web application with no runtime dependencies and no 
 
 - `index.html` contains semantic page and dialog structure.
 - `src/styles.css` contains the responsive visual system.
+- `src/themes.js` is the shared 16-theme registry and pre-paint theme bootstrap.
 - `src/model.js` contains calculation and validation logic.
 - `src/store.js` owns browser persistence and JSON backup/restore.
 - `src/app.js` renders the UI and binds interactions.
 - `tests/` exercises data calculations and conversation guardrails.
 - `scripts/check-public-safety.mjs` blocks known household identifiers, private endpoints, and credential-shaped values.
+- `scripts/check-themes.mjs` keeps the theme registry, CSS token blocks, browser colors, and WCAG AA contrast in sync.
 
 ## Data flow
 

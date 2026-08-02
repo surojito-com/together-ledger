@@ -23,6 +23,19 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 
+function initializeThemePicker() {
+  const select = $('#theme-select');
+  const themes = window.TOGETHER_THEMES || [];
+  select.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.icon} ${theme.label}</option>`).join('');
+  select.value = document.documentElement.dataset.theme || 'light';
+  select.addEventListener('change', () => {
+    const id = window.applyTogetherTheme(select.value);
+    localStorage.setItem('theme', id);
+    select.value = id;
+    showToast(`${themes.find((theme) => theme.id === id)?.label || 'Theme'} applied.`);
+  });
+}
+
 function render() {
   const trip = activeTrip(state);
   const entries = activeEntries(state);
@@ -268,4 +281,5 @@ $('#reset-button').addEventListener('click', () => {
   showToast('Synthetic demo restored.');
 });
 
+initializeThemePicker();
 render();

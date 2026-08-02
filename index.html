@@ -4,8 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="A local-first travel expense tracker for calmer, clearer money conversations." />
-    <meta name="theme-color" content="#173f35" />
+    <meta name="theme-color" content="#F3EFE6" />
     <title>Together Ledger — travel money, without the tension</title>
+    <script src="./src/themes.js"></script>
     <link rel="stylesheet" href="./src/styles.css" />
     <script type="module" src="./src/app.js"></script>
   </head>
@@ -16,6 +17,7 @@
         <span><strong>Together Ledger</strong><small>Travel money, without the tension</small></span>
       </a>
       <div class="header-actions">
+        <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
         <button class="button quiet" id="export-button">Export</button>
         <button class="button quiet" id="import-button">Import</button>
         <input id="import-file" type="file" accept="application/json" hidden />
