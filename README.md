@@ -1,6 +1,6 @@
 # Together Ledger
 
-**Travel money, without the tension.**
+**A shared trip ledger for two people to see every cost, discuss surprises, and decide what happens next.**
 
 Together Ledger is a local-first travel expense tracker designed as a relationship-resilience tool. It turns spending into a shared picture and offers calm conversation prompts before ambiguity becomes resentment.
 
@@ -20,11 +20,16 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 ## What works today
 
 - One unified **Add expense** flow for flights, hotels, meals, rides, activities, shopping, and other costs.
+- Multiple browser-local journeys with creation and switching that never mixes trip records.
+- Lossless migration from the original single-journey browser schema.
 - Trip total, budget remaining, amount due, category mix, and payer context.
 - Ledger filters for bookings, meals, transportation, and unpaid costs.
 - Edit, remove, export, and import expenses.
 - Day-by-day spending chart with day → category → entry drilldown.
-- Data-informed five-minute check-in prompts.
+- Skippable onboarding and a bounded, one-prompt-at-a-time check-in with no saved written answers.
+- Per-journey action milestones that describe shared actions—not relationship quality.
+- Honest local settings for themes, full backup/restore, and demo reset.
+- A visible Event Manager under every journey for locally attributable expense, budget, milestone, and concern changes, including deletion tombstones.
 - All 16 Surojito brand themes, with a global switcher that persists the user’s choice.
 - Synthetic demo data featuring Alex and Jordan—no household records.
 - Local-first storage: data stays in the current browser unless the user exports it.
@@ -76,6 +81,8 @@ No analytics · No server · No account · No automatic sync
 
 This makes the starter safe to explore publicly, but it also means two devices do not automatically share changes. A future encrypted sync adapter must be explicit, optional, and threat-modeled before it is added. Read [PRIVACY.md](PRIVACY.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+The PR#0002 Event Manager is a browser-local foundation, not a tamper-proof shared audit system. Each person may select their local actor name, but production attribution requires separate authenticated accounts. Journeyers will share a journey—not one password—when PR#0003 adds the server-authoritative event stream.
+
 ## Relationship-resilience principles
 
 1. **Facts before blame.** Show what happened without assigning moral meaning.
@@ -89,7 +96,7 @@ The deeper rationale is in [docs/PRODUCT_PRINCIPLES.md](docs/PRODUCT_PRINCIPLES.
 
 ## Project status
 
-Together Ledger is an early public prototype. The local-first expense flow is functional and tested. It is not yet a hosted multi-user service.
+Together Ledger is an early public prototype. Multiple local journeys, the expense flow, guided check-ins, migration, and backup/restore are functional and tested. It is not yet a hosted multi-user service.
 
 See [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
 

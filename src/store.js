@@ -1,14 +1,21 @@
-import { demoState, isValidState } from './model.js';
+import { demoState, isValidState, migrateState } from './model.js';
 
-const STORAGE_KEY = 'together-ledger-v1';
+export const STORAGE_KEY = 'together-ledger-v2';
+export const LEGACY_STORAGE_KEY = 'together-ledger-v1';
 
 export function loadState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return isValidState(saved) ? saved : demoState();
-  } catch {
-    return demoState();
+  for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const state = migrateState(JSON.parse(raw));
+      if (key === LEGACY_STORAGE_KEY) saveState(state);
+      return state;
+    } catch {
+      // Keep looking. A damaged current value must not hide a valid legacy backup.
+    }
   }
+  return demoState();
 }
 
 export function saveState(state) {
@@ -33,8 +40,12 @@ export function exportState(state) {
 
 export function importState(text) {
   const parsed = JSON.parse(text);
-  const state = parsed?.data ?? parsed;
-  if (!isValidState(state)) throw new Error('This does not look like a valid Together Ledger export.');
+  let state;
+  try {
+    state = migrateState(parsed?.data ?? parsed);
+  } catch {
+    throw new Error('This does not look like a valid Together Ledger export.');
+  }
   saveState(state);
   return state;
 }

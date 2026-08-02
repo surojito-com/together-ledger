@@ -4,11 +4,11 @@ Together Ledger is local-first by default.
 
 ## What the current app stores
 
-The browser stores the trip name, dates, budget, member display names, and expense entries in `localStorage` on that device. The app does not send this information to a server.
+The browser stores journey names, locations, dates, budgets, two participant display names, expense entries, onboarding completion, the selected local actor, three action-milestone checkboxes, explicitly logged concerns, and local change events in `localStorage` on that device. Guided check-ins do not provide a field for written answers, so private reflections are not collected. The app does not send this information to a server.
 
 ## What leaves the browser
 
-Nothing leaves automatically. Export creates a JSON file only after the user clicks **Export**. Import reads only the file the user selects.
+Nothing leaves automatically. **Export all journeys** creates a JSON file only after the user clicks it. That export includes concerns and event history. Import reads only the file the user selects.
 
 ## What this repository never needs
 

@@ -1,6 +1,6 @@
 {
   "name": "together-ledger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "A local-first travel expense tracker designed to support calm, collaborative money conversations.",
   "type": "module",
@@ -25,7 +25,7 @@
   "bugs": {
     "url": "https://github.com/surojito-com/together-ledger/issues"
   },
-  "homepage": "https://surojito-com.github.io/together-ledger/",
+  "homepage": "https://together.surojito.com/",
   "engines": {
     "node": ">=20"
   }

@@ -18,11 +18,18 @@ try {
   assert.match(html, /id="timeline-chart"/);
   assert.match(html, /src="\.\/src\/themes\.js"/);
   assert.match(html, /id="theme-select"/);
+  assert.match(html, /id="journey-select"/);
+  assert.match(html, /id="onboarding-dialog"/);
+  assert.match(html, /id="settings-dialog"/);
+  assert.match(html, /id="event-manager-button"/);
+  assert.match(html, /id="event-list"/);
+  assert.ok(html.indexOf('id="trip-ledger"') < html.indexOf('class="card timeline-section"'), 'ledger and daily spending retain their final ordered positions');
 
   const moduleResponse = await fetch(`${origin}/src/app.js`);
   assert.equal(moduleResponse.status, 200);
   assert.match(moduleResponse.headers.get('content-type'), /text\/javascript/);
   assert.match(await moduleResponse.text(), /function renderTimeline/);
+  assert.match(await (await fetch(`${origin}/src/store.js`)).text(), /together-ledger-v2/);
 
   const themeResponse = await fetch(`${origin}/src/themes.js`);
   assert.equal(themeResponse.status, 200);
