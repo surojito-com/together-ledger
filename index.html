@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="A local-first travel expense tracker for calmer, clearer money conversations." />
+    <meta name="description" content="A shared trip ledger for two people to see every cost, discuss surprises, and decide what happens next." />
     <meta name="theme-color" content="#F3EFE6" />
-    <title>Together Ledger — travel money, without the tension</title>
+    <title>Together Ledger — shared trip costs and clear next steps</title>
     <script src="./src/themes.js"></script>
     <link rel="stylesheet" href="./src/styles.css" />
     <script type="module" src="./src/app.js"></script>
@@ -14,14 +14,12 @@
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Together Ledger home">
         <span class="brand-mark" aria-hidden="true">⌁</span>
-        <span><strong>Together Ledger</strong><small>Travel money, without the tension</small></span>
+        <span><strong>Together Ledger</strong><small>Shared trip costs. Clear next steps.</small></span>
       </a>
       <div class="header-actions">
         <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
-        <button class="button quiet" id="export-button">Export</button>
-        <button class="button quiet" id="import-button">Import</button>
         <input id="import-file" type="file" accept="application/json" hidden />
-        <button class="button quiet" id="reset-button">Reset demo</button>
+        <button class="button quiet" id="settings-button">Settings</button>
       </div>
     </header>
 
@@ -30,7 +28,7 @@
         <div class="hero-copy">
           <p class="eyebrow">A relationship-resilience tool</p>
           <h1>Make the money visible.<br /><em>Keep each other human.</em></h1>
-          <p class="hero-intro">Travel spending can create ambiguity, surprise, and quiet resentment. Together Ledger gives partners one neutral place to see the facts and start a better conversation.</p>
+          <p class="hero-intro">Together Ledger gives two travelers one trip-by-trip record of expenses, budgets, payment context, and open costs—then turns those facts into optional prompts for deciding what happens next.</p>
           <div class="principles" aria-label="Product principles">
             <span>Facts before blame</span><span>One shared picture</span><span>Conversation, not scoring</span>
           </div>
@@ -42,20 +40,30 @@
       </section>
 
       <section class="trip-bar" aria-label="Selected trip">
-        <div><small>Selected trip</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span></div>
-        <button class="button primary" data-open-expense>＋ Add expense</button>
+        <div class="trip-identity"><small>Selected journey</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label>Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label></div></div>
+        <div class="journey-actions">
+          <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
+          <button class="button quiet" id="new-journey-button">＋ New journey</button>
+          <button class="button primary" data-open-expense>＋ Add expense</button>
+        </div>
       </section>
 
       <section class="workspace">
+        <nav class="workspace-nav" aria-label="Journey sections"><a href="#guidance">Guidance</a><a href="#trip-ledger">Trip ledger</a><span id="journey-count"></span></nav>
         <div class="summary-grid" id="summary-grid" aria-label="Trip summary"></div>
 
-        <section class="conversation-card card" aria-labelledby="conversation-title">
+        <section class="conversation-card card" id="guidance" aria-labelledby="conversation-title">
           <div>
-            <p class="eyebrow">The five-minute check-in</p>
-            <h2 id="conversation-title">Use the numbers to get curious.</h2>
-            <p>Choose one prompt. Listen without fixing for two minutes each. End by agreeing on one next action.</p>
+            <p class="eyebrow">Guided check-in · no answers are saved</p>
+            <h2 id="conversation-title">Turn one trip fact into one shared next step.</h2>
+            <p>Read one prompt at a time. Each person gets two uninterrupted minutes. Skip anything that does not fit.</p>
+            <div class="milestone-list" id="milestone-list" aria-label="Journey action milestones"></div>
           </div>
-          <div class="prompt-list" id="prompt-list"></div>
+          <div class="guided-prompt">
+            <span id="guidance-progress"></span>
+            <p id="guidance-prompt"></p>
+            <div class="guidance-actions"><button class="button quiet" id="guidance-skip">Skip</button><button class="button quiet" id="guidance-prev">Back</button><button class="button primary" id="guidance-next">Next</button><button class="button primary" id="guidance-done">Done</button></div>
+          </div>
         </section>
 
         <section class="insight-grid" aria-label="Spending insights">
@@ -72,7 +80,7 @@
           </article>
         </section>
 
-        <details class="card ledger-section" open>
+        <details class="card ledger-section" id="trip-ledger" open>
           <summary>
             <span><span class="eyebrow">The ledger</span><strong>Everything in one place</strong></span>
             <span class="expando" aria-hidden="true">＋</span>
@@ -123,6 +131,80 @@
           <label class="field full"><span>Notes <small>Optional</small></span><textarea name="notes" maxlength="300" rows="3" placeholder="Anything you want to remember together"></textarea></label>
         </div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-expense>Cancel</button><button class="button primary" id="save-expense">Save expense</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="journey-dialog">
+      <form id="journey-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Local journey details</p><h2 id="journey-dialog-title">Start another trip ledger</h2><p>Two people share the journey. The information stays in this browser until you export it.</p></div>
+          <button class="icon-button" type="button" data-close-journey aria-label="Close">×</button>
+        </div>
+        <div class="form-grid">
+          <input name="id" type="hidden" />
+          <label class="field full"><span>Journey name</span><input name="name" required maxlength="80" placeholder="e.g. Mountain weekend" /></label>
+          <label class="field full"><span>Location</span><input name="location" required maxlength="80" placeholder="e.g. Asheville, North Carolina" /></label>
+          <label class="field"><span>Start date</span><input name="startDate" type="date" required /></label>
+          <label class="field"><span>End date</span><input name="endDate" type="date" required /></label>
+          <label class="field full"><span>Planned budget</span><input name="budget" type="number" min="0" max="1000000" step="0.01" required placeholder="0.00" /></label>
+          <label class="field"><span>First person</span><input name="memberOne" required maxlength="50" placeholder="Name" /></label>
+          <label class="field"><span>Second person</span><input name="memberTwo" required maxlength="50" placeholder="Name" /></label>
+        </div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-journey>Cancel</button><button class="button primary" id="save-journey-button">Create journey</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="event-dialog" class="wide-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p>Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
+          <button class="icon-button" value="close" aria-label="Close event history">×</button>
+        </div>
+        <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Concerns</h3><p>Explicitly recorded concerns are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Log concern</button></section>
+        <div id="concern-list"></div>
+        <section class="event-list-section" aria-labelledby="event-list-title"><h3 id="event-list-title">All recorded changes</h3><div id="event-list"></div></section>
+      </form>
+    </dialog>
+
+    <dialog id="concern-dialog">
+      <form id="concern-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Journey concern</p><h2 id="concern-dialog-title">Log a concern</h2><p>This is intentional shared journey data—not a private reflection field.</p></div>
+          <button class="icon-button" type="button" data-close-concern aria-label="Close concern">×</button>
+        </div>
+        <input name="id" type="hidden" />
+        <div class="form-grid">
+          <label class="field full"><span>Concern</span><input name="title" maxlength="100" required placeholder="What needs attention?" /></label>
+          <label class="field full"><span>Context <small>Optional</small></span><textarea name="detail" maxlength="500" rows="4" placeholder="Record only what both journeyers should see"></textarea></label>
+          <label class="field full"><span>Status</span><select name="status"><option value="open">Open</option><option value="resolved">Resolved</option></select></label>
+        </div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-concern>Cancel</button><button class="button primary" id="save-concern-button">Log concern</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Honest local settings</p><h2>Browser data and appearance</h2><p>No account or cloud sync exists in PR#0002. Your journeys are stored only in this browser unless you download a backup.</p></div>
+          <button class="icon-button" value="close" aria-label="Close settings">×</button>
+        </div>
+        <div class="settings-grid">
+          <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select></label></section>
+          <section><h3>Backup and restore</h3><p>Exports include every local journey, expense, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
+          <section><h3>Start over</h3><p>Reset replaces this browser’s journeys with synthetic demonstration data. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Reset demo</button></section>
+          <section><h3>Privacy boundary</h3><p>Local storage is convenient, not a secure shared account. Registration, invitations, recovery, deletion, and private hosted sync belong to PR#0003.</p></section>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="onboarding-dialog">
+      <form method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Welcome to Together Ledger</p><h2 id="onboarding-title">One shared picture, organized trip by trip.</h2></div>
+          <button class="icon-button" type="button" id="skip-onboarding" aria-label="Skip introduction">×</button>
+        </div>
+        <div class="onboarding-step" id="onboarding-step" aria-live="polite"></div>
+        <div class="dialog-actions"><button class="button quiet" type="button" id="onboarding-back">Back</button><button class="button quiet" type="button" id="onboarding-skip">Skip</button><button class="button primary" type="button" id="onboarding-next">Next</button></div>
       </form>
     </dialog>
 

@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activeEntries,
+  appendJourneyEvent,
   conversationPrompts,
   dateRange,
   demoState,
   groupDayByCategory,
   isValidState,
+  migrateState,
+  normalizeConcern,
   normalizeEntry,
+  normalizeTrip,
   summarize,
 } from '../src/model.js';
 
@@ -51,7 +55,90 @@ test('entry normalization uses integer cents and validates categories', () => {
 test('conversation prompts frame money as a shared question', () => {
   const summary = summarize(activeEntries(demoState()), 120000);
   const prompts = conversationPrompts(summary);
-  assert.equal(prompts.length, 3);
+  assert.equal(prompts.length, 5);
   assert.match(prompts.join(' '), /What|Which|Was/);
   assert.doesNotMatch(prompts.join(' '), /fault|blame|score/i);
+});
+
+test('schema version 1 migrates losslessly into multiple-journey state', () => {
+  const current = demoState();
+  const legacy = {
+    schemaVersion: 1,
+    activeTripId: current.activeTripId,
+    trips: current.trips.map(({ milestones, archivedAt, ...trip }) => trip),
+    entries: current.entries.map((entry) => ({ ...entry })),
+  };
+  const migrated = migrateState(legacy);
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.preferences.onboardingComplete, false);
+  assert.deepEqual(migrated.events, []);
+  assert.deepEqual(migrated.concerns, []);
+  assert.deepEqual(migrated.entries, legacy.entries);
+  assert.deepEqual(migrated.trips[0].members, legacy.trips[0].members);
+  assert.deepEqual(migrated.trips[0].milestones, {
+    reviewedPicture: false,
+    chosePrompt: false,
+    agreedNextAction: false,
+  });
+});
+
+test('journey normalization requires two people and preserves trip boundaries', () => {
+  const trip = normalizeTrip({
+    name: 'Mountain Weekend',
+    location: 'Asheville, North Carolina',
+    startDate: '2026-09-04',
+    endDate: '2026-09-07',
+    budget: '950.25',
+    memberOne: 'Taylor',
+    memberTwo: 'Morgan',
+  });
+  assert.match(trip.id, /^trip-/);
+  assert.equal(trip.budgetCents, 95025);
+  assert.deepEqual(trip.members, ['Taylor', 'Morgan']);
+  assert.throws(() => normalizeTrip({ ...trip, budget: '10', memberOne: 'Taylor', memberTwo: '' }), /both people/);
+  assert.throws(() => normalizeTrip({ ...trip, budget: '10', memberOne: 'Taylor', memberTwo: 'taylor' }), /distinct name/);
+});
+
+test('active entries switch without mixing journeys', () => {
+  const state = demoState();
+  const second = normalizeTrip({ name: 'City Break', location: 'Chicago', startDate: '2026-10-01', endDate: '2026-10-03', budget: '400', memberOne: 'Alex', memberTwo: 'Jordan' });
+  state.trips.push(second);
+  state.entries.push(normalizeEntry({ merchant: 'Museum', category: 'Activities', amount: '25', occurredOn: '2026-10-02', paidBy: 'Jordan', status: 'paid' }, second.id));
+  state.activeTripId = second.id;
+  assert.equal(isValidState(state), true);
+  assert.equal(activeEntries(state).length, 1);
+  assert.equal(activeEntries(state)[0].merchant, 'Museum');
+});
+
+test('journey events are append-only, attributable, and sequential per journey', () => {
+  const state = demoState();
+  const event = appendJourneyEvent(state, {
+    tripId: state.activeTripId,
+    actorName: 'Jordan',
+    action: 'budget_updated',
+    entityType: 'journey',
+    entityId: state.activeTripId,
+    summary: 'Changed the journey budget',
+    before: { budgetCents: 120000 },
+    after: { budgetCents: 130000 },
+    occurredAt: '2026-08-02T07:06:00.000Z',
+  });
+  assert.equal(event.sequence, 2);
+  assert.equal(event.previousEventId, 'demo-event-1');
+  assert.equal(event.actorName, 'Jordan');
+  assert.deepEqual(event.before, { budgetCents: 120000 });
+  assert.equal(isValidState(state), true);
+  state.events[1].previousEventId = 'wrong-event';
+  assert.equal(isValidState(state), false);
+});
+
+test('concerns have an explicit lifecycle separate from private check-in prompts', () => {
+  const state = demoState();
+  const concern = normalizeConcern({ title: 'Unexpected hotel deposit', detail: 'Confirm whether it is refundable.', status: 'open' }, state.activeTripId, 'Alex');
+  assert.equal(concern.status, 'open');
+  assert.equal(concern.createdBy, 'Alex');
+  const resolved = normalizeConcern({ ...concern, status: 'resolved' }, state.activeTripId, 'Jordan', concern);
+  assert.equal(resolved.id, concern.id);
+  assert.equal(resolved.createdBy, 'Alex');
+  assert.equal(resolved.updatedBy, 'Jordan');
 });

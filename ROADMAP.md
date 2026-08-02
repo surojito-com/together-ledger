@@ -10,10 +10,15 @@
 - Conversation prompts
 - JSON backup and restore
 - Automated tests and public-safety scan
+- Multiple local journeys and switching
+- Lossless v1 → v2 browser-data migration
+- Skippable onboarding and bounded guided check-ins
+- Local journey-action milestones
+- Honest browser-local settings
+- Browser-local per-journey Event Manager with change history and concern lifecycle
 
-## Next — strengthen the single-device experience
+## Next — continue strengthening the single-device experience
 
-- Multiple trip creation and switching
 - Optional custom categories and currencies
 - Recoverable archive instead of immediate deletion
 - Better print and export formats
@@ -23,6 +28,7 @@
 ## Later — collaboration, only with a threat model
 
 - Explicit opt-in encrypted sync
+- Separate member accounts and actor-attributed, append-only, tamper-evident journey events
 - Invite, revoke, and recovery flows
 - Durable deletion and export
 - Conflict handling for offline edits

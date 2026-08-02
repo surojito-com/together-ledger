@@ -1,6 +1,7 @@
 import {
   activeEntries,
   activeTrip,
+  appendJourneyEvent,
   CATEGORIES,
   CATEGORY_ICONS,
   conversationPrompts,
@@ -8,7 +9,9 @@ import {
   dateRange,
   groupDayByCategory,
   money,
+  normalizeConcern,
   normalizeEntry,
+  normalizeTrip,
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
@@ -18,21 +21,26 @@ let filter = 'All';
 let selectedDay = null;
 let selectedCategory = null;
 let removeId = null;
+let removeSnapshot = null;
+let guidanceIndex = 0;
+let onboardingIndex = 0;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 
 function initializeThemePicker() {
-  const select = $('#theme-select');
+  const selects = [$('#theme-select'), $('#settings-theme-select')].filter(Boolean);
   const themes = window.TOGETHER_THEMES || [];
-  select.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.icon} ${theme.label}</option>`).join('');
-  select.value = document.documentElement.dataset.theme || 'light';
-  select.addEventListener('change', () => {
-    const id = window.applyTogetherTheme(select.value);
-    localStorage.setItem('theme', id);
-    select.value = id;
-    showToast(`${themes.find((theme) => theme.id === id)?.label || 'Theme'} applied.`);
+  selects.forEach((select) => {
+    select.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.icon} ${theme.label}</option>`).join('');
+    select.value = document.documentElement.dataset.theme || 'light';
+    select.addEventListener('change', () => {
+      const id = window.applyTogetherTheme(select.value);
+      localStorage.setItem('theme', id);
+      selects.forEach((item) => { item.value = id; });
+      showToast(`${themes.find((theme) => theme.id === id)?.label || 'Theme'} applied.`);
+    });
   });
 }
 
@@ -40,15 +48,35 @@ function render() {
   const trip = activeTrip(state);
   const entries = activeEntries(state);
   const summary = summarize(entries, trip.budgetCents);
+  renderJourneyControls(trip);
   $('#trip-name').textContent = trip.name;
   $('#trip-period').textContent = `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
   renderSummary(summary, entries.length);
-  renderPrompts(summary);
+  renderGuidance(summary, trip);
   renderCategoryChart(summary);
   renderPayerChart(summary, trip.members);
   renderFilters();
   renderLedger(entries);
   renderTimeline(trip, entries, summary);
+}
+
+function renderJourneyControls(trip) {
+  $('#journey-select').innerHTML = state.trips.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  $('#journey-select').value = trip.id;
+  $('#journey-count').textContent = `${state.trips.length} ${state.trips.length === 1 ? 'journey' : 'journeys'} stored in this browser`;
+  const actor = currentActor(trip);
+  $('#actor-select').innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
+  $('#actor-select').value = actor;
+  $('#event-count').textContent = `(${state.events.filter((event) => event.tripId === trip.id).length})`;
+}
+
+function currentActor(trip = activeTrip(state)) {
+  const selected = state.preferences.activeActorByTrip[trip.id];
+  return trip.members.includes(selected) ? selected : trip.members[0];
+}
+
+function eventRecord(input) {
+  appendJourneyEvent(state, { ...input, actorName: input.actorName || currentActor(), tripId: input.tripId || activeTrip(state).id });
 }
 
 function renderSummary(summary, count) {
@@ -61,12 +89,25 @@ function renderSummary(summary, count) {
   $('#summary-grid').innerHTML = cards.map(([label, value, note, className]) => `<article class="card summary ${className}"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
 }
 
-function renderPrompts(summary) {
-  $('#prompt-list').innerHTML = conversationPrompts(summary).map((prompt, index) => `<button class="prompt"><span>${index + 1}.</span>${escapeHtml(prompt)}</button>`).join('');
-  $$('.prompt').forEach((button) => button.addEventListener('click', () => {
-    $$('.prompt').forEach((item) => item.removeAttribute('aria-current'));
-    button.setAttribute('aria-current', 'true');
-    showToast('Prompt selected. Take two minutes each.');
+function renderGuidance(summary, trip) {
+  const prompts = conversationPrompts(summary);
+  guidanceIndex = Math.min(guidanceIndex, Math.max(0, prompts.length - 1));
+  $('#guidance-progress').textContent = `Prompt ${guidanceIndex + 1} of ${prompts.length}`;
+  $('#guidance-prompt').textContent = prompts[guidanceIndex];
+  $('#guidance-prev').disabled = guidanceIndex === 0;
+  $('#guidance-next').hidden = guidanceIndex === prompts.length - 1;
+  $('#guidance-done').hidden = guidanceIndex !== prompts.length - 1;
+  const milestones = [
+    ['reviewedPicture', 'We reviewed the same trip totals'],
+    ['chosePrompt', 'We chose one question to discuss'],
+    ['agreedNextAction', 'We agreed on one next action'],
+  ];
+  $('#milestone-list').innerHTML = milestones.map(([key, label]) => `<label><input type="checkbox" data-milestone="${key}" ${trip.milestones[key] ? 'checked' : ''} /> <span>${label}</span></label>`).join('');
+  $$('[data-milestone]').forEach((input) => input.addEventListener('change', () => {
+    const before = { [input.dataset.milestone]: !input.checked };
+    trip.milestones[input.dataset.milestone] = input.checked;
+    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: input.dataset.milestone, summary: `${input.checked ? 'Completed' : 'Reopened'}: ${input.nextElementSibling.textContent}`, before, after: { [input.dataset.milestone]: input.checked } });
+    persistAndRender('Journey action updated.');
   }));
 }
 
@@ -199,8 +240,114 @@ function openExpense(id = '') {
   requestAnimationFrame(() => form.elements.merchant.focus());
 }
 
+function openJourney(trip = null) {
+  const form = $('#journey-form');
+  form.reset();
+  const today = new Date().toISOString().slice(0, 10);
+  form.elements.startDate.value = today;
+  form.elements.endDate.value = today;
+  $('#journey-dialog-title').textContent = trip ? 'Edit journey details' : 'Start another trip ledger';
+  $('#save-journey-button').textContent = trip ? 'Save journey changes' : 'Create journey';
+  if (trip) {
+    form.elements.id.value = trip.id;
+    form.elements.name.value = trip.name;
+    form.elements.location.value = trip.location;
+    form.elements.startDate.value = trip.startDate;
+    form.elements.endDate.value = trip.endDate;
+    form.elements.budget.value = (trip.budgetCents / 100).toFixed(2);
+    form.elements.memberOne.value = trip.members[0];
+    form.elements.memberTwo.value = trip.members[1];
+  }
+  $('#journey-dialog').showModal();
+  requestAnimationFrame(() => form.elements.name.focus());
+}
+
+function meaningfulChanges(before, after) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].filter((key) => JSON.stringify(before?.[key]) !== JSON.stringify(after?.[key])).map((key) => ({ key, before: before?.[key], after: after?.[key] }));
+}
+
+function valueLabel(key, value) {
+  if (value == null || value === '') return 'none';
+  if (key === 'budgetCents' || key === 'amountCents') return money(value);
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function renderEventManager() {
+  const trip = activeTrip(state);
+  const concerns = state.concerns.filter((concern) => concern.tripId === trip.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const events = state.events.filter((event) => event.tripId === trip.id).sort((a, b) => b.sequence - a.sequence);
+  $('#event-dialog-title').textContent = `${trip.name} history`;
+  $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : '<p class="empty compact">No concerns have been explicitly logged for this journey.</p>';
+  $('#event-list').innerHTML = events.length ? events.map((event) => {
+    const changes = meaningfulChanges(event.before, event.after);
+    return `<details class="event-row"><summary><span><strong>#${event.sequence} · ${escapeHtml(event.summary)}</strong><small>${escapeHtml(event.actorName)} · ${new Date(event.occurredAt).toLocaleString()}</small></span><span aria-hidden="true">＋</span></summary>${changes.length ? `<dl>${changes.map(({ key, before, after }) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(valueLabel(key, before))} → ${escapeHtml(valueLabel(key, after))}</dd></div>`).join('')}</dl>` : '<p>No field-level value change was stored for this event.</p>'}<small>Event ID ${escapeHtml(event.id)} · Previous ${escapeHtml(event.previousEventId || 'none')} · ${escapeHtml(event.source)}</small></details>`;
+  }).join('') : '<p class="empty compact">No events have been recorded since Event Manager began. Earlier browser activity cannot be reconstructed.</p>';
+  $$('[data-edit-concern]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editConcern)));
+  $$('[data-remove-concern]').forEach((button) => button.addEventListener('click', () => removeConcern(button.dataset.removeConcern)));
+}
+
+function openConcern(id = '') {
+  const form = $('#concern-form');
+  const concern = state.concerns.find((item) => item.id === id);
+  form.reset();
+  $('#concern-dialog-title').textContent = concern ? 'Edit concern' : 'Log a concern';
+  $('#save-concern-button').textContent = concern ? 'Save concern changes' : 'Log concern';
+  if (concern) {
+    form.elements.id.value = concern.id;
+    form.elements.title.value = concern.title;
+    form.elements.detail.value = concern.detail;
+    form.elements.status.value = concern.status;
+  }
+  $('#concern-dialog').showModal();
+  requestAnimationFrame(() => form.elements.title.focus());
+}
+
+function removeConcern(id) {
+  const concern = state.concerns.find((item) => item.id === id);
+  if (!concern || !window.confirm(`Delete the concern “${concern.title}”? The event history will retain a deletion tombstone.`)) return;
+  state.concerns = state.concerns.filter((item) => item.id !== id);
+  eventRecord({ action: 'concern_deleted', entityType: 'concern', entityId: concern.id, summary: `Deleted concern: ${concern.title}`, before: concern, after: null });
+  saveState(state);
+  render();
+  renderEventManager();
+  showToast('Concern deleted; tombstone retained in event history.');
+}
+
+const onboardingSteps = [
+  {
+    title: 'One shared picture, organized trip by trip.',
+    body: '<strong>Create or switch journeys without mixing their expenses.</strong><p>Every journey keeps its own people, dates, budget, entries, charts, and action milestones.</p>',
+  },
+  {
+    title: 'Facts first. Meaning stays human.',
+    body: '<strong>Use the ledger for facts and Guidance for a short conversation.</strong><p>Prompts are optional, answers are never recorded, and payment totals never become a relationship score.</p>',
+  },
+  {
+    title: 'Your browser is the current home.',
+    body: '<strong>No login or automatic sync exists yet.</strong><p>Export a backup before switching devices or clearing browser data. Real accounts and private sharing belong to PR#0003.</p>',
+  },
+];
+
+function renderOnboarding() {
+  const step = onboardingSteps[onboardingIndex];
+  $('#onboarding-title').textContent = step.title;
+  $('#onboarding-step').innerHTML = `<span>${onboardingIndex + 1} / ${onboardingSteps.length}</span>${step.body}`;
+  $('#onboarding-back').disabled = onboardingIndex === 0;
+  $('#onboarding-next').textContent = onboardingIndex === onboardingSteps.length - 1 ? 'Open my journey' : 'Next';
+}
+
+function completeOnboarding() {
+  state.preferences.onboardingComplete = true;
+  saveState(state);
+  $('#onboarding-dialog').close();
+}
+
 function confirmRemove(id) {
   removeId = id;
+  removeSnapshot = structuredClone(state.entries.find((entry) => entry.id === id));
   $('#confirm-dialog').returnValue = '';
   $('#confirm-dialog').showModal();
 }
@@ -221,6 +368,92 @@ function showToast(message) {
 
 $$('[data-open-expense]').forEach((button) => button.addEventListener('click', () => openExpense()));
 $$('[data-close-expense]').forEach((button) => button.addEventListener('click', () => $('#expense-dialog').close()));
+$$('[data-close-journey]').forEach((button) => button.addEventListener('click', () => $('#journey-dialog').close()));
+
+$('#journey-select').addEventListener('change', (event) => {
+  state.activeTripId = event.target.value;
+  filter = 'All';
+  selectedDay = null;
+  selectedCategory = null;
+  guidanceIndex = 0;
+  persistAndRender('Journey switched.');
+});
+
+$('#new-journey-button').addEventListener('click', () => openJourney());
+$('#edit-journey-button').addEventListener('click', () => openJourney(activeTrip(state)));
+$('#actor-select').addEventListener('change', (event) => {
+  state.preferences.activeActorByTrip[activeTrip(state).id] = event.target.value;
+  saveState(state);
+  showToast(`New local events will be attributed to ${event.target.value}.`);
+});
+$('#event-manager-button').addEventListener('click', () => {
+  renderEventManager();
+  $('#event-dialog').showModal();
+});
+$('#journey-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  try {
+    const input = Object.fromEntries(new FormData(event.currentTarget));
+    const existingIndex = state.trips.findIndex((trip) => trip.id === input.id);
+    const before = existingIndex >= 0 ? structuredClone(state.trips[existingIndex]) : null;
+    const actorName = existingIndex >= 0 ? currentActor(state.trips[existingIndex]) : input.memberOne;
+    const normalized = normalizeTrip(input);
+    const trip = existingIndex >= 0 ? { ...normalized, milestones: before.milestones, archivedAt: before.archivedAt } : normalized;
+    if (existingIndex >= 0) state.trips[existingIndex] = trip;
+    else state.trips.push(trip);
+    state.activeTripId = trip.id;
+    state.preferences.activeActorByTrip[trip.id] = trip.members.includes(actorName) ? actorName : trip.members[0];
+    eventRecord({ actorName, action: existingIndex >= 0 ? 'journey_updated' : 'journey_created', entityType: 'journey', entityId: trip.id, summary: existingIndex >= 0 ? `Updated journey details for ${trip.name}` : `Created the ${trip.name} journey`, before, after: trip });
+    if (before) {
+      before.members.forEach((oldName, memberIndex) => {
+        const newName = trip.members[memberIndex];
+        if (oldName === newName) return;
+        state.entries.filter((entry) => entry.tripId === trip.id && entry.paidBy === oldName).forEach((entry) => {
+          const entryBefore = structuredClone(entry);
+          entry.paidBy = newName;
+          eventRecord({ actorName, action: 'expense_updated', entityType: 'expense', entityId: entry.id, summary: `Updated payer name on expense: ${entry.merchant}`, before: entryBefore, after: entry });
+        });
+      });
+    }
+    guidanceIndex = 0;
+    selectedDay = null;
+    selectedCategory = null;
+    $('#journey-dialog').close();
+    persistAndRender(existingIndex >= 0 ? 'Journey details updated.' : 'New journey created in this browser.');
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+$('#guidance-skip').addEventListener('click', () => {
+  const prompts = conversationPrompts(summarize(activeEntries(state), activeTrip(state).budgetCents));
+  guidanceIndex = (guidanceIndex + 1) % prompts.length;
+  renderGuidance(summarize(activeEntries(state), activeTrip(state).budgetCents), activeTrip(state));
+});
+$('#guidance-prev').addEventListener('click', () => {
+  guidanceIndex = Math.max(0, guidanceIndex - 1);
+  renderGuidance(summarize(activeEntries(state), activeTrip(state).budgetCents), activeTrip(state));
+});
+$('#guidance-next').addEventListener('click', () => {
+  const trip = activeTrip(state);
+  if (!trip.milestones.chosePrompt) {
+    trip.milestones.chosePrompt = true;
+    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
+  }
+  guidanceIndex += 1;
+  saveState(state);
+  renderGuidance(summarize(activeEntries(state), trip.budgetCents), trip);
+});
+$('#guidance-done').addEventListener('click', () => {
+  const trip = activeTrip(state);
+  if (!trip.milestones.chosePrompt) {
+    trip.milestones.chosePrompt = true;
+    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
+  }
+  persistAndRender('Check-in complete. Agree on one next action together.');
+});
+
+$('#settings-button').addEventListener('click', () => $('#settings-dialog').showModal());
 
 $('#expense-form').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -228,8 +461,10 @@ $('#expense-form').addEventListener('submit', (event) => {
     const input = Object.fromEntries(new FormData(event.currentTarget));
     const entry = normalizeEntry(input, activeTrip(state).id);
     const index = state.entries.findIndex((item) => item.id === entry.id);
+    const before = index >= 0 ? structuredClone(state.entries[index]) : null;
     if (index >= 0) state.entries[index] = entry;
     else state.entries.push(entry);
+    eventRecord({ action: index >= 0 ? 'expense_updated' : 'expense_added', entityType: 'expense', entityId: entry.id, summary: `${index >= 0 ? 'Edited' : 'Added'} expense: ${entry.merchant}`, before, after: entry });
     $('#expense-dialog').close();
     persistAndRender(index >= 0 ? 'Expense updated.' : 'Expense added to the shared picture.');
   } catch (error) {
@@ -240,9 +475,33 @@ $('#expense-form').addEventListener('submit', (event) => {
 $('#confirm-dialog').addEventListener('close', () => {
   if ($('#confirm-dialog').returnValue === 'confirm' && removeId) {
     state.entries = state.entries.filter((entry) => entry.id !== removeId);
+    eventRecord({ action: 'expense_deleted', entityType: 'expense', entityId: removeId, summary: `Deleted expense: ${removeSnapshot?.merchant || removeId}`, before: removeSnapshot, after: null });
     persistAndRender('Expense removed.');
   }
   removeId = null;
+  removeSnapshot = null;
+});
+
+$('#add-concern-button').addEventListener('click', () => openConcern());
+$$('[data-close-concern]').forEach((button) => button.addEventListener('click', () => $('#concern-dialog').close()));
+$('#concern-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  try {
+    const input = Object.fromEntries(new FormData(event.currentTarget));
+    const index = state.concerns.findIndex((concern) => concern.id === input.id);
+    const before = index >= 0 ? structuredClone(state.concerns[index]) : null;
+    const concern = normalizeConcern(input, activeTrip(state).id, currentActor(), before);
+    if (index >= 0) state.concerns[index] = concern;
+    else state.concerns.push(concern);
+    eventRecord({ action: index >= 0 ? 'concern_updated' : 'concern_added', entityType: 'concern', entityId: concern.id, summary: `${index >= 0 ? 'Edited' : 'Logged'} concern: ${concern.title}`, before, after: concern });
+    $('#concern-dialog').close();
+    saveState(state);
+    render();
+    renderEventManager();
+    showToast(index >= 0 ? 'Concern updated.' : 'Concern logged in this browser.');
+  } catch (error) {
+    showToast(error.message);
+  }
 });
 
 $('#export-button').addEventListener('click', () => {
@@ -281,5 +540,23 @@ $('#reset-button').addEventListener('click', () => {
   showToast('Synthetic demo restored.');
 });
 
+$('#onboarding-back').addEventListener('click', () => {
+  onboardingIndex = Math.max(0, onboardingIndex - 1);
+  renderOnboarding();
+});
+$('#onboarding-next').addEventListener('click', () => {
+  if (onboardingIndex === onboardingSteps.length - 1) completeOnboarding();
+  else {
+    onboardingIndex += 1;
+    renderOnboarding();
+  }
+});
+$('#onboarding-skip').addEventListener('click', completeOnboarding);
+$('#skip-onboarding').addEventListener('click', completeOnboarding);
+
 initializeThemePicker();
 render();
+if (!state.preferences.onboardingComplete) {
+  renderOnboarding();
+  $('#onboarding-dialog').showModal();
+}

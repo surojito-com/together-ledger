@@ -1,4 +1,5 @@
 export const CATEGORIES = ['Flights', 'Hotel', 'Restaurants', 'Transportation', 'Activities', 'Shopping', 'Other'];
+export const CURRENT_SCHEMA_VERSION = 2;
 
 export const CATEGORY_ICONS = {
   Flights: '✦',
@@ -12,8 +13,9 @@ export const CATEGORY_ICONS = {
 
 export function demoState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     activeTripId: 'demo-coast',
+    preferences: { onboardingComplete: false, activeActorByTrip: { 'demo-coast': 'Alex' } },
     trips: [
       {
         id: 'demo-coast',
@@ -23,6 +25,12 @@ export function demoState() {
         endDate: '2026-08-17',
         budgetCents: 120000,
         members: ['Alex', 'Jordan'],
+        archivedAt: '',
+        milestones: {
+          reviewedPicture: false,
+          chosePrompt: false,
+          agreedNextAction: false,
+        },
       },
     ],
     entries: [
@@ -32,7 +40,61 @@ export function demoState() {
       { id: 'demo-4', tripId: 'demo-coast', merchant: 'Kayak reservation', category: 'Activities', amountCents: 16000, occurredOn: '2026-08-16', paidBy: 'Jordan', account: '', status: 'due', reference: '', notes: 'Pay at check-in' },
       { id: 'demo-5', tripId: 'demo-coast', merchant: 'Bakery breakfast', category: 'Restaurants', amountCents: 2875, occurredOn: '2026-08-16', paidBy: 'Alex', account: 'Cash', status: 'paid', reference: '', notes: '' },
     ],
+    concerns: [],
+    events: [
+      {
+        id: 'demo-event-1',
+        tripId: 'demo-coast',
+        sequence: 1,
+        occurredAt: '2026-08-01T20:00:00.000Z',
+        actorName: 'Alex',
+        action: 'journey_created',
+        entityType: 'journey',
+        entityId: 'demo-coast',
+        summary: 'Created the Coastal Weekend journey',
+        before: null,
+        after: { name: 'Coastal Weekend', budgetCents: 120000 },
+        previousEventId: '',
+        source: 'synthetic-demo',
+      },
+    ],
   };
+}
+
+export function normalizeMilestones(value = {}) {
+  return {
+    reviewedPicture: value.reviewedPicture === true,
+    chosePrompt: value.chosePrompt === true,
+    agreedNextAction: value.agreedNextAction === true,
+  };
+}
+
+export function migrateState(value) {
+  if (!value || ![1, CURRENT_SCHEMA_VERSION].includes(value.schemaVersion) || !Array.isArray(value.trips) || !Array.isArray(value.entries)) {
+    throw new Error('This does not look like valid Together Ledger data.');
+  }
+  const trips = value.trips.map((trip) => ({
+    ...trip,
+    archivedAt: typeof trip.archivedAt === 'string' ? trip.archivedAt : '',
+    milestones: normalizeMilestones(trip.milestones),
+  }));
+  const activeTripId = trips.some((trip) => trip.id === value.activeTripId) ? value.activeTripId : trips[0]?.id;
+  const migrated = {
+    ...value,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    activeTripId,
+    preferences: {
+      ...value.preferences,
+      onboardingComplete: value.preferences?.onboardingComplete === true,
+      activeActorByTrip: value.preferences?.activeActorByTrip && typeof value.preferences.activeActorByTrip === 'object' ? { ...value.preferences.activeActorByTrip } : {},
+    },
+    trips,
+    entries: value.entries.map((entry) => ({ ...entry })),
+    concerns: Array.isArray(value.concerns) ? value.concerns.map((concern) => ({ ...concern })) : [],
+    events: Array.isArray(value.events) ? value.events.map((event) => ({ ...event })) : [],
+  };
+  if (!isValidState(migrated)) throw new Error('This does not look like valid Together Ledger data.');
+  return migrated;
 }
 
 export function activeTrip(state) {
@@ -106,7 +168,8 @@ export function conversationPrompts(summary) {
   if (largest) prompts.push(`${largest[0]} is our largest category at ${money(largest[1])}. Was that expected?`);
   prompts.push('Which expense added the most joy or ease to this trip?');
   prompts.push('Is there any cost you have been hesitant to bring up? What would make it easier?');
-  return prompts.slice(0, 3);
+  prompts.push('What is one money decision we can make before the next travel day?');
+  return prompts.slice(0, 5);
 }
 
 export function money(cents) {
@@ -120,6 +183,68 @@ export function dateLabel(date, options = { month: 'short', day: 'numeric' }) {
 
 export function makeId(prefix = 'entry') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function appendJourneyEvent(state, input) {
+  const events = state.events.filter((event) => event.tripId === input.tripId).sort((a, b) => a.sequence - b.sequence);
+  const previous = events.at(-1);
+  const event = {
+    id: makeId('event'),
+    tripId: input.tripId,
+    sequence: (previous?.sequence || 0) + 1,
+    occurredAt: input.occurredAt || new Date().toISOString(),
+    actorName: input.actorName?.trim() || 'Local user',
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    summary: input.summary.trim(),
+    before: input.before == null ? null : structuredClone(input.before),
+    after: input.after == null ? null : structuredClone(input.after),
+    previousEventId: previous?.id || '',
+    source: 'browser-local',
+  };
+  state.events.push(event);
+  return event;
+}
+
+export function normalizeConcern(input, tripId, actorName, existing = null) {
+  if (!input.title?.trim()) throw new Error('Concern title is required.');
+  if ((input.title?.length || 0) > 100 || (input.detail?.length || 0) > 500) throw new Error('Keep the concern within the displayed limits.');
+  const now = new Date().toISOString();
+  return {
+    id: existing?.id || makeId('concern'),
+    tripId,
+    title: input.title.trim(),
+    detail: input.detail?.trim() || '',
+    status: input.status === 'resolved' ? 'resolved' : 'open',
+    createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || actorName,
+    updatedAt: now,
+    updatedBy: actorName,
+  };
+}
+
+export function normalizeTrip(input) {
+  const budgetCents = Math.round(Number(input.budget) * 100);
+  const members = [input.memberOne, input.memberTwo].map((value) => value?.trim()).filter(Boolean);
+  if (!input.name?.trim()) throw new Error('Journey name is required.');
+  if (!input.location?.trim()) throw new Error('Location is required.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate || '')) throw new Error('Choose valid journey dates.');
+  if (input.endDate < input.startDate) throw new Error('The end date must be on or after the start date.');
+  if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new Error('Enter a valid budget.');
+  if (members.length !== 2) throw new Error('Add both people sharing this journey.');
+  if (new Set(members.map((member) => member.toLocaleLowerCase())).size !== 2) throw new Error('Use a distinct name for each journeyer.');
+  return {
+    id: input.id || makeId('trip'),
+    name: input.name.trim(),
+    location: input.location.trim(),
+    startDate: input.startDate,
+    endDate: input.endDate,
+    budgetCents,
+    members,
+    archivedAt: '',
+    milestones: normalizeMilestones(),
+  };
 }
 
 export function normalizeEntry(input, tripId) {
@@ -144,7 +269,17 @@ export function normalizeEntry(input, tripId) {
 }
 
 export function isValidState(value) {
-  if (!value || value.schemaVersion !== 1 || !Array.isArray(value.trips) || !Array.isArray(value.entries)) return false;
-  if (!value.trips.length || !value.trips.every((trip) => trip.id && trip.name && Array.isArray(trip.members))) return false;
-  return value.entries.every((entry) => entry.id && entry.tripId && entry.merchant && CATEGORIES.includes(entry.category) && Number.isSafeInteger(entry.amountCents));
+  if (!value || value.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(value.trips) || !Array.isArray(value.entries)) return false;
+  if (!value.trips.length || !value.preferences || typeof value.preferences.onboardingComplete !== 'boolean' || !value.preferences.activeActorByTrip || typeof value.preferences.activeActorByTrip !== 'object') return false;
+  if (!value.trips.every((trip) => trip.id && trip.name && trip.location && Array.isArray(trip.members) && trip.members.length === 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
+  const tripIds = new Set(value.trips.map((trip) => trip.id));
+  if (!tripIds.has(value.activeTripId)) return false;
+  if (!value.entries.every((entry) => entry.id && tripIds.has(entry.tripId) && entry.merchant && CATEGORIES.includes(entry.category) && Number.isSafeInteger(entry.amountCents))) return false;
+  if (!Array.isArray(value.concerns) || !value.concerns.every((concern) => concern.id && tripIds.has(concern.tripId) && concern.title && ['open', 'resolved'].includes(concern.status))) return false;
+  if (!Array.isArray(value.events) || !value.events.every((event) => event.id && tripIds.has(event.tripId) && Number.isInteger(event.sequence) && event.sequence > 0 && event.occurredAt && event.actorName && event.action && event.entityType && event.entityId && event.summary)) return false;
+  for (const tripId of tripIds) {
+    const events = value.events.filter((event) => event.tripId === tripId).sort((a, b) => a.sequence - b.sequence);
+    if (events.some((event, index) => event.sequence !== index + 1 || event.previousEventId !== (events[index - 1]?.id || ''))) return false;
+  }
+  return true;
 }
