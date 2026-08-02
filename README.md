@@ -25,6 +25,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 - Edit, remove, export, and import expenses.
 - Day-by-day spending chart with day → category → entry drilldown.
 - Data-informed five-minute check-in prompts.
+- All 16 Surojito brand themes, with a global switcher that persists the user’s choice.
 - Synthetic demo data featuring Alex and Jordan—no household records.
 - Local-first storage: data stays in the current browser unless the user exports it.
 - Zero runtime dependencies and a built-in local development server.
@@ -43,6 +44,23 @@ npm run dev
 Open `http://127.0.0.1:4173`.
 
 No account, cloud database, environment variable, or API key is required.
+
+## Brand themes
+
+Every current surface—navigation, hero, cards, charts, ledger, dialogs, forms, footer, and mobile action bar—uses the same theme tokens as `surojito.com`.
+
+| Light themes | Dark themes |
+|---|---|
+| Light | Dark |
+| Catppuccin Latte | Solar Red |
+| Flexoki | Green |
+| Rosé Pine Dawn | Catppuccin Mocha |
+| Kanagawa Lotus | Tokyo Night |
+| Primer Light (GitHub) | Kanagawa Wave |
+| Ayu Light | Amber |
+| Tokyo Night Day | Rosé Pine |
+
+The selected theme is saved in the browser and restored before the page paints.
 
 ## Privacy model
 
