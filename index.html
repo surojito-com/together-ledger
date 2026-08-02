@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A local-first travel expense tracker for calmer, clearer money conversations." />
+    <meta name="theme-color" content="#173f35" />
+    <title>Together Ledger — travel money, without the tension</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script type="module" src="./src/app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Together Ledger home">
+        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <span><strong>Together Ledger</strong><small>Travel money, without the tension</small></span>
+      </a>
+      <div class="header-actions">
+        <button class="button quiet" id="export-button">Export</button>
+        <button class="button quiet" id="import-button">Import</button>
+        <input id="import-file" type="file" accept="application/json" hidden />
+        <button class="button quiet" id="reset-button">Reset demo</button>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">A relationship-resilience tool</p>
+          <h1>Make the money visible.<br /><em>Keep each other human.</em></h1>
+          <p class="hero-intro">Travel spending can create ambiguity, surprise, and quiet resentment. Together Ledger gives partners one neutral place to see the facts and start a better conversation.</p>
+          <div class="principles" aria-label="Product principles">
+            <span>Facts before blame</span><span>One shared picture</span><span>Conversation, not scoring</span>
+          </div>
+        </div>
+        <aside class="hero-note">
+          <span aria-hidden="true">♡</span>
+          <p><strong>A ledger cannot measure love.</strong> Who paid more is context for planning—not a score of effort, care, or commitment.</p>
+        </aside>
+      </section>
+
+      <section class="trip-bar" aria-label="Selected trip">
+        <div><small>Selected trip</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span></div>
+        <button class="button primary" data-open-expense>＋ Add expense</button>
+      </section>
+
+      <section class="workspace">
+        <div class="summary-grid" id="summary-grid" aria-label="Trip summary"></div>
+
+        <section class="conversation-card card" aria-labelledby="conversation-title">
+          <div>
+            <p class="eyebrow">The five-minute check-in</p>
+            <h2 id="conversation-title">Use the numbers to get curious.</h2>
+            <p>Choose one prompt. Listen without fixing for two minutes each. End by agreeing on one next action.</p>
+          </div>
+          <div class="prompt-list" id="prompt-list"></div>
+        </section>
+
+        <section class="insight-grid" aria-label="Spending insights">
+          <article class="card insight">
+            <p class="eyebrow">By category</p>
+            <h2>Where it went</h2>
+            <div id="category-chart"></div>
+          </article>
+          <article class="card insight">
+            <p class="eyebrow">Paid by</p>
+            <h2>How costs moved</h2>
+            <div id="payer-chart"></div>
+            <p class="chart-caveat">A payment split is not a fairness verdict. Income, care work, planning, and preferences may not appear here.</p>
+          </article>
+        </section>
+
+        <details class="card ledger-section" open>
+          <summary>
+            <span><span class="eyebrow">The ledger</span><strong>Everything in one place</strong></span>
+            <span class="expando" aria-hidden="true">＋</span>
+          </summary>
+          <div class="ledger-panel">
+            <div class="filters" id="filters" aria-label="Filter expenses"></div>
+            <div id="ledger"></div>
+          </div>
+        </details>
+
+        <details class="card timeline-section">
+          <summary>
+            <span><span class="eyebrow">Daily spending</span><strong>Trip costs over time</strong><small>Choose a day, then a category, to see what made up the total.</small></span>
+            <span class="expando" aria-hidden="true">＋</span>
+          </summary>
+          <div class="timeline-panel">
+            <div class="timeline-axis-label">Dollars spent</div>
+            <div id="timeline-chart" class="timeline-chart" aria-label="Daily spending chart"></div>
+            <div id="timeline-detail" class="timeline-detail" hidden></div>
+          </div>
+        </details>
+      </section>
+    </main>
+
+    <footer>
+      <strong>Together Ledger</strong>
+      <p>Local-first and open source. Not financial advice, couples therapy, or a substitute for professional support.</p>
+    </footer>
+
+    <nav class="mobile-action" aria-label="Quick action"><button data-open-expense>＋ Add expense</button></nav>
+
+    <dialog id="expense-dialog">
+      <form id="expense-form" method="dialog">
+        <div class="dialog-head">
+          <div><p class="eyebrow">Add to the shared picture</p><h2 id="expense-title">Add an expense</h2><p>Log the fact now. Decide what it means together.</p></div>
+          <button class="icon-button" type="button" data-close-expense aria-label="Close">×</button>
+        </div>
+        <input type="hidden" name="id" />
+        <div class="form-grid">
+          <label class="field full"><span>Expense name</span><input name="merchant" required maxlength="80" placeholder="e.g. Train tickets or dinner" /></label>
+          <label class="field"><span>Category</span><select name="category" required></select></label>
+          <label class="field"><span>Amount</span><input name="amount" type="number" min="0.01" max="1000000" step="0.01" required placeholder="0.00" /></label>
+          <label class="field"><span>Date</span><input name="occurredOn" type="date" required /></label>
+          <label class="field"><span>Paid by</span><select name="paidBy" required></select></label>
+          <label class="field"><span>Paid from <small>Optional</small></span><input name="account" maxlength="50" placeholder="Card, cash, or account" /></label>
+          <fieldset class="field full"><legend>Payment status</legend><div class="radio-row"><label><input type="radio" name="status" value="paid" checked /> Paid</label><label><input type="radio" name="status" value="due" /> Still due</label></div></fieldset>
+          <label class="field full"><span>Reference <small>Optional</small></span><input name="reference" maxlength="60" placeholder="Confirmation or receipt number" /></label>
+          <label class="field full"><span>Notes <small>Optional</small></span><textarea name="notes" maxlength="300" rows="3" placeholder="Anything you want to remember together"></textarea></label>
+        </div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-expense>Cancel</button><button class="button primary" id="save-expense">Save expense</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog">
+        <h2>Remove this expense?</h2>
+        <p>This changes the local demo data on this browser. Export first if you want a backup.</p>
+        <div class="dialog-actions"><button class="button quiet" value="cancel">Keep it</button><button class="button danger" value="confirm">Remove</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

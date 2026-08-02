@@ -1,0 +1,31 @@
+{
+  "name": "together-ledger",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A local-first travel expense tracker designed to support calm, collaborative money conversations.",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test",
+    "check": "node scripts/check-public-safety.mjs && node scripts/smoke-http.mjs && npm test"
+  },
+  "keywords": [
+    "travel",
+    "expense-tracker",
+    "relationships",
+    "local-first",
+    "personal-finance"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/surojito-com/together-ledger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/surojito-com/together-ledger/issues"
+  },
+  "homepage": "https://surojito-com.github.io/together-ledger/",
+  "engines": {
+    "node": ">=20"
+  }
+}
