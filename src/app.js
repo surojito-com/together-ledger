@@ -15,8 +15,12 @@ import {
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
+import { ApiError, TogetherApi } from './api.js';
 
 let state = loadState();
+const api = new TogetherApi();
+let accountUser = null;
+let cloudJourneyIds = new Set();
 let filter = 'All';
 let selectedDay = null;
 let selectedCategory = null;
@@ -28,6 +32,90 @@ let onboardingIndex = 0;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+
+function saveWorkingState() {
+  if (!accountUser) saveState(state);
+}
+
+function isCloudJourney(trip = activeTrip(state)) {
+  return Boolean(accountUser && trip && cloudJourneyIds.has(trip.id));
+}
+
+function accountMessage(error) {
+  if (error instanceof ApiError) return error.message;
+  return 'The account service could not complete that request.';
+}
+
+function snapshotToState(snapshots) {
+  const previousActive = state.activeTripId;
+  const preferences = state.preferences;
+  const trips = [];
+  const entries = [];
+  const concerns = [];
+  const events = [];
+  for (const snapshot of snapshots) {
+    const membersById = Object.fromEntries(snapshot.members.map((member) => [member.id, member.displayName]));
+    const milestones = { reviewedPicture: false, chosePrompt: false, agreedNextAction: false };
+    snapshot.milestones.forEach((item) => { milestones[item.key] = item.completed; });
+    trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, milestones, archivedAt: '' });
+    entries.push(...snapshot.expenses.map((expense) => ({ ...expense, tripId: expense.journeyId, paidBy: expense.payerLabel })));
+    concerns.push(...snapshot.concerns.map((concern) => ({ ...concern, tripId: concern.journeyId, updatedBy: 'Journey member', updatedAt: new Date(concern.updatedAt).toISOString() })));
+    snapshot.events.forEach((event, index) => events.push({
+      ...event,
+      tripId: snapshot.journey.id,
+      occurredAt: event.createdAt,
+      actorName: membersById[event.actorUserId] || 'Former journeyer',
+      previousEventId: snapshot.events[index - 1]?.id || '',
+      source: 'server-authoritative',
+    }));
+  }
+  return {
+    schemaVersion: 2,
+    activeTripId: trips.some((trip) => trip.id === previousActive) ? previousActive : trips[0].id,
+    preferences,
+    trips,
+    entries,
+    concerns,
+    events,
+  };
+}
+
+async function refreshCloudState({ announce = false } = {}) {
+  if (!accountUser) return;
+  const { journeys } = await api.request('/journeys');
+  cloudJourneyIds = new Set(journeys.map((journey) => journey.id));
+  if (!journeys.length) {
+    renderAccountState();
+    render();
+    if (announce) showToast('Account ready. Create your first private journey.');
+    return;
+  }
+  const snapshots = await Promise.all(journeys.map((journey) => api.request(`/journeys/${journey.id}/snapshot`)));
+  state = snapshotToState(snapshots);
+  renderAccountState();
+  render();
+  if (announce) showToast('Private journeys refreshed.');
+}
+
+function renderAccountState() {
+  const signedIn = Boolean(accountUser);
+  $('#signed-out-account').hidden = signedIn;
+  $('#signed-in-account').hidden = !signedIn;
+  $('#account-button').textContent = signedIn ? accountUser.displayName : 'Sign in';
+  $('#account-name').textContent = signedIn ? accountUser.displayName : '';
+  $('#account-email').textContent = signedIn ? accountUser.email : '';
+  $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
+  $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
+  $('#account-sync-copy').textContent = isCloudJourney() ? 'Private sync is active. Changes are authorized by your account and written to the journey’s tamper-evident Event Manager.' : 'Your account is ready. Create a private journey; the browser-only ledger will not be uploaded.';
+  $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to the untouched browser-only ledger.' : 'Browser-only journeys stay on this device unless you download a backup.';
+  $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : 'Browser only';
+  $('#sync-badge').classList.toggle('cloud', signedIn);
+  $('#actor-control').hidden = isCloudJourney();
+  const sharing = isCloudJourney();
+  $('#invite-form').hidden = !sharing || activeTrip(state).members.length >= 2 || activeTrip(state).role !== 'owner';
+  $('#sharing-copy').textContent = sharing ? `${activeTrip(state).members.length} of 2 journey seats are active. Each journeyer signs in separately.` : 'Sign in and create a private journey to invite another journeyer.';
+  $('#member-list').innerHTML = sharing ? activeTrip(state).members.map((name) => `<div class="member-chip"><strong>${escapeHtml(name)}</strong><span>${name === accountUser.displayName ? 'You' : 'Journeyer'}</span></div>`).join('') : '';
+}
 
 function initializeThemePicker() {
   const selects = [$('#theme-select'), $('#settings-theme-select')].filter(Boolean);
@@ -63,14 +151,20 @@ function render() {
 function renderJourneyControls(trip) {
   $('#journey-select').innerHTML = state.trips.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
   $('#journey-select').value = trip.id;
-  $('#journey-count').textContent = `${state.trips.length} ${state.trips.length === 1 ? 'journey' : 'journeys'} stored in this browser`;
+  $('#journey-count').textContent = isCloudJourney(trip) ? `${state.trips.length} private ${state.trips.length === 1 ? 'journey' : 'journeys'} synced` : `${state.trips.length} ${state.trips.length === 1 ? 'journey' : 'journeys'} stored in this browser`;
   const actor = currentActor(trip);
   $('#actor-select').innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
   $('#actor-select').value = actor;
   $('#event-count').textContent = `(${state.events.filter((event) => event.tripId === trip.id).length})`;
+  const accountWithoutJourney = Boolean(accountUser && !isCloudJourney(trip));
+  $$('[data-open-expense]').forEach((button) => { button.disabled = accountWithoutJourney; });
+  $('#edit-journey-button').disabled = accountWithoutJourney;
+  $('#event-manager-button').disabled = accountWithoutJourney;
+  renderAccountState();
 }
 
 function currentActor(trip = activeTrip(state)) {
+  if (isCloudJourney(trip)) return accountUser.displayName;
   const selected = state.preferences.activeActorByTrip[trip.id];
   return trip.members.includes(selected) ? selected : trip.members[0];
 }
@@ -103,7 +197,18 @@ function renderGuidance(summary, trip) {
     ['agreedNextAction', 'We agreed on one next action'],
   ];
   $('#milestone-list').innerHTML = milestones.map(([key, label]) => `<label><input type="checkbox" data-milestone="${key}" ${trip.milestones[key] ? 'checked' : ''} /> <span>${label}</span></label>`).join('');
-  $$('[data-milestone]').forEach((input) => input.addEventListener('change', () => {
+  $$('[data-milestone]').forEach((input) => input.addEventListener('change', async () => {
+    if (isCloudJourney(trip)) {
+      try {
+        await api.mutate(`/journeys/${trip.id}/milestones/${input.dataset.milestone}`, 'PATCH', { completed: input.checked });
+        await refreshCloudState();
+        showToast('Journey action synced.');
+      } catch (error) {
+        input.checked = !input.checked;
+        showToast(accountMessage(error));
+      }
+      return;
+    }
     const before = { [input.dataset.milestone]: !input.checked };
     trip.milestones[input.dataset.milestone] = input.checked;
     eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: input.dataset.milestone, summary: `${input.checked ? 'Completed' : 'Reopened'}: ${input.nextElementSibling.textContent}`, before, after: { [input.dataset.milestone]: input.checked } });
@@ -237,7 +342,7 @@ function openExpense(id = '') {
     $('#save-expense').textContent = 'Save changes';
   }
   dialog.showModal();
-  requestAnimationFrame(() => form.elements.merchant.focus());
+  form.elements.merchant.focus({ preventScroll: true });
 }
 
 function openJourney(trip = null) {
@@ -248,6 +353,10 @@ function openJourney(trip = null) {
   form.elements.endDate.value = today;
   $('#journey-dialog-title').textContent = trip ? 'Edit journey details' : 'Start another trip ledger';
   $('#save-journey-button').textContent = trip ? 'Save journey changes' : 'Create journey';
+  $$('.member-field').forEach((field) => {
+    field.hidden = Boolean(accountUser);
+    field.querySelector('input').disabled = Boolean(accountUser);
+  });
   if (trip) {
     form.elements.id.value = trip.id;
     form.elements.name.value = trip.name;
@@ -259,7 +368,7 @@ function openJourney(trip = null) {
     form.elements.memberTwo.value = trip.members[1];
   }
   $('#journey-dialog').showModal();
-  requestAnimationFrame(() => form.elements.name.focus());
+  form.elements.name.focus({ preventScroll: true });
 }
 
 function meaningfulChanges(before, after) {
@@ -280,10 +389,11 @@ function renderEventManager() {
   const concerns = state.concerns.filter((concern) => concern.tripId === trip.id).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const events = state.events.filter((event) => event.tripId === trip.id).sort((a, b) => b.sequence - a.sequence);
   $('#event-dialog-title').textContent = `${trip.name} history`;
+  $('#event-manager-copy').textContent = isCloudJourney(trip) ? 'Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones.' : 'Browser-local preview. Production attribution requires separate signed-in accounts.';
   $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : '<p class="empty compact">No concerns have been explicitly logged for this journey.</p>';
   $('#event-list').innerHTML = events.length ? events.map((event) => {
     const changes = meaningfulChanges(event.before, event.after);
-    return `<details class="event-row"><summary><span><strong>#${event.sequence} · ${escapeHtml(event.summary)}</strong><small>${escapeHtml(event.actorName)} · ${new Date(event.occurredAt).toLocaleString()}</small></span><span aria-hidden="true">＋</span></summary>${changes.length ? `<dl>${changes.map(({ key, before, after }) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(valueLabel(key, before))} → ${escapeHtml(valueLabel(key, after))}</dd></div>`).join('')}</dl>` : '<p>No field-level value change was stored for this event.</p>'}<small>Event ID ${escapeHtml(event.id)} · Previous ${escapeHtml(event.previousEventId || 'none')} · ${escapeHtml(event.source)}</small></details>`;
+    return `<details class="event-row"><summary><span><strong>#${event.sequence} · ${escapeHtml(event.summary)}</strong><small>${escapeHtml(event.actorName)} · ${new Date(event.occurredAt).toLocaleString()}</small></span><span aria-hidden="true">＋</span></summary>${changes.length ? `<dl>${changes.map(({ key, before, after }) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(valueLabel(key, before))} → ${escapeHtml(valueLabel(key, after))}</dd></div>`).join('')}</dl>` : '<p>No field-level value change was stored for this event.</p>'}<small>Event ID ${escapeHtml(event.id)} · Previous ${escapeHtml(event.previousEventId || 'none')} · ${escapeHtml(event.source)}${event.eventHash ? ` · Hash ${escapeHtml(event.eventHash.slice(0, 12))}…` : ''}</small></details>`;
   }).join('') : '<p class="empty compact">No events have been recorded since Event Manager began. Earlier browser activity cannot be reconstructed.</p>';
   $$('[data-edit-concern]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editConcern)));
   $$('[data-remove-concern]').forEach((button) => button.addEventListener('click', () => removeConcern(button.dataset.removeConcern)));
@@ -302,15 +412,26 @@ function openConcern(id = '') {
     form.elements.status.value = concern.status;
   }
   $('#concern-dialog').showModal();
-  requestAnimationFrame(() => form.elements.title.focus());
+  form.elements.title.focus({ preventScroll: true });
 }
 
-function removeConcern(id) {
+async function removeConcern(id) {
   const concern = state.concerns.find((item) => item.id === id);
   if (!concern || !window.confirm(`Delete the concern “${concern.title}”? The event history will retain a deletion tombstone.`)) return;
+  if (isCloudJourney()) {
+    try {
+      await api.mutate(`/journeys/${activeTrip(state).id}/concerns/${id}`, 'DELETE', { version: concern.version });
+      await refreshCloudState();
+      renderEventManager();
+      showToast('Concern deleted; the event tombstone remains.');
+    } catch (error) {
+      showToast(accountMessage(error));
+    }
+    return;
+  }
   state.concerns = state.concerns.filter((item) => item.id !== id);
   eventRecord({ action: 'concern_deleted', entityType: 'concern', entityId: concern.id, summary: `Deleted concern: ${concern.title}`, before: concern, after: null });
-  saveState(state);
+  saveWorkingState();
   render();
   renderEventManager();
   showToast('Concern deleted; tombstone retained in event history.');
@@ -327,7 +448,7 @@ const onboardingSteps = [
   },
   {
     title: 'Your browser is the current home.',
-    body: '<strong>No login or automatic sync exists yet.</strong><p>Export a backup before switching devices or clearing browser data. Real accounts and private sharing belong to PR#0003.</p>',
+    body: '<strong>Browser-only is the default; private sync is an explicit choice.</strong><p>Signing in never uploads this browser ledger. Signed-in journeys use separate accounts and disappear from view on sign-out.</p>',
   },
 ];
 
@@ -341,7 +462,7 @@ function renderOnboarding() {
 
 function completeOnboarding() {
   state.preferences.onboardingComplete = true;
-  saveState(state);
+  saveWorkingState();
   $('#onboarding-dialog').close();
 }
 
@@ -353,7 +474,7 @@ function confirmRemove(id) {
 }
 
 function persistAndRender(message) {
-  saveState(state);
+  saveWorkingState();
   render();
   showToast(message);
 }
@@ -383,17 +504,36 @@ $('#new-journey-button').addEventListener('click', () => openJourney());
 $('#edit-journey-button').addEventListener('click', () => openJourney(activeTrip(state)));
 $('#actor-select').addEventListener('change', (event) => {
   state.preferences.activeActorByTrip[activeTrip(state).id] = event.target.value;
-  saveState(state);
+  saveWorkingState();
   showToast(`New local events will be attributed to ${event.target.value}.`);
 });
 $('#event-manager-button').addEventListener('click', () => {
   renderEventManager();
   $('#event-dialog').showModal();
 });
-$('#journey-form').addEventListener('submit', (event) => {
+$('#journey-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const input = Object.fromEntries(new FormData(event.currentTarget));
+    if (accountUser) {
+      const existing = state.trips.find((trip) => trip.id === input.id && cloudJourneyIds.has(trip.id));
+      const payload = {
+        name: input.name,
+        location: input.location,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        budgetCents: Math.round(Number(input.budget) * 100),
+        ...(existing ? { version: existing.version } : {}),
+      };
+      const result = existing
+        ? await api.mutate(`/journeys/${existing.id}`, 'PATCH', payload)
+        : await api.mutate('/journeys', 'POST', payload);
+      state.activeTripId = result.journey.id;
+      $('#journey-dialog').close();
+      await refreshCloudState();
+      showToast(existing ? 'Journey changes synced.' : 'Private journey created. Invite your journeyer in Settings.');
+      return;
+    }
     const existingIndex = state.trips.findIndex((trip) => trip.id === input.id);
     const before = existingIndex >= 0 ? structuredClone(state.trips[existingIndex]) : null;
     const actorName = existingIndex >= 0 ? currentActor(state.trips[existingIndex]) : input.memberOne;
@@ -434,31 +574,188 @@ $('#guidance-prev').addEventListener('click', () => {
   guidanceIndex = Math.max(0, guidanceIndex - 1);
   renderGuidance(summarize(activeEntries(state), activeTrip(state).budgetCents), activeTrip(state));
 });
-$('#guidance-next').addEventListener('click', () => {
+$('#guidance-next').addEventListener('click', async () => {
   const trip = activeTrip(state);
   if (!trip.milestones.chosePrompt) {
+    if (isCloudJourney(trip)) {
+      try { await api.mutate(`/journeys/${trip.id}/milestones/chosePrompt`, 'PATCH', { completed: true }); } catch (error) { showToast(accountMessage(error)); return; }
+    }
     trip.milestones.chosePrompt = true;
-    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
+    if (!isCloudJourney(trip)) eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
   }
   guidanceIndex += 1;
-  saveState(state);
+  saveWorkingState();
   renderGuidance(summarize(activeEntries(state), trip.budgetCents), trip);
 });
-$('#guidance-done').addEventListener('click', () => {
+$('#guidance-done').addEventListener('click', async () => {
   const trip = activeTrip(state);
   if (!trip.milestones.chosePrompt) {
+    if (isCloudJourney(trip)) {
+      try { await api.mutate(`/journeys/${trip.id}/milestones/chosePrompt`, 'PATCH', { completed: true }); } catch (error) { showToast(accountMessage(error)); return; }
+    }
     trip.milestones.chosePrompt = true;
-    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
+    if (!isCloudJourney(trip)) eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
   }
   persistAndRender('Check-in complete. Agree on one next action together.');
 });
 
 $('#settings-button').addEventListener('click', () => $('#settings-dialog').showModal());
+$$('[data-close-settings]').forEach((button) => button.addEventListener('click', () => $('#settings-dialog').close()));
+$('#account-button').addEventListener('click', () => {
+  renderAccountState();
+  $('#account-dialog').showModal();
+});
+$$('[data-close-account]').forEach((button) => button.addEventListener('click', () => $('#account-dialog').close()));
 
-$('#expense-form').addEventListener('submit', (event) => {
+$('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"], button:not([type])');
+  button.disabled = true;
+  try {
+    accountUser = await api.login(Object.fromEntries(new FormData(event.currentTarget)));
+    await refreshCloudState({ announce: true });
+    renderAccountState();
+    $('#account-dialog').close();
+  } catch (error) {
+    showToast(accountMessage(error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#register-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  try {
+    accountUser = await api.register(Object.fromEntries(new FormData(event.currentTarget)));
+    await refreshCloudState();
+    renderAccountState();
+    showToast(api.lastVerificationSent ? 'Account created. Check your email to verify it.' : 'Account created, but email is delayed. Use resend verification shortly.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#recovery-button').addEventListener('click', () => {
+  $('#account-dialog').close();
+  $('#recovery-request-form').reset();
+  $('#recovery-request-dialog').showModal();
+  $('#recovery-request-form').elements.email.focus({ preventScroll: true });
+});
+$$('[data-close-recovery-request]').forEach((button) => button.addEventListener('click', () => $('#recovery-request-dialog').close()));
+$('#recovery-request-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api.request('/recovery/request', { method: 'POST', body: Object.fromEntries(new FormData(event.currentTarget)) });
+    $('#recovery-request-dialog').close();
+    showToast('If that account exists, a recovery link is on its way.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
+});
+$$('[data-close-recovery-confirm]').forEach((button) => button.addEventListener('click', () => $('#recovery-confirm-dialog').close()));
+$('#recovery-confirm-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = Object.fromEntries(new FormData(event.currentTarget));
+  if (input.password !== input.confirmPassword) {
+    showToast('The new passwords do not match.');
+    return;
+  }
+  try {
+    await api.request('/recovery/confirm', { method: 'POST', body: { token: input.token, password: input.password } });
+    accountUser = null;
+    cloudJourneyIds = new Set();
+    state = loadState();
+    $('#recovery-confirm-dialog').close();
+    render();
+    showToast('Password changed. Sign in again on every device.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
+});
+
+$('#logout-button').addEventListener('click', async () => {
+  try { await api.logout(); } catch (error) { showToast(accountMessage(error)); return; }
+  accountUser = null;
+  cloudJourneyIds = new Set();
+  state = loadState();
+  $('#account-dialog').close();
+  render();
+  showToast('Signed out.');
+});
+
+$('#refresh-sync-button').addEventListener('click', async () => {
+  try { await refreshCloudState({ announce: true }); } catch (error) { showToast(accountMessage(error)); }
+});
+
+$('#resend-verification-button').addEventListener('click', async () => {
+  try {
+    const result = await api.mutate('/auth/resend-verification', 'POST', {});
+    showToast(result.delivered ? 'A new verification link is on its way.' : 'Email delivery is still unavailable. Please try again later.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
+});
+
+$('#delete-account-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const input = Object.fromEntries(new FormData(event.currentTarget));
+  if (!window.confirm('Permanently delete this account according to the journey ownership rules shown here?')) return;
+  try {
+    await api.mutate('/account', 'DELETE', input);
+    accountUser = null;
+    cloudJourneyIds = new Set();
+    state = loadState();
+    $('#account-dialog').close();
+    render();
+    showToast('Account deleted and sessions revoked.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
+});
+
+$('#invite-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(event.currentTarget)));
+    event.currentTarget.reset();
+    showToast('Invitation sent. The journeyer must use their own verified account.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
+});
+
+$('#expense-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const input = Object.fromEntries(new FormData(event.currentTarget));
+    const trip = activeTrip(state);
+    if (isCloudJourney(trip)) {
+      const existing = state.entries.find((entry) => entry.id === input.id);
+      const payer = trip.memberRecords.find((member) => member.displayName === input.paidBy);
+      const payload = {
+        merchant: input.merchant,
+        category: input.category,
+        amountCents: Math.round(Number(input.amount) * 100),
+        occurredOn: input.occurredOn,
+        paidByUserId: payer?.id || null,
+        payerLabel: input.paidBy,
+        account: input.account,
+        status: input.status,
+        reference: input.reference,
+        notes: input.notes,
+        ...(existing ? { version: existing.version } : {}),
+      };
+      if (existing) await api.mutate(`/journeys/${trip.id}/expenses/${existing.id}`, 'PATCH', payload);
+      else await api.mutate(`/journeys/${trip.id}/expenses`, 'POST', payload);
+      $('#expense-dialog').close();
+      await refreshCloudState();
+      showToast(existing ? 'Expense changes synced.' : 'Expense securely synced.');
+      return;
+    }
     const entry = normalizeEntry(input, activeTrip(state).id);
     const index = state.entries.findIndex((item) => item.id === entry.id);
     const before = index >= 0 ? structuredClone(state.entries[index]) : null;
@@ -472,8 +769,20 @@ $('#expense-form').addEventListener('submit', (event) => {
   }
 });
 
-$('#confirm-dialog').addEventListener('close', () => {
+$('#confirm-dialog').addEventListener('close', async () => {
   if ($('#confirm-dialog').returnValue === 'confirm' && removeId) {
+    if (isCloudJourney()) {
+      try {
+        await api.mutate(`/journeys/${activeTrip(state).id}/expenses/${removeId}`, 'DELETE', { version: removeSnapshot.version });
+        await refreshCloudState();
+        showToast('Expense deleted; the event tombstone remains.');
+      } catch (error) {
+        showToast(accountMessage(error));
+      }
+      removeId = null;
+      removeSnapshot = null;
+      return;
+    }
     state.entries = state.entries.filter((entry) => entry.id !== removeId);
     eventRecord({ action: 'expense_deleted', entityType: 'expense', entityId: removeId, summary: `Deleted expense: ${removeSnapshot?.merchant || removeId}`, before: removeSnapshot, after: null });
     persistAndRender('Expense removed.');
@@ -484,10 +793,21 @@ $('#confirm-dialog').addEventListener('close', () => {
 
 $('#add-concern-button').addEventListener('click', () => openConcern());
 $$('[data-close-concern]').forEach((button) => button.addEventListener('click', () => $('#concern-dialog').close()));
-$('#concern-form').addEventListener('submit', (event) => {
+$('#concern-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const input = Object.fromEntries(new FormData(event.currentTarget));
+    if (isCloudJourney()) {
+      const existing = state.concerns.find((concern) => concern.id === input.id);
+      const payload = { title: input.title, detail: input.detail, status: input.status, ...(existing ? { version: existing.version } : {}) };
+      if (existing) await api.mutate(`/journeys/${activeTrip(state).id}/concerns/${existing.id}`, 'PATCH', payload);
+      else await api.mutate(`/journeys/${activeTrip(state).id}/concerns`, 'POST', payload);
+      $('#concern-dialog').close();
+      await refreshCloudState();
+      renderEventManager();
+      showToast(existing ? 'Concern changes synced.' : 'Concern securely synced.');
+      return;
+    }
     const index = state.concerns.findIndex((concern) => concern.id === input.id);
     const before = index >= 0 ? structuredClone(state.concerns[index]) : null;
     const concern = normalizeConcern(input, activeTrip(state).id, currentActor(), before);
@@ -495,7 +815,7 @@ $('#concern-form').addEventListener('submit', (event) => {
     else state.concerns.push(concern);
     eventRecord({ action: index >= 0 ? 'concern_updated' : 'concern_added', entityType: 'concern', entityId: concern.id, summary: `${index >= 0 ? 'Edited' : 'Logged'} concern: ${concern.title}`, before, after: concern });
     $('#concern-dialog').close();
-    saveState(state);
+    saveWorkingState();
     render();
     renderEventManager();
     showToast(index >= 0 ? 'Concern updated.' : 'Concern logged in this browser.');
@@ -560,3 +880,45 @@ if (!state.preferences.onboardingComplete) {
   renderOnboarding();
   $('#onboarding-dialog').showModal();
 }
+
+async function initializeAccount() {
+  const params = new URLSearchParams(window.location.search);
+  try {
+    if (params.has('verify')) {
+      await api.request('/auth/verify-email', { method: 'POST', body: { token: params.get('verify') } });
+      showToast('Email verified. You can now accept invitations.');
+    }
+    if (params.has('recovery')) {
+      if ($('#onboarding-dialog').open) $('#onboarding-dialog').close();
+      $('#recovery-confirm-form').elements.token.value = params.get('recovery');
+      $('#recovery-confirm-dialog').showModal();
+      $('#recovery-confirm-form').elements.password.focus({ preventScroll: true });
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+      renderAccountState();
+      return;
+    }
+    try { accountUser = await api.session(); } catch (error) {
+      if (![401, 404].includes(error.status)) throw error;
+    }
+    if (accountUser) {
+      await refreshCloudState();
+      if (params.has('invite')) {
+        await api.mutate(`/invitations/${encodeURIComponent(params.get('invite'))}/accept`, 'POST', {});
+        await refreshCloudState({ announce: true });
+      }
+    } else if (params.has('invite')) {
+      if ($('#onboarding-dialog').open) $('#onboarding-dialog').close();
+      $('#account-dialog').showModal();
+      showToast('Sign in with the invited email, then reopen the invitation link.');
+    }
+  } catch (error) {
+    showToast(accountMessage(error));
+  } finally {
+    if ([...params.keys()].some((key) => ['verify', 'recovery', 'invite'].includes(key))) {
+      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
+    }
+    renderAccountState();
+  }
+}
+
+initializeAccount();

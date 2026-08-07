@@ -1,14 +1,19 @@
 {
   "name": "together-ledger",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": false,
-  "description": "A local-first travel expense tracker designed to support calm, collaborative money conversations.",
+  "description": "A privacy-conscious shared travel ledger designed to support calm, collaborative money conversations.",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "start": "node server/start.js",
     "test": "node --test",
+    "test:postgres": "node --test tests/postgres-integration.test.js",
+    "smoke:smtp": "node scripts/smoke-smtp.mjs",
+    "test:browser": "playwright test",
     "check:themes": "node scripts/check-themes.mjs",
-    "check": "node scripts/check-public-safety.mjs && npm run check:themes && node scripts/smoke-http.mjs && npm test"
+    "check:server": "node --check server/app.js && node --check server/platform.js && node --check server/start.js && node --check src/app.js",
+    "check": "node scripts/check-public-safety.mjs && npm run check:themes && npm run check:server && node scripts/smoke-http.mjs && npm test"
   },
   "keywords": [
     "travel",
@@ -28,5 +33,25 @@
   "homepage": "https://together.surojito.com/",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/helmet": "13.1.0",
+    "@fastify/rate-limit": "11.2.0",
+    "@fastify/static": "10.1.2",
+    "argon2": "0.45.1",
+    "fastify": "5.11.0",
+    "nodemailer": "9.0.3",
+    "pg": "8.22.0",
+    "zod": "4.4.3"
+  },
+  "allowScripts": {
+    "argon2@0.45.1": true
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.60.0",
+    "pg-mem": "3.0.14",
+    "smtp-server": "3.19.3"
   }
 }

@@ -32,8 +32,9 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 - A visible Event Manager under every journey for locally attributable expense, budget, milestone, and concern changes, including deletion tombstones.
 - All 16 Surojito brand themes, with a global switcher that persists the user’s choice.
 - Synthetic demo data featuring Alex and Jordan—no household records.
-- Local-first storage: data stays in the current browser unless the user exports it.
-- Zero runtime dependencies and a built-in local development server.
+- An explicit browser-only mode that never uploads an existing local ledger.
+- PR#0003 private-sync foundation: separate accounts, verified-email invitations, PostgreSQL journeys, recovery, deletion, conflict protection, and server-authoritative HMAC-chained events.
+- A portable container and active/passive AWS-primary/GCP-standby operations plan.
 
 ## Try it locally
 
@@ -46,9 +47,9 @@ npm run check
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173`.
+Open `http://127.0.0.1:4173` for browser-only mode.
 
-No account, cloud database, environment variable, or API key is required.
+No account, cloud database, environment variable, or API key is required for browser-only mode. To exercise private sync, use the container procedure in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Brand themes
 
@@ -70,18 +71,16 @@ The selected theme is saved in the browser and restored before the page paints.
 ## Privacy model
 
 ```text
-browser UI
-   │
-   ├── localStorage (working ledger)
-   ├── JSON export (user-created backup)
-   └── JSON import (user-selected backup)
-
-No analytics · No server · No account · No automatic sync
+browser-only                         private sync
+────────────                         ────────────
+UI → localStorage                    UI → same-origin API
+   → explicit JSON export               → PostgreSQL
+                                          → append-only event chain
 ```
 
-This makes the starter safe to explore publicly, but it also means two devices do not automatically share changes. A future encrypted sync adapter must be explicit, optional, and threat-modeled before it is added. Read [PRIVACY.md](PRIVACY.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The public static deployment remains safe to explore without an account. Signing in never uploads the existing browser ledger. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
-The PR#0002 Event Manager is a browser-local foundation, not a tamper-proof shared audit system. Each person may select their local actor name, but production attribution requires separate authenticated accounts. Journeyers will share a journey—not one password—when PR#0003 adds the server-authoritative event stream.
+The PR#0002 Event Manager remains browser-local in browser-only mode. PR#0003 creates events inside the authorized PostgreSQL mutation transaction and chains them with HMAC evidence. HMAC chaining is tamper-evident, not magically immutable; deployment secret isolation and backup controls still matter.
 
 ## Relationship-resilience principles
 
@@ -96,7 +95,7 @@ The deeper rationale is in [docs/PRODUCT_PRINCIPLES.md](docs/PRODUCT_PRINCIPLES.
 
 ## Project status
 
-Together Ledger is an early public prototype. Multiple local journeys, the expense flow, guided check-ins, migration, and backup/restore are functional and tested. It is not yet a hosted multi-user service.
+Together Ledger is an early public prototype. Browser-only journeys are live. The PR#0003 branch contains a tested private-service candidate, but it is not a production multi-user claim until SMTP, cloud PostgreSQL, cross-cloud backup restoration, independent review, and DNS cutover pass.
 
 See [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
 

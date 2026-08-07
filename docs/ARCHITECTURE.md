@@ -1,54 +1,61 @@
 # Architecture
 
-## Current design
+## Two explicit operating modes
 
-Together Ledger is a static web application with no runtime dependencies and no server.
-
-- `index.html` contains semantic page and dialog structure.
-- `src/styles.css` contains the responsive visual system.
-- `src/themes.js` is the shared 16-theme registry and pre-paint theme bootstrap.
-- `src/model.js` contains calculation and validation logic.
-- `src/store.js` owns browser persistence, lossless schema migration, and JSON backup/restore.
-- `src/app.js` renders the UI and binds interactions.
-- `tests/` exercises data calculations and conversation guardrails.
-- `scripts/check-public-safety.mjs` blocks known household identifiers, private endpoints, and credential-shaped values.
-- `scripts/check-themes.mjs` keeps the theme registry, CSS token blocks, browser colors, and WCAG AA contrast in sync.
-
-## Data flow
+Together Ledger preserves the inspected browser-local starter while adding an authenticated private-sync service. The UI always identifies the active boundary as **Browser only**, **Account ready**, or **Private sync**.
 
 ```text
-synthetic demo or imported JSON
-              │
-              ▼
-       validated state model
-          │           │
-          ▼           ▼
-    browser UI     localStorage
-          │
-          ▼
- optional JSON export
+Browser-only mode                         Private-sync mode
+─────────────────                         ─────────────────
+UI ──► validated state ──► localStorage    UI ──► same-origin Fastify API
+                  └──────► JSON export              │
+                                                     ├──► PostgreSQL
+                                                     ├──► SMTP relay
+                                                     └──► HMAC event chain
 ```
 
-## Local state version 2
+Signing in never uploads an existing browser ledger. A signed-in person deliberately creates a new private journey. Cloud snapshots remain in memory and are never written into browser-only ledger storage; signing out restores the untouched local ledger. Server authorization remains the source of truth.
 
-The browser model supports multiple journeys. Each journey owns its dates, budget, two participant display names, action milestones, and related expenses. `activeTripId` selects the current journey without moving or duplicating entries.
+## Components
 
-On first load after PR#0002, `src/store.js` reads the original `together-ledger-v1` record, migrates it to schema version 2, writes the new `together-ledger-v2` record, and leaves the legacy value untouched as a rollback copy. Old JSON exports remain importable. New exports identify schema version 2 and contain every local journey.
+- `index.html` contains semantic application and account dialogs.
+- `src/styles.css` contains the responsive, 16-theme visual system.
+- `src/model.js` contains calculations and local validation.
+- `src/store.js` owns browser persistence, migration, and JSON backup/restore.
+- `src/api.js` is the same-origin, cookie-authenticated API client.
+- `src/app.js` renders both modes and maps authoritative snapshots into the established UI model.
+- `server/app.js` applies origin, session, CSRF, rate-limit, cookie, and HTTP security boundaries.
+- `server/platform.js` owns authorization and transactional domain operations.
+- `server/migrations/` defines PostgreSQL records and append-only event protection.
+- `server/security.js` owns Argon2id password hashing, opaque token hashes, CSRF derivation, and canonical HMAC events.
+- `server/mailer.js` sends verification, invitation, and recovery links through an owner-configured SMTP relay.
 
-Onboarding completion and the selected local actor are stored as product preferences. Guided check-ins never collect or persist written answers; only three boolean action milestones may be stored per journey.
+## Account and sharing boundary
 
-### Browser-local Event Manager
+Each journeyer has a separate email/password account. A journey owner sends an email-bound, hashed, expiring invitation. Acceptance requires a signed-in account with that verified email. Database authorization is repeated inside every mutation transaction; journey IDs are never treated as authority.
 
-Every material local mutation appends a per-journey event with a sequence number, timestamp, selected actor display name, action, entity ID, summary, before/after snapshots, and previous-event ID. Expense deletion and concern deletion remove the current record while retaining an event tombstone. Explicit concerns are separate first-class records with open/resolved status and their own add/edit/delete events.
+The application enforces a maximum of two active members per journey. Removing a member requires the owner. Sharing a login is unsupported because it destroys actor attribution.
 
-Event history begins when this feature is present. Migration preserves all legacy journey and expense data but does not invent actors, timestamps, or changes that the earlier schema never recorded.
+## Concurrency and synchronization
 
-This history improves traceability on one browser but is not an authoritative audit log: anyone with browser storage access can alter it. PR#0003 must move event creation into the authorized server transaction that changes PostgreSQL data. Each journeyer must use a separate account. The server event stream must be append-only, monotonically sequenced per journey, synchronized to every authorized member, preserve deletion tombstones, and use a tamper-evident hash chain or equivalent database-enforced evidence. Sharing one account is prohibited because it destroys actor attribution.
+Journeys, expenses, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, expenses, concerns, milestones, and event stream.
 
-## Why there is no backend
+PR#0003 is online-first. Durable offline mutation queues and merge semantics are not claimed.
 
-The public project must be useful without inheriting any private household service, credential, database, or deployment history. Local-first storage creates a clear safety boundary and keeps the starter easy to inspect.
+## Server-authoritative Event Manager
 
-## Adding a storage adapter
+The same PostgreSQL transaction that changes a journey record appends its event. Per-journey advisory locking produces one monotonic sequence. Every event includes the authenticated actor, action, entity, bounded before/after evidence, previous hash, and HMAC hash. PostgreSQL rejects event update and deletion; the only exception is a transaction-local flag used to purge a sole-owner journey during required account deletion.
 
-A future adapter should implement load, save, export, import, and delete semantics without changing calculation functions. A network adapter requires security and privacy design before implementation; “put it in a database” is not an adequate threat model.
+Expense event snapshots intentionally omit notes, payment-account labels, and references. Concern event snapshots record whether context existed, not its text. This retains an undebatable change trail without duplicating the most sensitive free text indefinitely.
+
+HMAC chaining is tamper-evident, not absolute immutability. A party controlling the database and HMAC secret could forge a chain. Secret isolation, encrypted cross-cloud backups, restricted roles, restore drills, and external evidence are still required.
+
+## Deletion behavior
+
+Deletion verifies the password and revokes sessions and account tokens. A sole-member journey is purged. For a shared journey, ownership passes to the remaining member, the departing membership is removed, and a privacy-bounded deletion event remains. The deleted user row is pseudonymized so historical actor identifiers do not become dangling personal email records.
+
+## Deployment
+
+The application is one portable container backed by standard PostgreSQL. AWS is the low-volume primary writer; GCP is a cold standby restored from separately encrypted cross-cloud backups. This avoids unsafe dual writes and keeps the system operable by one owner. See [OPERATIONS.md](OPERATIONS.md).
+
+The existing GitHub Pages build remains a static browser-only deployment until DNS is intentionally moved to the authenticated service. A PR merge alone must never be represented as activating private sync.
