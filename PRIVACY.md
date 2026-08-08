@@ -1,29 +1,42 @@
 # Privacy
 
-Together Ledger is local-first by default.
+Together Ledger exposes its storage boundary instead of making a hidden choice for the user.
 
-## What the current app stores
+## Browser-only mode
 
-The browser stores journey names, locations, dates, budgets, two participant display names, expense entries, onboarding completion, the selected local actor, three action-milestone checkboxes, explicitly logged concerns, and local change events in `localStorage` on that device. Guided check-ins do not provide a field for written answers, so private reflections are not collected. The app does not send this information to a server.
+The browser stores journeys, participant display names, budgets, expenses, milestones, explicit concerns, and local change events in `localStorage`. Guided check-ins never provide a written-answer field. Nothing is automatically uploaded. Export and import happen only after an explicit user action.
 
-## What leaves the browser
+## Private-sync mode
 
-Nothing leaves automatically. **Export all journeys** creates a JSON file only after the user clicks it. That export includes concerns and event history. Import reads only the file the user selects.
+After a person creates or signs into a separate account, newly created private journeys are stored in the owner's PostgreSQL service and synchronized to authorized journey members. The service stores:
 
-## What this repository never needs
+- normalized email, display name, Argon2id password hash, verification state, and pseudonymized deletion state;
+- hashed session, verification, recovery, and invitation tokens with expirations;
+- journey membership, budget, expenses, milestones, explicit concerns, and server-authoritative events;
+- bounded technical timestamps and optimistic record versions.
 
-- Real household trip records
-- Passwords, passcodes, API keys, or service tokens
-- Private service URLs
-- Analytics identifiers
+Raw passwords and raw database tokens are never stored. Session cookies are HTTP-only, secure in production, same-site, and paired with an origin-bound CSRF value. The authenticated browser may retain a local snapshot cache; anyone with access to an unlocked signed-in device may see it.
+
+## Event privacy
+
+The Event Manager is shared journey data. Expense event evidence excludes notes, payment-account labels, and references. Concern event evidence does not duplicate the concern context text. Current authorized members can still read the live expense and concern records themselves.
+
+## Email
+
+Verification, invitation, and recovery require an owner-configured SMTP relay. Messages contain a short-lived, single-use link. Application logs must never contain raw link tokens. Email delivery necessarily exposes the destination address and message routing metadata to the relay and receiving mail system.
+
+## Deletion
+
+Account deletion verifies the current password and revokes active sessions and tokens. Sole-owner journeys are deleted. A shared journey remains with the other journeyer, and ownership transfers if needed. The departing account is pseudonymized; a bounded event records that a member deleted their account without retaining their email.
+
+Encrypted backups may retain deleted data until their documented retention window expires. Backups are for disaster recovery, not live querying, and restored systems must reapply deletions according to the operations procedure.
+
+## Never place in this public repository
+
+- Real household trip or relationship records
+- Passwords, session values, API keys, database URLs, or SMTP credentials
+- Production backup files
 - Personal email addresses
+- Private service endpoints
 
-Use synthetic data in screenshots, issues, tests, and pull requests. Before sharing a bug report, check browser screenshots and exported JSON for names, dates, locations, confirmation numbers, and payment-account details.
-
-## Hosting caveat
-
-Anyone can host the static app, but the resulting site is public software—not a private shared database. Browser storage remains tied to the site origin and device. Do not imply that a public deployment creates secure cross-device sync.
-
-## Future sync
-
-An optional sync service would require a separate threat model covering authentication, encryption, access revocation, backups, deletion, abuse, metadata leakage, and incident response. It must not be added as an invisible default.
+Use synthetic records in tests, issues, screenshots, and pull requests. Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md) before deploying private sync.

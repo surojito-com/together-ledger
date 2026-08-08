@@ -19,6 +19,7 @@
       <div class="header-actions">
         <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
         <input id="import-file" type="file" accept="application/json" hidden />
+        <button class="button quiet" id="account-button">Sign in</button>
         <button class="button quiet" id="settings-button">Settings</button>
       </div>
     </header>
@@ -40,7 +41,7 @@
       </section>
 
       <section class="trip-bar" aria-label="Selected trip">
-        <div class="trip-identity"><small>Selected journey</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label>Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label></div></div>
+        <div class="trip-identity"><small>Selected journey</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
         <div class="journey-actions">
           <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
           <button class="button quiet" id="new-journey-button">＋ New journey</button>
@@ -147,8 +148,8 @@
           <label class="field"><span>Start date</span><input name="startDate" type="date" required /></label>
           <label class="field"><span>End date</span><input name="endDate" type="date" required /></label>
           <label class="field full"><span>Planned budget</span><input name="budget" type="number" min="0" max="1000000" step="0.01" required placeholder="0.00" /></label>
-          <label class="field"><span>First person</span><input name="memberOne" required maxlength="50" placeholder="Name" /></label>
-          <label class="field"><span>Second person</span><input name="memberTwo" required maxlength="50" placeholder="Name" /></label>
+          <label class="field member-field"><span>First person</span><input name="memberOne" required maxlength="50" placeholder="Name" /></label>
+          <label class="field member-field"><span>Second person</span><input name="memberTwo" required maxlength="50" placeholder="Name" /></label>
         </div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-journey>Cancel</button><button class="button primary" id="save-journey-button">Create journey</button></div>
       </form>
@@ -157,7 +158,7 @@
     <dialog id="event-dialog" class="wide-dialog">
       <form method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p>Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
+          <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p id="event-manager-copy">Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
           <button class="icon-button" value="close" aria-label="Close event history">×</button>
         </div>
         <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Concerns</h3><p>Explicitly recorded concerns are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Log concern</button></section>
@@ -183,17 +184,47 @@
     </dialog>
 
     <dialog id="settings-dialog">
-      <form method="dialog">
+      <div>
         <div class="dialog-head">
-          <div><p class="eyebrow">Honest local settings</p><h2>Browser data and appearance</h2><p>No account or cloud sync exists in PR#0002. Your journeys are stored only in this browser unless you download a backup.</p></div>
-          <button class="icon-button" value="close" aria-label="Close settings">×</button>
+          <div><p class="eyebrow">Storage and appearance</p><h2>Journey settings</h2><p id="settings-storage-copy">Browser-only journeys stay on this device unless you download a backup.</p></div>
+          <button class="icon-button" type="button" data-close-settings aria-label="Close settings">×</button>
         </div>
         <div class="settings-grid">
+          <section id="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" /></label><button class="button primary">Send invitation</button></form><div id="member-list"></div></section>
           <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select></label></section>
           <section><h3>Backup and restore</h3><p>Exports include every local journey, expense, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
           <section><h3>Start over</h3><p>Reset replaces this browser’s journeys with synthetic demonstration data. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Reset demo</button></section>
-          <section><h3>Privacy boundary</h3><p>Local storage is convenient, not a secure shared account. Registration, invitations, recovery, deletion, and private hosted sync belong to PR#0003.</p></section>
+          <section><h3>Privacy boundary</h3><p>Browser-only journeys stay in this browser. Signed-in private journeys are loaded from the account service and removed from view on sign-out; signing in never uploads the browser ledger.</p></section>
         </div>
+      </div>
+    </dialog>
+
+    <dialog id="account-dialog">
+      <div class="dialog-head">
+        <div><p class="eyebrow">Private account</p><h2>Separate accounts. One shared journey.</h2><p id="account-dialog-copy">Passwords are never shared between journeyers.</p></div>
+        <button class="icon-button" type="button" data-close-account aria-label="Close account settings">×</button>
+      </div>
+      <div id="signed-out-account" class="account-grid">
+        <form id="login-form" class="account-panel"><h3>Sign in</h3><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required minlength="12" /></label><button class="button primary">Sign in</button><button class="text-button" type="button" id="recovery-button">I forgot my password</button></form>
+        <form id="register-form" class="account-panel"><h3>Create account</h3><label class="field"><span>Your name</span><input name="displayName" autocomplete="name" maxlength="80" required /></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><small>Use at least 12 characters. We send a verification link before invitations can be accepted.</small><button class="button primary">Create secure account</button></form>
+      </div>
+      <div id="signed-in-account" class="account-panel" hidden><h3 id="account-name"></h3><p id="account-email"></p><p id="verification-status"></p><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes sessions. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
+    </dialog>
+
+    <dialog id="recovery-request-dialog">
+      <form id="recovery-request-form">
+        <div class="dialog-head"><div><p class="eyebrow">Account recovery</p><h2>Request a recovery link</h2><p>The response is identical whether an account exists or not.</p></div><button class="icon-button" type="button" data-close-recovery-request aria-label="Close recovery request">×</button></div>
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-recovery-request>Cancel</button><button class="button primary">Send recovery link</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="recovery-confirm-dialog">
+      <form id="recovery-confirm-form">
+        <div class="dialog-head"><div><p class="eyebrow">Account recovery</p><h2>Choose a new password</h2><p>Completing recovery signs the account out on every device.</p></div><button class="icon-button" type="button" data-close-recovery-confirm aria-label="Close password recovery">×</button></div>
+        <input name="token" type="hidden" />
+        <div class="form-grid"><label class="field full"><span>New password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><label class="field full"><span>Confirm new password</span><input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label></div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-recovery-confirm>Cancel</button><button class="button primary">Change password</button></div>
       </form>
     </dialog>
 

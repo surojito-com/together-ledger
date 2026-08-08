@@ -194,6 +194,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .button.quiet { background: transparent; border-color: var(--line); color: var(--ink); }
 .button.danger { background: var(--red); color: var(--on-accent); }
 .button:hover { transform: translateY(-1px); }
+.text-button { background: transparent; border: 0; color: var(--spruce); font-weight: 800; padding: 8px 0; text-decoration: underline; text-underline-offset: 3px; }
 
 .hero {
   background: var(--spruce);
@@ -230,6 +231,8 @@ h1 em { color: var(--on-accent); font-weight: 500; opacity: .82; }
 .trip-record-links button span { color: inherit; display: inline; font-size: inherit; }
 .trip-record-links label { align-items: center; color: var(--muted); display: flex; font-size: 12px; gap: 5px; }
 .trip-record-links select { background: var(--bg); border: 1px solid var(--line); border-radius: 999px; color: var(--ink); font-size: 12px; min-height: 32px; padding: 3px 25px 3px 9px; }
+.sync-badge { background: var(--soft); border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px !important; font-weight: 900; padding: 3px 8px; text-decoration: none; }
+.sync-badge.cloud { background: color-mix(in srgb, var(--accent) 12%, var(--card)); color: var(--ink); }
 .journey-actions { align-items: end; display: flex; flex-wrap: wrap; gap: 8px; justify-content: end; }
 .journey-picker { display: grid; gap: 3px; }
 .journey-picker > span { font-size: 10px; font-weight: 900; letter-spacing: .1em; padding-left: 11px; text-transform: uppercase; }
@@ -256,7 +259,7 @@ h1 em { color: var(--on-accent); font-weight: 500; opacity: .82; }
 .milestone-list input { accent-color: var(--gold); height: 19px; width: 19px; }
 .milestone-list span { color: var(--on-accent); font-size: 14px; }
 .guided-prompt { align-self: stretch; background: color-mix(in srgb, var(--on-accent) 9%, transparent); border: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent); border-radius: 22px; display: flex; flex-direction: column; justify-content: center; min-height: 310px; padding: clamp(24px, 4vw, 42px); }
-.guided-prompt > span { color: var(--on-accent); font-size: 12px; font-weight: 900; letter-spacing: .11em; opacity: .7; text-transform: uppercase; }
+.guided-prompt > span { color: var(--on-accent); font-size: 12px; font-weight: 900; letter-spacing: .11em; text-transform: uppercase; }
 .guided-prompt > p { color: var(--on-accent); font-family: Georgia, serif; font-size: clamp(25px, 3vw, 38px); line-height: 1.15; margin: 17px 0 26px; opacity: 1; }
 .guidance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .guidance-actions .button { border-color: color-mix(in srgb, var(--on-accent) 30%, transparent); color: var(--on-accent); }
@@ -347,6 +350,15 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .settings-grid section { background: var(--soft); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
 .settings-grid h3 { font-family: Georgia, serif; font-size: 25px; font-weight: 500; margin: 0 0 8px; }
 .settings-grid p { color: var(--muted); font-size: 14px; }
+.account-grid { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; padding-top: 20px; }
+.account-panel { display: grid; gap: 14px; }
+.account-grid .account-panel { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.account-panel h3, .account-panel p { margin: 0; }
+.account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
+.inline-form { align-items: end; display: flex; gap: 8px; }
+.inline-form .field { flex: 1; }
+#member-list { display: grid; gap: 7px; margin-top: 14px; }
+.member-chip { align-items: center; border: 1px solid var(--line); border-radius: 12px; display: flex; justify-content: space-between; padding: 10px 12px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .onboarding-step { background: var(--soft); border: 1px solid var(--line); border-radius: 19px; margin-top: 21px; min-height: 220px; padding: 28px; }
 .onboarding-step > span { color: var(--red); display: block; font-size: 12px; font-weight: 900; letter-spacing: .12em; margin-bottom: 17px; text-transform: uppercase; }
@@ -429,6 +441,8 @@ footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
   .form-grid { grid-template-columns: 1fr; }
   .field.full { grid-column: auto; }
   .settings-grid { grid-template-columns: 1fr; }
+  .account-grid { grid-template-columns: 1fr; }
+  .inline-form { align-items: stretch; flex-direction: column; }
   .concern-manager, .concern-row { align-items: stretch; display: grid; }
   .event-row dl div { grid-template-columns: 1fr; gap: 2px; }
   dialog { border-radius: 24px 24px 0 0; margin: auto 0 0; max-height: 94vh; padding: 24px 18px; width: 100%; }

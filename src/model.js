@@ -271,7 +271,7 @@ export function normalizeEntry(input, tripId) {
 export function isValidState(value) {
   if (!value || value.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(value.trips) || !Array.isArray(value.entries)) return false;
   if (!value.trips.length || !value.preferences || typeof value.preferences.onboardingComplete !== 'boolean' || !value.preferences.activeActorByTrip || typeof value.preferences.activeActorByTrip !== 'object') return false;
-  if (!value.trips.every((trip) => trip.id && trip.name && trip.location && Array.isArray(trip.members) && trip.members.length === 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
+  if (!value.trips.every((trip) => trip.id && trip.name && trip.location && Array.isArray(trip.members) && trip.members.length >= 1 && trip.members.length <= 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
   const tripIds = new Set(value.trips.map((trip) => trip.id));
   if (!tripIds.has(value.activeTripId)) return false;
   if (!value.entries.every((entry) => entry.id && tripIds.has(entry.tripId) && entry.merchant && CATEGORIES.includes(entry.category) && Number.isSafeInteger(entry.amountCents))) return false;
