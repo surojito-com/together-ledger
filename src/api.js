@@ -6,10 +6,18 @@ export class ApiError extends Error {
   }
 }
 
+function configuredBase() {
+  const configuredOrigin = typeof document !== 'undefined'
+    ? document.querySelector('meta[name="together-api-origin"]')?.content.trim()
+    : '';
+  return configuredOrigin ? `${configuredOrigin.replace(/\/$/, '')}/api/v1` : '/api/v1';
+}
+
 export class TogetherApi {
-  constructor(base = '/api/v1') {
+  constructor(base = configuredBase()) {
     this.base = base;
     this.csrfToken = '';
+    this.crossOrigin = typeof location !== 'undefined' && new URL(base, location.href).origin !== location.origin;
   }
 
   async request(path, { method = 'GET', body, authenticatedMutation = false } = {}) {
@@ -20,7 +28,7 @@ export class TogetherApi {
     try {
       response = await fetch(`${this.base}${path}`, {
         method,
-        credentials: 'same-origin',
+        credentials: this.crossOrigin ? 'include' : 'same-origin',
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       });
