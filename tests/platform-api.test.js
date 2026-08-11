@@ -51,6 +51,17 @@ async function register(app, mailer, { email, displayName }) {
   return { cookie, csrf: body.csrfToken, user: body.user };
 }
 
+test('hosted API bridge allows only the configured frontend origin', async (t) => {
+  const { app, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const allowed = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin } });
+  assert.equal(allowed.statusCode, 204);
+  assert.equal(allowed.headers['access-control-allow-origin'], origin);
+  assert.equal(allowed.headers['access-control-allow-credentials'], 'true');
+  const denied = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin: 'https://evil.example' } });
+  assert.equal(denied.statusCode, 403);
+});
+
 function authHeaders(client) {
   return { origin, cookie: client.cookie, 'x-together-csrf': client.csrf };
 }

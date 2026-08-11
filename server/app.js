@@ -16,6 +16,20 @@ export async function buildApp({ platform, config, logger = false }) {
   await app.register(cookie);
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin && origin === config.PUBLIC_ORIGIN) {
+      reply.header('Access-Control-Allow-Origin', origin);
+      reply.header('Access-Control-Allow-Credentials', 'true');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Together-CSRF');
+      reply.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+      reply.header('Vary', 'Origin');
+    }
+    if (request.method === 'OPTIONS') {
+      if (origin !== config.PUBLIC_ORIGIN) return reply.code(403).send({ error: { code: 'invalid_origin', message: 'This request did not come from the Together Ledger app.' } });
+      return reply.code(204).send();
+    }
+  });
   await app.register(fastifyStatic, { root: join(rootDirectory, 'src'), prefix: '/src/' });
   const indexMarkup = await readFile(join(rootDirectory, 'index.html'), 'utf8');
 
