@@ -10,6 +10,7 @@
     "test": "node --test",
     "test:postgres": "node --test tests/postgres-integration.test.js",
     "smoke:smtp": "node scripts/smoke-smtp.mjs",
+    "verify:production-host": "./scripts/verify-production-host.sh",
     "test:browser": "playwright test",
     "check:themes": "node scripts/check-themes.mjs",
     "check:server": "node --check server/app.js && node --check server/platform.js && node --check server/start.js && node --check src/app.js",
