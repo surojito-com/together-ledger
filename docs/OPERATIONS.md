@@ -70,6 +70,23 @@ The script creates a custom-format PostgreSQL dump, encrypts it before writing i
 6. Copy a backup to GCP, restore it into the standby database, deploy the same digest, and test using a private temporary hostname.
 7. Configure `api.together.surojito.com`, then set the public frontend's API-origin configuration only after both the rollback and standby restore paths have passed. `together.surojito.com` remains the GitHub Pages frontend.
 
+Read the companion [production readiness gate](PRODUCTION_READINESS.md) before opening ports 80 or 443. The host preflight is deliberately read-only:
+
+```sh
+./scripts/verify-production-host.sh
+```
+
+## AWS rollback procedure
+
+Use this procedure only after a deployed release. It does not replace the incident/failover plan below.
+
+1. Record the failing release digest, UTC time, symptoms, and whether writes may have succeeded. Do not delete volumes, logs, backups, or the running database.
+2. If the issue is limited to the app or proxy, keep PostgreSQL running and return the application image to the last reviewed digest in the root-owned environment file.
+3. Run `TOGETHER_ENV_FILE=/run/together-ledger/production.env docker compose -f compose.production.yaml up -d` from the reviewed checkout.
+4. Verify `/healthz` and `/readyz` privately first. Then test one synthetic account flow; never use a real user's account as a probe.
+5. If database integrity is in doubt, freeze writes and stop. Choose the newest validated encrypted logical backup, restore it only into an isolated database, verify HMAC event chains and synthetic checks, then make a separate promotion decision.
+6. Record the outcome in the product journey document without secrets, IP addresses, account identifiers, or user data.
+
 ## Incident rule
 
 Never promote GCP merely because one health check fails. Confirm the AWS database state, freeze writes, select the newest valid cross-cloud backup, verify the HMAC event chains, restore, smoke test, then change DNS. Record every failover and restore in the product journey document without including secrets or user data.
