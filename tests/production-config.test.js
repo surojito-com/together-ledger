@@ -16,6 +16,7 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(compose, /"443:443"/);
   assert.doesNotMatch(compose, /5432:5432|4174:4174|mailpit/i);
   assert.match(compose, /TOGETHER_ENV_FILE/);
+  assert.match(compose, /image: \$\{TOGETHER_IMAGE/);
   assert.match(caddy, /\{\$CADDY_DOMAIN\}/);
   assert.match(caddy, /reverse_proxy app:4174/);
   assert.match(environment, /COOKIE_SECURE=true/);
@@ -29,4 +30,9 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(hostCheck, /grep -Eq '5432:5432\|4174:4174\|mailpit'/);
   assert.match(readiness, /never committed/);
   assert.match(readiness, /budget alert is monitoring/);
+});
+
+test('operations use the production environment file for Compose substitutions', async () => {
+  const operations = await readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8');
+  assert.match(operations, /docker compose --env-file \/run\/together-ledger\/production\.env -f compose\.production\.yaml up -d/);
 });
