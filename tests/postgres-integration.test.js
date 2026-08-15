@@ -23,7 +23,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
 
   const mailer = new MemoryMailer();
   const platform = new PlatformService({ pool, config, mailer });
-  const registration = await platform.register({ email: 'postgres@example.test', displayName: 'Postgres QA', password: 'correct horse battery staple' });
+  const registration = await platform.register({ email: 'postgres@example.test', displayName: 'Postgres QA', username: 'postgres-qa', password: 'correct horse battery staple' });
   await platform.verifyEmail(mailer.messages.find((message) => message.type === 'verification').token);
   const journey = await platform.createJourney(registration.user.id, {
     name: 'Migration proof',
@@ -47,8 +47,9 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   await platform.deleteAccount(registration.user.id, 'correct horse battery staple');
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM journeys WHERE id=$1', [journey.id])).rows[0].count, 0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journey.id])).rows[0].count, 0);
-  const deleted = await pool.query('SELECT email_normalized,display_name,deleted_at FROM users WHERE id=$1', [registration.user.id]);
+  const deleted = await pool.query('SELECT email_normalized,username,display_name,deleted_at FROM users WHERE id=$1', [registration.user.id]);
   assert.match(deleted.rows[0].email_normalized, /^deleted-/);
+  assert.match(deleted.rows[0].username, /^deleted-/);
   assert.equal(deleted.rows[0].display_name, 'Deleted account');
   assert.ok(deleted.rows[0].deleted_at);
 });

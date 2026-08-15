@@ -78,7 +78,7 @@ UI → localStorage                    UI → same-origin API
                                           → append-only event chain
 ```
 
-The public static deployment remains safe to explore without an account. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** Per-moment visibility authorization will be added to the private service before it is presented as private cloud sharing. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+The public static deployment remains safe to explore without an account. Its account screen states plainly when the protected service is unavailable; it never sends a name, email, or password to GitHub Pages. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** Per-moment visibility authorization will be added to the private service before it is presented as private cloud sharing. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 The Event Manager remains browser-local in browser-only mode. The private-service candidate creates events inside the authorized PostgreSQL mutation transaction and chains them with HMAC evidence. HMAC chaining is tamper-evident, not magically immutable; deployment secret isolation and backup controls still matter.
 

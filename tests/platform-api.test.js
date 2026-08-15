@@ -20,6 +20,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
   await pool.query(await readFile(new URL('../server/migrations/001_platform.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/003_private_usernames.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -35,12 +36,12 @@ function cookieFrom(response) {
   return response.headers['set-cookie'].split(';')[0];
 }
 
-async function register(app, mailer, { email, displayName }) {
+async function register(app, mailer, { email, displayName, username = email.split('@')[0] }) {
   const response = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/register',
     headers: { origin },
-    payload: { email, displayName, password: 'correct horse battery staple' },
+    payload: { email, displayName, username, password: 'correct horse battery staple' },
   });
   assert.equal(response.statusCode, 201, response.body);
   const body = response.json().data;
@@ -70,9 +71,17 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
 
-  const alice = await register(app, mailer, { email: 'alice@example.test', displayName: 'Alice' });
-  const bob = await register(app, mailer, { email: 'bob@example.test', displayName: 'Bob' });
-  const mallory = await register(app, mailer, { email: 'mallory@example.test', displayName: 'Mallory' });
+  const alice = await register(app, mailer, { email: 'alice@example.test', displayName: 'Alice', username: 'alice-journeys' });
+  const bob = await register(app, mailer, { email: 'bob@example.test', displayName: 'Bob', username: 'bob-journeys' });
+  const mallory = await register(app, mailer, { email: 'mallory@example.test', displayName: 'Mallory', username: 'mallory-journeys' });
+  assert.equal(alice.user.username, 'alice-journeys');
+
+  const duplicateUsername = await app.inject({
+    method: 'POST', url: '/api/v1/auth/register', headers: { origin },
+    payload: { email: 'another@example.test', displayName: 'Another', username: 'alice-journeys', password: 'correct horse battery staple' },
+  });
+  assert.equal(duplicateUsername.statusCode, 409);
+  assert.equal(duplicateUsername.json().error.code, 'account_exists');
 
   const missingCsrf = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: { origin, cookie: alice.cookie }, payload: {} });
   assert.equal(missingCsrf.statusCode, 403);
@@ -154,8 +163,10 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   const revokedSession = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { cookie: alice.cookie } });
   assert.equal(revokedSession.statusCode, 401);
 
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { email: 'alice@example.test', password: 'a new correct horse battery staple' } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'alice-journeys', password: 'a new correct horse battery staple' } });
   assert.equal(login.statusCode, 200, login.body);
+  const emailLogin = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'alice@example.test', password: 'a new correct horse battery staple' } });
+  assert.equal(emailLogin.statusCode, 200, emailLogin.body);
   const newAlice = { cookie: cookieFrom(login), csrf: login.json().data.csrfToken };
   const deleted = await app.inject({ method: 'DELETE', url: '/api/v1/account', headers: authHeaders(newAlice), payload: { password: 'a new correct horse battery staple', confirmation: 'DELETE' } });
   assert.equal(deleted.statusCode, 204, deleted.body);
@@ -194,7 +205,7 @@ test('email outages preserve account recovery but revoke undelivered invitations
   const { app, pool } = await testPlatform({ mailer: failingMailer });
   t.after(async () => { await app.close(); await pool.end(); });
 
-  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: { origin }, payload: { email: 'offline@example.test', displayName: 'Offline', password: 'correct horse battery staple' } });
+  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: { origin }, payload: { email: 'offline@example.test', displayName: 'Offline', username: 'offline-journeys', password: 'correct horse battery staple' } });
   assert.equal(registered.statusCode, 201, registered.body);
   assert.equal(registered.json().data.verificationSent, false);
   const client = { cookie: cookieFrom(registered), csrf: registered.json().data.csrfToken };
