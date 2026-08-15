@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="A shared trip ledger for two people to see every cost, discuss surprises, and decide what happens next." />
+    <meta name="description" content="A private shared journey workspace for two people to hold moments, check in gently, and return to what matters." />
     <meta name="theme-color" content="#F3EFE6" />
     <!-- Set this to https://api.together.surojito.com when the private API is deployed. -->
     <meta name="together-api-origin" content="" />
-    <title>Together Ledger — shared trip costs and clear next steps</title>
+    <title>Together Ledger — a shared journey, held with care</title>
     <script src="./src/themes.js"></script>
     <link rel="stylesheet" href="./src/styles.css" />
     <script type="module" src="./src/app.js"></script>
@@ -16,7 +16,7 @@
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Together Ledger home">
         <span class="brand-mark" aria-hidden="true">⌁</span>
-        <span><strong>Together Ledger</strong><small>Shared trip costs. Clear next steps.</small></span>
+        <span><strong>Together Ledger</strong><small>A shared journey, held with care.</small></span>
       </a>
       <div class="header-actions">
         <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
@@ -30,15 +30,15 @@
       <section class="hero">
         <div class="hero-copy">
           <p class="eyebrow">A relationship-resilience tool</p>
-          <h1>Make the money visible.<br /><em>Keep each other human.</em></h1>
-          <p class="hero-intro">Together Ledger gives two travelers one trip-by-trip record of expenses, budgets, payment context, and open costs—then turns those facts into optional prompts for deciding what happens next.</p>
+          <h1>Make space for what happened.<br /><em>Keep each other human.</em></h1>
+          <p class="hero-intro">Together Ledger is a private shared journey for two people: a gentle place to hold moments, promises, feelings, memories, boundaries, repair requests, and the practical things life asks you to navigate together.</p>
           <div class="principles" aria-label="Product principles">
             <span>Facts before blame</span><span>One shared picture</span><span>Conversation, not scoring</span>
           </div>
         </div>
         <aside class="hero-note">
           <span aria-hidden="true">♡</span>
-          <p><strong>A ledger cannot measure love.</strong> Who paid more is context for planning—not a score of effort, care, or commitment.</p>
+          <p><strong>A shared journey cannot measure love.</strong> It can make room for what deserves care, without scoring, ranking, or turning pain into debt.</p>
         </aside>
       </section>
 
@@ -47,19 +47,19 @@
         <div class="journey-actions">
           <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
           <button class="button quiet" id="new-journey-button">＋ New journey</button>
-          <button class="button primary" data-open-expense>＋ Add expense</button>
+          <button class="button primary" data-open-moment>＋ Hold a moment</button>
         </div>
       </section>
 
       <section class="workspace">
-        <nav class="workspace-nav" aria-label="Journey sections"><a href="#guidance">Guidance</a><a href="#trip-ledger">Trip ledger</a><span id="journey-count"></span></nav>
-        <div class="summary-grid" id="summary-grid" aria-label="Trip summary"></div>
+        <nav class="workspace-nav" aria-label="Journey sections"><a href="#guidance">Check-in</a><a href="#moments">Our moments</a><a href="#threads">Open threads</a><span id="journey-count"></span></nav>
+        <div class="summary-grid" id="journey-summary" aria-label="Our shared journey overview"></div>
 
         <section class="conversation-card card" id="guidance" aria-labelledby="conversation-title">
           <div>
-            <p class="eyebrow">Guided check-in · no answers are saved</p>
-            <h2 id="conversation-title">Turn one trip fact into one shared next step.</h2>
-            <p>Read one prompt at a time. Each person gets two uninterrupted minutes. Skip anything that does not fit.</p>
+            <p class="eyebrow">A gentle check-in · no answers are saved</p>
+            <h2 id="conversation-title">One question. A little room. No score to earn.</h2>
+            <p>Read one prompt at a time. Pause, skip, or return later. Nothing you say here is captured as an answer.</p>
             <div class="milestone-list" id="milestone-list" aria-label="Journey action milestones"></div>
           </div>
           <div class="guided-prompt">
@@ -69,42 +69,18 @@
           </div>
         </section>
 
-        <section class="insight-grid" aria-label="Spending insights">
-          <article class="card insight">
-            <p class="eyebrow">By category</p>
-            <h2>Where it went</h2>
-            <div id="category-chart"></div>
-          </article>
-          <article class="card insight">
-            <p class="eyebrow">Paid by</p>
-            <h2>How costs moved</h2>
-            <div id="payer-chart"></div>
-            <p class="chart-caveat">A payment split is not a fairness verdict. Income, care work, planning, and preferences may not appear here.</p>
-          </article>
+        <section class="card moments-section" id="moments" aria-labelledby="moments-title">
+          <div class="section-heading"><div><p class="eyebrow">Our shared journey</p><h2 id="moments-title">Recent moments</h2><p>Hold what happened in words that feel true. Money can be optional practical context inside a moment—not the measure of your relationship.</p></div><button class="button primary" data-open-moment>＋ Hold a moment</button></div>
+          <div class="filters" id="moment-filters" aria-label="Filter moments by kind"></div>
+          <div class="moment-timeline" id="moment-timeline"></div>
         </section>
 
-        <details class="card ledger-section" id="trip-ledger" open>
-          <summary>
-            <span><span class="eyebrow">The ledger</span><strong>Everything in one place</strong></span>
-            <span class="expando" aria-hidden="true">＋</span>
-          </summary>
-          <div class="ledger-panel">
-            <div class="filters" id="filters" aria-label="Filter expenses"></div>
-            <div id="ledger"></div>
-          </div>
-        </details>
+        <section class="card threads-section" id="threads" aria-labelledby="threads-title">
+          <div class="section-heading"><div><p class="eyebrow">What wants care</p><h2 id="threads-title">Open threads</h2><p>Threads are invitations to return, not a record of who owes what.</p></div><button class="button quiet" type="button" id="add-thread-button">＋ Start a thread</button></div>
+          <div id="open-threads"></div>
+        </section>
 
-        <details class="card timeline-section">
-          <summary>
-            <span><span class="eyebrow">Daily spending</span><strong>Trip costs over time</strong><small>Choose a day, then a category, to see what made up the total.</small></span>
-            <span class="expando" aria-hidden="true">＋</span>
-          </summary>
-          <div class="timeline-panel">
-            <div class="timeline-axis-label">Dollars spent</div>
-            <div id="timeline-chart" class="timeline-chart" aria-label="Daily spending chart"></div>
-            <div id="timeline-detail" class="timeline-detail" hidden></div>
-          </div>
-        </details>
+        <section class="privacy-boundary card"><p class="eyebrow">Privacy boundary</p><h2>Visibility needs real boundaries.</h2><p id="privacy-boundary-copy"></p></section>
       </section>
     </main>
 
@@ -113,43 +89,37 @@
       <p>Local-first and open source. Not financial advice, couples therapy, or a substitute for professional support.</p>
     </footer>
 
-    <nav class="mobile-action" aria-label="Quick action"><button data-open-expense>＋ Add expense</button></nav>
+    <nav class="mobile-action" aria-label="Quick action"><button data-open-moment>＋ Hold a moment</button></nav>
 
-    <dialog id="expense-dialog">
-      <form id="expense-form" method="dialog">
-        <div class="dialog-head">
-          <div><p class="eyebrow">Add to the shared picture</p><h2 id="expense-title">Add an expense</h2><p>Log the fact now. Decide what it means together.</p></div>
-          <button class="icon-button" type="button" data-close-expense aria-label="Close">×</button>
-        </div>
-        <input type="hidden" name="id" />
+    <dialog id="moment-dialog">
+      <form id="moment-form" method="dialog">
+        <div class="dialog-head"><div><p class="eyebrow">Our shared journey</p><h2 id="moment-dialog-title">Hold a moment</h2><p>Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.</p></div><button class="icon-button" type="button" data-close-moment aria-label="Close">×</button></div>
+        <input name="id" type="hidden" />
         <div class="form-grid">
-          <label class="field full"><span>Expense name</span><input name="merchant" required maxlength="80" placeholder="e.g. Train tickets or dinner" /></label>
-          <label class="field"><span>Category</span><select name="category" required></select></label>
-          <label class="field"><span>Amount</span><input name="amount" type="number" min="0.01" max="1000000" step="0.01" required placeholder="0.00" /></label>
-          <label class="field"><span>Date</span><input name="occurredOn" type="date" required /></label>
-          <label class="field"><span>Paid by</span><select name="paidBy" required></select></label>
-          <label class="field"><span>Paid from <small>Optional</small></span><input name="account" maxlength="50" placeholder="Card, cash, or account" /></label>
-          <fieldset class="field full"><legend>Payment status</legend><div class="radio-row"><label><input type="radio" name="status" value="paid" checked /> Paid</label><label><input type="radio" name="status" value="due" /> Still due</label></div></fieldset>
-          <label class="field full"><span>Reference <small>Optional</small></span><input name="reference" maxlength="60" placeholder="Confirmation or receipt number" /></label>
-          <label class="field full"><span>Notes <small>Optional</small></span><textarea name="notes" maxlength="300" rows="3" placeholder="Anything you want to remember together"></textarea></label>
+          <label class="field"><span>Kind of moment</span><select name="kind" required></select></label>
+          <label class="field"><span>When</span><input name="occurredOn" type="date" required /></label>
+          <label class="field full"><span>A short name</span><input name="title" required maxlength="120" placeholder="e.g. A quiet apology after dinner" /></label>
+          <label class="field full"><span>What would you like to hold? <small>Optional</small></span><textarea name="detail" maxlength="1200" rows="5" placeholder="Use your own words. Keep it simple and kind."></textarea></label>
+          <fieldset class="field full"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div></fieldset>
+          <label class="field full"><span>Practical money context <small>Optional; never counted as a score</small></span><input name="money" type="number" min="0" max="1000000" step="0.01" placeholder="Leave blank unless it helps tell this moment's story" /></label>
         </div>
-        <div class="dialog-actions"><button class="button quiet" type="button" data-close-expense>Cancel</button><button class="button primary" id="save-expense">Save expense</button></div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-moment>Cancel</button><button class="button primary" id="save-moment">Hold this moment</button></div>
       </form>
     </dialog>
 
     <dialog id="journey-dialog">
       <form id="journey-form" method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Local journey details</p><h2 id="journey-dialog-title">Start another trip ledger</h2><p>Two people share the journey. The information stays in this browser until you export it.</p></div>
+          <div><p class="eyebrow">Local journey details</p><h2 id="journey-dialog-title">Begin a shared journey</h2><p>Two people share the journey. The information stays in this browser until you export it.</p></div>
           <button class="icon-button" type="button" data-close-journey aria-label="Close">×</button>
         </div>
         <div class="form-grid">
           <input name="id" type="hidden" />
           <label class="field full"><span>Journey name</span><input name="name" required maxlength="80" placeholder="e.g. Mountain weekend" /></label>
-          <label class="field full"><span>Location</span><input name="location" required maxlength="80" placeholder="e.g. Asheville, North Carolina" /></label>
+          <label class="field full"><span>Place or season</span><input name="location" required maxlength="80" placeholder="e.g. Asheville, North Carolina or our first autumn" /></label>
           <label class="field"><span>Start date</span><input name="startDate" type="date" required /></label>
           <label class="field"><span>End date</span><input name="endDate" type="date" required /></label>
-          <label class="field full"><span>Planned budget</span><input name="budget" type="number" min="0" max="1000000" step="0.01" required placeholder="0.00" /></label>
+          <input name="budget" type="hidden" value="0" />
           <label class="field member-field"><span>First person</span><input name="memberOne" required maxlength="50" placeholder="Name" /></label>
           <label class="field member-field"><span>Second person</span><input name="memberTwo" required maxlength="50" placeholder="Name" /></label>
         </div>
@@ -163,7 +133,7 @@
           <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p id="event-manager-copy">Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
           <button class="icon-button" value="close" aria-label="Close event history">×</button>
         </div>
-        <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Concerns</h3><p>Explicitly recorded concerns are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Log concern</button></section>
+        <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Open threads</h3><p>Explicitly recorded threads are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Start a thread</button></section>
         <div id="concern-list"></div>
         <section class="event-list-section" aria-labelledby="event-list-title"><h3 id="event-list-title">All recorded changes</h3><div id="event-list"></div></section>
       </form>
@@ -172,12 +142,12 @@
     <dialog id="concern-dialog">
       <form id="concern-form" method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Journey concern</p><h2 id="concern-dialog-title">Log a concern</h2><p>This is intentional shared journey data—not a private reflection field.</p></div>
+          <div><p class="eyebrow">Open thread</p><h2 id="concern-dialog-title">Start a thread</h2><p>This is intentional shared journey data—not a private reflection field.</p></div>
           <button class="icon-button" type="button" data-close-concern aria-label="Close concern">×</button>
         </div>
         <input name="id" type="hidden" />
         <div class="form-grid">
-          <label class="field full"><span>Concern</span><input name="title" maxlength="100" required placeholder="What needs attention?" /></label>
+          <label class="field full"><span>What wants care?</span><input name="title" maxlength="100" required placeholder="What would feel good to return to?" /></label>
           <label class="field full"><span>Context <small>Optional</small></span><textarea name="detail" maxlength="500" rows="4" placeholder="Record only what both journeyers should see"></textarea></label>
           <label class="field full"><span>Status</span><select name="status"><option value="open">Open</option><option value="resolved">Resolved</option></select></label>
         </div>
@@ -194,7 +164,7 @@
         <div class="settings-grid">
           <section id="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" /></label><button class="button primary">Send invitation</button></form><div id="member-list"></div></section>
           <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select></label></section>
-          <section><h3>Backup and restore</h3><p>Exports include every local journey, expense, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
+          <section><h3>Backup and restore</h3><p>Exports include every local journey, moment, practical detail, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
           <section><h3>Start over</h3><p>Reset replaces this browser’s journeys with synthetic demonstration data. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Reset demo</button></section>
           <section><h3>Privacy boundary</h3><p>Browser-only journeys stay in this browser. Signed-in private journeys are loaded from the account service and removed from view on sign-out; signing in never uploads the browser ledger.</p></section>
         </div>
@@ -233,7 +203,7 @@
     <dialog id="onboarding-dialog">
       <form method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Welcome to Together Ledger</p><h2 id="onboarding-title">One shared picture, organized trip by trip.</h2></div>
+          <div><p class="eyebrow">Welcome to Together Ledger</p><h2 id="onboarding-title">One shared journey, held with care.</h2></div>
           <button class="icon-button" type="button" id="skip-onboarding" aria-label="Skip introduction">×</button>
         </div>
         <div class="onboarding-step" id="onboarding-step" aria-live="polite"></div>

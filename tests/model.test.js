@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activeEntries,
+  activeMoments,
   appendJourneyEvent,
   conversationPrompts,
   dateRange,
@@ -11,6 +12,7 @@ import {
   migrateState,
   normalizeConcern,
   normalizeEntry,
+  normalizeMoment,
   normalizeTrip,
   summarize,
 } from '../src/model.js';
@@ -18,18 +20,19 @@ import {
 test('synthetic demo state is valid and isolated to its active trip', () => {
   const state = demoState();
   assert.equal(isValidState(state), true);
-  assert.equal(activeEntries(state).length, 5);
+  assert.equal(activeEntries(state).length, 3);
+  assert.ok(activeMoments(state).length >= 6);
   assert.deepEqual(state.trips[0].members, ['Alex', 'Jordan']);
 });
 
 test('summary calculates totals, due costs, categories, payers, and budget', () => {
   const entries = activeEntries(demoState());
   const summary = summarize(entries, 120000);
-  assert.equal(summary.totalCents, 87825);
-  assert.equal(summary.dueCents, 16000);
-  assert.equal(summary.budgetLeftCents, 32175);
-  assert.equal(summary.byCategory.Restaurants, 12225);
-  assert.equal(summary.byPayer.Alex, 25025);
+  assert.equal(summary.totalCents, 68950);
+  assert.equal(summary.dueCents, 0);
+  assert.equal(summary.budgetLeftCents, 51050);
+  assert.equal(summary.byCategory.Restaurants, 9350);
+  assert.equal(summary.byPayer.Alex, 22150);
 });
 
 test('date range includes every trip day', () => {
@@ -39,10 +42,10 @@ test('date range includes every trip day', () => {
   ]);
 });
 
-test('day drilldown groups entries by spending category', () => {
-  const groups = groupDayByCategory(activeEntries(demoState()), '2026-08-16');
-  assert.equal(groups.Activities.length, 1);
-  assert.equal(groups.Restaurants.length, 1);
+test('day drilldown groups existing practical records by category', () => {
+  const groups = groupDayByCategory(activeEntries(demoState()), '2026-08-14');
+  assert.equal(groups.Transportation.length, 1);
+  assert.equal(groups.Hotel.length, 1);
 });
 
 test('entry normalization uses integer cents and validates categories', () => {
@@ -52,11 +55,11 @@ test('entry normalization uses integer cents and validates categories', () => {
   assert.throws(() => normalizeEntry({ ...entry, amount: '10', category: 'Invalid' }, 'demo-coast'), /valid category/);
 });
 
-test('conversation prompts frame money as a shared question', () => {
+test('conversation prompts make room for a shared check-in without scoring', () => {
   const summary = summarize(activeEntries(demoState()), 120000);
   const prompts = conversationPrompts(summary);
   assert.equal(prompts.length, 5);
-  assert.match(prompts.join(' '), /What|Which|Was/);
+  assert.match(prompts.join(' '), /What|Which|Is/);
   assert.doesNotMatch(prompts.join(' '), /fault|blame|score/i);
 });
 
@@ -69,17 +72,35 @@ test('schema version 1 migrates losslessly into multiple-journey state', () => {
     entries: current.entries.map((entry) => ({ ...entry })),
   };
   const migrated = migrateState(legacy);
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
   assert.equal(migrated.preferences.onboardingComplete, false);
   assert.deepEqual(migrated.events, []);
   assert.deepEqual(migrated.concerns, []);
   assert.deepEqual(migrated.entries, legacy.entries);
+  assert.equal(migrated.moments.length, legacy.entries.length);
+  assert.equal(migrated.moments[0].kind, 'practical-matter');
+  assert.equal(migrated.moments[0].moneyCents, legacy.entries[0].amountCents);
   assert.deepEqual(migrated.trips[0].members, legacy.trips[0].members);
   assert.deepEqual(migrated.trips[0].milestones, {
     reviewedPicture: false,
     chosePrompt: false,
     agreedNextAction: false,
   });
+});
+
+test('moments keep optional money as context and require an honest visibility choice', () => {
+  const state = demoState();
+  const moment = normalizeMoment({
+    kind: 'repair-request',
+    title: 'Return to the rushed goodbye',
+    detail: 'Could we try again with ten quiet minutes?',
+    occurredOn: '2026-08-16',
+    visibility: 'share-later',
+    money: '12.50',
+  }, state.activeTripId);
+  assert.equal(moment.moneyCents, 1250);
+  assert.equal(moment.visibility, 'share-later');
+  assert.throws(() => normalizeMoment({ ...moment, visibility: 'everyone' }, state.activeTripId), /who can see/);
 });
 
 test('journey normalization requires two people and preserves trip boundaries', () => {

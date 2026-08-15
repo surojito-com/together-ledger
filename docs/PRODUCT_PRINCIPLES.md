@@ -2,13 +2,13 @@
 
 ## Product thesis
 
-Relationship resilience is not the absence of money tension. It is the ability to make uncertainty discussable, repair misunderstandings, and choose the next action together.
+Relationship resilience is not the absence of tension. It is the ability to make uncertainty discussable, repair misunderstandings, and choose the next action together.
 
 Together Ledger supports that process in three steps:
 
-1. **Externalize the facts.** Put expenses, dates, categories, payers, and due status in one neutral place.
-2. **Add humane context.** State clearly what the ledger cannot measure.
-3. **Invite conversation.** Turn totals into optional, non-judgmental prompts.
+1. **Hold the moment.** Let people name a promise, memory, feeling, boundary, repair request, or practical matter in their own words.
+2. **Choose visibility with care.** A moment can be marked private, shared now, or share later; browser-only labels are local cues until private hosted authorization exists.
+3. **Invite conversation.** Offer optional, non-judgmental prompts without scoring people or measuring their relationship.
 
 ## Guardrails
 
@@ -19,12 +19,14 @@ The product must never:
 - Treat equal payment as the universal goal.
 - Encourage secret tracking of another person.
 - Shame spending or use alarmist language.
+- Use totals, balances, cash flow, or spending dashboards as a proxy for care.
+- Turn a practical money detail into emotional debt.
 - Make therapeutic or financial-outcome claims without evidence.
 
 ## Inclusive scope
 
-“Together” can mean romantic partners, spouses, friends, relatives, or any trusted travel group. Copy should not assume gender, marriage, shared income, monogamy, or a particular division of labor.
+“Together” can mean romantic partners, spouses, friends, relatives, or any trusted two-person relationship. Copy should not assume gender, marriage, shared income, monogamy, or a particular division of labor.
 
 ## Success criteria
 
-Success is not more data entry. It is a shared picture that is understandable enough to support one calmer conversation and one mutually understood next step.
+Success is not more data entry. It is a shared journey that makes room for one calmer conversation and one mutually understood next step.
