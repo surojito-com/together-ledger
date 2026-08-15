@@ -1,15 +1,16 @@
 import { demoState, isValidState, migrateState } from './model.js';
 
-export const STORAGE_KEY = 'together-ledger-v2';
+export const STORAGE_KEY = 'together-ledger-v3';
+export const PREVIOUS_STORAGE_KEY = 'together-ledger-v2';
 export const LEGACY_STORAGE_KEY = 'together-ledger-v1';
 
 export function loadState() {
-  for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+  for (const key of [STORAGE_KEY, PREVIOUS_STORAGE_KEY, LEGACY_STORAGE_KEY]) {
     try {
       const raw = localStorage.getItem(key);
       if (!raw) continue;
       const state = migrateState(JSON.parse(raw));
-      if (key === LEGACY_STORAGE_KEY) saveState(state);
+      if (key !== STORAGE_KEY) saveState(state);
       return state;
     } catch {
       // Keep looking. A damaged current value must not hide a valid legacy backup.
