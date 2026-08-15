@@ -6,21 +6,33 @@ export class ApiError extends Error {
   }
 }
 
-function configuredBase() {
+function configuredApiOrigin() {
   const configuredOrigin = typeof document !== 'undefined'
     ? document.querySelector('meta[name="together-api-origin"]')?.content.trim()
     : '';
-  return configuredOrigin ? `${configuredOrigin.replace(/\/$/, '')}/api/v1` : '/api/v1';
+  return configuredOrigin;
+}
+
+function configuredBase() {
+  const origin = configuredApiOrigin();
+  return origin ? `${origin.replace(/\/$/, '')}/api/v1` : '/api/v1';
+}
+
+function hasLocalApi() {
+  if (typeof location === 'undefined') return true;
+  return ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 }
 
 export class TogetherApi {
   constructor(base = configuredBase()) {
     this.base = base;
     this.csrfToken = '';
+    this.accountsAvailable = Boolean(configuredApiOrigin()) || hasLocalApi();
     this.crossOrigin = typeof location !== 'undefined' && new URL(base, location.href).origin !== location.origin;
   }
 
   async request(path, { method = 'GET', body, authenticatedMutation = false } = {}) {
+    if (!this.accountsAvailable) throw new ApiError('Private accounts are being connected. No account details were sent.', { code: 'accounts_unavailable' });
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (authenticatedMutation) headers['X-Together-CSRF'] = this.csrfToken;

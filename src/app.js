@@ -104,16 +104,20 @@ async function refreshCloudState({ announce = false } = {}) {
 
 function renderAccountState() {
   const signedIn = Boolean(accountUser);
-  $('#signed-out-account').hidden = signedIn;
+  const accountsAvailable = api.accountsAvailable;
+  $('#account-unavailable').hidden = signedIn || accountsAvailable;
+  $('#signed-out-account').hidden = signedIn || !accountsAvailable;
   $('#signed-in-account').hidden = !signedIn;
-  $('#account-button').textContent = signedIn ? accountUser.displayName : 'Sign in';
+  $('#account-button').textContent = signedIn ? accountUser.displayName : accountsAvailable ? 'Sign in' : 'Accounts soon';
+  $('#account-dialog-copy').textContent = accountsAvailable ? 'Passwords are never shared between journeyers.' : 'The private account service is not live on this public page yet.';
   $('#account-name').textContent = signedIn ? accountUser.displayName : '';
+  $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
   $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
   $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. The current hosted service records journey changes in its Event Manager.' : 'Your account is ready. Browser-only moments are not uploaded when you sign in.';
   $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to your browser-only journey.' : 'Browser-only journeys stay on this device unless you download a backup.';
-  $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : 'Browser only';
+  $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : accountsAvailable ? 'Browser only' : 'Accounts soon';
   $('#sync-badge').classList.toggle('cloud', signedIn);
   $('#actor-control').hidden = isCloudJourney();
   const sharing = isCloudJourney();

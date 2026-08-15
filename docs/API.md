@@ -6,10 +6,10 @@ All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/auth/register` | Create an account and opaque server session. |
+| POST | `/auth/register` | Create an account with a unique private username and opaque server session. |
 | POST | `/auth/verify-email` | Consume the single-use email-verification token. |
 | POST | `/auth/resend-verification` | Revoke an older unused verification token and send a replacement. |
-| POST | `/auth/login` | Verify Argon2id password and rotate the session. |
+| POST | `/auth/login` | Verify a private username or email plus Argon2id password, then rotate the session. |
 | POST | `/auth/logout` | Revoke the current session. |
 | GET | `/session` | Return the current account and session CSRF token. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |

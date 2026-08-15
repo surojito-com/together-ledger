@@ -353,6 +353,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .account-grid { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; padding-top: 20px; }
 .account-panel { display: grid; gap: 14px; }
 .account-grid .account-panel { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.account-notice { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; max-width: 620px; padding: 26px; }
 .account-panel h3, .account-panel p { margin: 0; }
 .account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
 .inline-form { align-items: end; display: flex; gap: 8px; }

@@ -36,6 +36,19 @@ function cleanEmail(value) {
   try { return normalizeEmail(value); } catch { throw new PlatformError(400, 'invalid_input', 'Enter a valid email address.'); }
 }
 
+function cleanUsername(value) {
+  const username = String(value || '').trim().toLowerCase();
+  if (!/^[a-z][a-z0-9-]{2,29}$/.test(username) || username.includes('--') || username.endsWith('-')) {
+    throw new PlatformError(400, 'invalid_username', 'Choose 3–30 lowercase letters, numbers, or single hyphens. Start with a letter.');
+  }
+  return username;
+}
+
+function cleanLoginIdentifier(value) {
+  const identifier = String(value || '').trim();
+  return identifier.includes('@') ? cleanEmail(identifier) : cleanUsername(identifier);
+}
+
 async function cleanPasswordHash(value) {
   try { return await hashPassword(value); } catch { throw new PlatformError(400, 'invalid_input', 'Use a password between 12 and 128 characters.'); }
 }
@@ -50,6 +63,7 @@ function publicUser(row) {
   return {
     id: row.id,
     email: row.email_normalized,
+    username: row.username,
     displayName: row.display_name,
     emailVerified: Boolean(row.email_verified_at),
     createdAt: dateTime(row.created_at),
@@ -172,8 +186,9 @@ export class PlatformService {
     return { rawToken, csrfToken, expiresAt };
   }
 
-  async register({ email, displayName, password }) {
+  async register({ email, username, displayName, password }) {
     const normalizedEmail = cleanEmail(email);
+    const privateUsername = cleanUsername(username);
     const name = cleanText(displayName, 'Display name', 80);
     const passwordHash = await cleanPasswordHash(password);
     const verificationToken = opaqueToken();
@@ -182,8 +197,8 @@ export class PlatformService {
       result = await withTransaction(this.pool, async (client) => {
         const userId = randomUUID();
         const created = await client.query(
-          'INSERT INTO users (id,email_normalized,display_name,password_hash) VALUES ($1,$2,$3,$4) RETURNING *',
-          [userId, normalizedEmail, name, passwordHash],
+          'INSERT INTO users (id,email_normalized,username,display_name,password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+          [userId, normalizedEmail, privateUsername, name, passwordHash],
         );
         await client.query(
           'INSERT INTO account_tokens (id,user_id,purpose,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5)',
@@ -192,7 +207,7 @@ export class PlatformService {
         return { user: publicUser(created.rows[0]), session: await this.createSession(client, userId) };
       });
     } catch (error) {
-      if (error.code === '23505') throw new PlatformError(409, 'account_exists', 'An account already exists for this email address.');
+      if (error.code === '23505') throw new PlatformError(409, 'account_exists', 'That email or username is already in use.');
       throw error;
     }
     result.verificationSent = await this.deliver('verification', () => this.mailer.sendVerification({ to: normalizedEmail, token: verificationToken }));
@@ -226,13 +241,13 @@ export class PlatformService {
     return this.deliver('verification', () => this.mailer.sendVerification({ to: user.rows[0].email_normalized, token }));
   }
 
-  async login({ email, password }) {
-    const normalizedEmail = cleanEmail(email);
-    const found = await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [normalizedEmail]);
+  async login({ identifier, password }) {
+    const normalizedIdentifier = cleanLoginIdentifier(identifier);
+    const found = await this.pool.query('SELECT * FROM users WHERE (email_normalized=$1 OR username=$1) AND deleted_at IS NULL', [normalizedIdentifier]);
     const candidateHash = found.rows[0]?.password_hash || await this.dummyPasswordHash;
     const passwordMatches = await verifyPassword(candidateHash, password);
     const valid = Boolean(found.rowCount && passwordMatches);
-    if (!valid) throw new PlatformError(401, 'invalid_credentials', 'Email or password is incorrect.');
+    if (!valid) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
     const session = await withTransaction(this.pool, (client) => this.createSession(client, found.rows[0].id));
     return { user: publicUser(found.rows[0]), session };
   }
@@ -240,7 +255,7 @@ export class PlatformService {
   async session(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
-      `SELECT s.*,u.email_normalized,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
+      `SELECT s.*,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
        FROM sessions s JOIN users u ON u.id=s.user_id
        WHERE s.token_hash=$1 AND s.expires_at>$2 AND u.deleted_at IS NULL`,
       [sha256(rawToken), this.now()],
@@ -609,7 +624,10 @@ export class PlatformService {
       await client.query('DELETE FROM account_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM invitations WHERE invited_by_user_id=$1', [userId]);
       await client.query('UPDATE invitations SET revoked_at=$1 WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL', [this.now(), user.rows[0].email_normalized]);
-      await client.query('UPDATE users SET email_normalized=$1,display_name=$2,password_hash=$3,deleted_at=$4 WHERE id=$5', [`deleted-${userId}@invalid.local`, 'Deleted account', 'deleted', this.now(), userId]);
+      await client.query(
+        'UPDATE users SET email_normalized=$1,username=$2,display_name=$3,password_hash=$4,deleted_at=$5 WHERE id=$6',
+        [`deleted-${userId}@invalid.local`, `deleted-${userId.slice(0, 8)}`, 'Deleted account', 'deleted', this.now(), userId],
+      );
     });
   }
 }
