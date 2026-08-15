@@ -38,7 +38,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 
 ## Try it locally
 
-Requirements: Node.js 20 or newer.
+Requirements: Node.js 22 or newer.
 
 ```bash
 git clone https://github.com/surojito-com/together-ledger.git
