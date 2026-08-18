@@ -22,6 +22,9 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(caddy, /reverse_proxy app:4174/);
   assert.match(environment, /COOKIE_SECURE=true/);
   assert.match(environment, /TRUST_PROXY=true/);
+  assert.match(environment, /CADDY_DOMAIN=api\.together-ledger\.com/);
+  assert.match(environment, /PUBLIC_ORIGIN=https:\/\/together-ledger\.com/);
+  assert.match(environment, /no-reply@together-ledger\.com/);
   assert.match(environment, /POSTGRES_PASSWORD=replace-with-64-hex-characters/);
   assert.match(environment, /replace-with-a-different-long-random-secret/);
   assert.match(backup, /pg_dump/);
@@ -31,6 +34,7 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(hostCheck, /grep -Eq '5432:5432\|4174:4174\|mailpit'/);
   assert.match(readiness, /never committed/);
   assert.match(readiness, /budget alert is monitoring/);
+  assert.match(readiness, /api\.together-ledger\.com/);
   assert.match(dockerfile, /FROM node:22-bookworm-slim AS dependencies/);
   assert.match(dockerfile, /apt-get install -y --no-install-recommends python3 make g\+\+/);
 });

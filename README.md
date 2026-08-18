@@ -97,7 +97,7 @@ The deeper rationale is in [docs/PRODUCT_PRINCIPLES.md](docs/PRODUCT_PRINCIPLES.
 
 Together Ledger is an early public prototype. Browser-only journeys are live. The PR#0003 branch contains a tested private-service candidate, but it is not a production multi-user claim until SMTP, cloud PostgreSQL, cross-cloud backup restoration, independent review, and DNS cutover pass.
 
-See [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
+The next public home is planned as `together-ledger.com`; the present Surojito address remains live until that migration is checked with care. See [docs/DOMAIN_MIGRATION.md](docs/DOMAIN_MIGRATION.md) for the safe cutover sequence and [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
 
 ## Contributing
 

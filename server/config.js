@@ -14,7 +14,7 @@ const ConfigSchema = z.object({
   COOKIE_SECURE: z.enum(['true', 'false']).default('false'),
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
   SMTP_URL: z.string().default(''),
-  MAIL_FROM: z.string().default('Together Ledger <no-reply@together.surojito.com>'),
+  MAIL_FROM: z.string().default('Together Ledger <no-reply@together-ledger.com>'),
 });
 
 export function loadConfig(overrides = {}) {
