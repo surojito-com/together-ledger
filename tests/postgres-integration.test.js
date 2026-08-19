@@ -23,7 +23,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
 
   const mailer = new MemoryMailer();
   const platform = new PlatformService({ pool, config, mailer });
-  const registration = await platform.register({ email: 'postgres@example.test', displayName: 'Postgres QA', username: 'postgres-qa', password: 'correct horse battery staple' });
+  const registration = await platform.register({ email: 'postgres@example.test', username: 'postgres-qa', password: 'correct horse battery staple' });
   await platform.verifyEmail(mailer.messages.find((message) => message.type === 'verification').token);
   const journey = await platform.createJourney(registration.user.id, {
     name: 'Migration proof',

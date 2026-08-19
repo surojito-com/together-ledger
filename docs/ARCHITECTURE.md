@@ -32,7 +32,7 @@ Signing in never uploads an existing browser ledger. A signed-in person delibera
 
 ## Account and sharing boundary
 
-Each journeyer has a separate email/password account and a unique private username. A display name is for the shared journey; a username is for sign-in and is not shown to the other journeyer by default. Usernames are normalized, validated in the application, and unique in PostgreSQL so web, mobile, AWS, and GCP clients all receive the same answer. A journey owner sends an email-bound, hashed, expiring invitation. Acceptance requires a signed-in account with that verified email. Database authorization is repeated inside every mutation transaction; journey IDs are never treated as authority.
+Each journeyer has a separate email/password account and a unique private username. Registration does not ask for a name: the username is the initial account label and is not shown to the other journeyer by default. Names used together belong in the shared journey, where they can be chosen with context rather than demanded during sign-up. Usernames are normalized, validated in the application, and unique in PostgreSQL so web, mobile, AWS, and GCP clients all receive the same answer. A journey owner sends an email-bound, hashed, expiring invitation. Acceptance requires a signed-in account with that verified email. Database authorization is repeated inside every mutation transaction; journey IDs are never treated as authority.
 
 The application enforces a maximum of two active members per journey. Removing a member requires the owner. Sharing a login is unsupported because it destroys actor attribution.
 

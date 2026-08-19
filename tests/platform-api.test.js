@@ -36,12 +36,12 @@ function cookieFrom(response) {
   return response.headers['set-cookie'].split(';')[0];
 }
 
-async function register(app, mailer, { email, displayName, username = email.split('@')[0] }) {
+async function register(app, mailer, { email, username = email.split('@')[0] }) {
   const response = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/register',
     headers: { origin },
-    payload: { email, displayName, username, password: 'correct horse battery staple' },
+    payload: { email, username, password: 'correct horse battery staple' },
   });
   assert.equal(response.statusCode, 201, response.body);
   const body = response.json().data;
@@ -71,14 +71,15 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
 
-  const alice = await register(app, mailer, { email: 'alice@example.test', displayName: 'Alice', username: 'alice-journeys' });
-  const bob = await register(app, mailer, { email: 'bob@example.test', displayName: 'Bob', username: 'bob-journeys' });
-  const mallory = await register(app, mailer, { email: 'mallory@example.test', displayName: 'Mallory', username: 'mallory-journeys' });
+  const alice = await register(app, mailer, { email: 'alice@example.test', username: 'alice-journeys' });
+  const bob = await register(app, mailer, { email: 'bob@example.test', username: 'bob-journeys' });
+  const mallory = await register(app, mailer, { email: 'mallory@example.test', username: 'mallory-journeys' });
   assert.equal(alice.user.username, 'alice-journeys');
+  assert.equal(alice.user.displayName, 'alice-journeys');
 
   const duplicateUsername = await app.inject({
     method: 'POST', url: '/api/v1/auth/register', headers: { origin },
-    payload: { email: 'another@example.test', displayName: 'Another', username: 'alice-journeys', password: 'correct horse battery staple' },
+    payload: { email: 'another@example.test', username: 'alice-journeys', password: 'correct horse battery staple' },
   });
   assert.equal(duplicateUsername.statusCode, 409);
   assert.equal(duplicateUsername.json().error.code, 'account_exists');
@@ -205,7 +206,7 @@ test('email outages preserve account recovery but revoke undelivered invitations
   const { app, pool } = await testPlatform({ mailer: failingMailer });
   t.after(async () => { await app.close(); await pool.end(); });
 
-  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: { origin }, payload: { email: 'offline@example.test', displayName: 'Offline', username: 'offline-journeys', password: 'correct horse battery staple' } });
+  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: { origin }, payload: { email: 'offline@example.test', username: 'offline-journeys', password: 'correct horse battery staple' } });
   assert.equal(registered.statusCode, 201, registered.body);
   assert.equal(registered.json().data.verificationSent, false);
   const client = { cookie: cookieFrom(registered), csrf: registered.json().data.csrfToken };
