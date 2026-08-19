@@ -27,21 +27,6 @@
     </header>
 
     <main id="top">
-      <section class="hero">
-        <div class="hero-copy">
-          <p class="eyebrow">A relationship-resilience tool</p>
-          <h1>Make space for what happened.<br /><em>Keep each other human.</em></h1>
-          <p class="hero-intro">Together Ledger is a private shared journey for two people: a gentle place to hold moments, promises, feelings, memories, boundaries, repair requests, and the practical things life asks you to navigate together.</p>
-          <div class="principles" aria-label="Product principles">
-            <span>Facts before blame</span><span>One shared picture</span><span>Conversation, not scoring</span>
-          </div>
-        </div>
-        <aside class="hero-note">
-          <span aria-hidden="true">♡</span>
-          <p><strong>A shared journey cannot measure love.</strong> It can make room for what deserves care, without scoring, ranking, or turning pain into debt.</p>
-        </aside>
-      </section>
-
       <section class="trip-bar" aria-label="Selected trip">
         <div class="trip-identity"><small>Selected journey</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
         <div class="journey-actions">
@@ -52,15 +37,11 @@
       </section>
 
       <section class="workspace">
-        <nav class="workspace-nav" aria-label="Journey sections"><a href="#guidance">Check-in</a><a href="#moments">Our moments</a><a href="#threads">Open threads</a><span id="journey-count"></span></nav>
-        <div class="summary-grid" id="journey-summary" aria-label="Our shared journey overview"></div>
-
-        <section class="conversation-card card" id="guidance" aria-labelledby="conversation-title">
+        <section class="today-card card" id="guidance" aria-labelledby="conversation-title">
           <div>
-            <p class="eyebrow">A gentle check-in · no answers are saved</p>
-            <h2 id="conversation-title">One question. A little room. No score to earn.</h2>
-            <p>Read one prompt at a time. Pause, skip, or return later. Nothing you say here is captured as an answer.</p>
-            <div class="milestone-list" id="milestone-list" aria-label="Journey action milestones"></div>
+            <p class="eyebrow">A small place to begin</p>
+            <h2 id="conversation-title">One question, if now is a good time.</h2>
+            <p>Nothing you say here is saved. Pause, skip, or return later.</p>
           </div>
           <div class="guided-prompt">
             <span id="guidance-progress"></span>
@@ -70,8 +51,8 @@
         </section>
 
         <section class="card moments-section" id="moments" aria-labelledby="moments-title">
-          <div class="section-heading"><div><p class="eyebrow">Our shared journey</p><h2 id="moments-title">Recent moments</h2><p>Hold what happened in words that feel true. Money can be optional practical context inside a moment—not the measure of your relationship.</p></div><button class="button primary" data-open-moment>＋ Hold a moment</button></div>
-          <div class="filters" id="moment-filters" aria-label="Filter moments by kind"></div>
+          <div class="section-heading"><div><p class="eyebrow">Our shared journey</p><h2 id="moments-title">Recent moments</h2><p>Hold what happened in words that feel true.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
+          <div class="filters" id="moment-filters" role="group" aria-label="Filter moments by kind"></div>
           <div class="moment-timeline" id="moment-timeline"></div>
         </section>
 
@@ -80,7 +61,6 @@
           <div id="open-threads"></div>
         </section>
 
-        <section class="privacy-boundary card"><p class="eyebrow">Privacy boundary</p><h2>Visibility needs real boundaries.</h2><p id="privacy-boundary-copy"></p></section>
       </section>
     </main>
 
@@ -179,7 +159,7 @@
       <section id="account-unavailable" class="account-panel account-notice" hidden><p class="eyebrow">Private accounts</p><h3>We are connecting this with care.</h3><p>This public page cannot create an account until the protected Together Ledger service is live. No name, email, or password has been sent from this screen.</p><p>Your browser-only journey remains on this device. We will invite you to create a separate private account when the service is ready.</p></section>
       <div id="signed-out-account" class="account-grid">
         <form id="login-form" class="account-panel"><h3>Sign in</h3><label class="field"><span>Email or username</span><input name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required minlength="12" /></label><button class="button primary">Sign in</button><button class="text-button" type="button" id="recovery-button">I forgot my password</button></form>
-        <form id="register-form" class="account-panel"><h3>Create account</h3><label class="field"><span>Your name</span><input name="displayName" autocomplete="name" maxlength="80" required /></label><label class="field"><span>Choose a username</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="30" pattern="[a-z][a-z0-9-]{2,29}" required /><small>3–30 lowercase letters, numbers, or single hyphens. Your username is for signing in and is not shown to your journeyer.</small></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><small>Use at least 12 characters. We send a verification link before invitations can be accepted.</small><button class="button primary">Create secure account</button></form>
+        <form id="register-form" class="account-panel"><h3>Create account</h3><label class="field"><span>Choose a username</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="30" pattern="[a-z][a-z0-9-]{2,29}" required /><small>3–30 lowercase letters, numbers, or single hyphens. It is for signing in and is not shown to your journeyer. You can choose the names used together when a journey calls for them.</small></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><small>Use at least 12 characters. We send a verification link before invitations can be accepted.</small><button class="button primary">Create secure account</button></form>
       </div>
       <div id="signed-in-account" class="account-panel" hidden><h3 id="account-name"></h3><p id="account-username"></p><p id="account-email"></p><p id="verification-status"></p><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes sessions. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
     </dialog>

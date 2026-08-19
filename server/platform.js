@@ -186,10 +186,10 @@ export class PlatformService {
     return { rawToken, csrfToken, expiresAt };
   }
 
-  async register({ email, username, displayName, password }) {
+  async register({ email, username, password }) {
     const normalizedEmail = cleanEmail(email);
     const privateUsername = cleanUsername(username);
-    const name = cleanText(displayName, 'Display name', 80);
+    const name = privateUsername;
     const passwordHash = await cleanPasswordHash(password);
     const verificationToken = opaqueToken();
     let result;

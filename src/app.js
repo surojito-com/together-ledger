@@ -32,6 +32,7 @@ let removeSnapshot = null;
 let guidanceIndex = 0;
 let onboardingIndex = 0;
 let momentFilter = 'all';
+let momentsExpanded = false;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -153,7 +154,6 @@ function render() {
 function renderJourneyControls(trip) {
   $('#journey-select').innerHTML = state.trips.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
   $('#journey-select').value = trip.id;
-  $('#journey-count').textContent = isCloudJourney(trip) ? `${state.trips.length} private ${state.trips.length === 1 ? 'journey' : 'journeys'} synced` : `${state.trips.length} ${state.trips.length === 1 ? 'journey' : 'journeys'} stored in this browser`;
   const actor = currentActor(trip);
   $('#actor-select').innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
   $('#actor-select').value = actor;
@@ -171,13 +171,7 @@ function momentLabel(kind) {
 
 function renderSharedJourney(trip, moments) {
   const threads = state.concerns.filter((concern) => concern.tripId === trip.id && concern.status === 'open');
-  const shared = moments.filter((moment) => moment.visibility === 'shared-now');
   const recent = [...moments].sort((a, b) => `${b.occurredOn}-${b.updatedAt}`.localeCompare(`${a.occurredOn}-${a.updatedAt}`));
-  $('#journey-summary').innerHTML = [
-    ['Current check-in', shared.length ? 'Ready together' : 'Make room', shared.length ? 'A shared place to begin' : 'Name one small thing'],
-    ['Recent moments', `${recent.length}`, recent.length === 1 ? 'One moment held here' : 'Moments held with care'],
-    ['Open threads', `${threads.length}`, threads.length ? 'Choose one gentle next step' : 'Nothing waiting right now'],
-  ].map(([label, value, note]) => `<article class="card summary"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
 
   const prompts = conversationPrompts();
   guidanceIndex = Math.min(guidanceIndex, prompts.length - 1);
@@ -186,26 +180,18 @@ function renderSharedJourney(trip, moments) {
   $('#guidance-prev').disabled = guidanceIndex === 0;
   $('#guidance-next').hidden = guidanceIndex === prompts.length - 1;
   $('#guidance-done').hidden = guidanceIndex !== prompts.length - 1;
-  $('#milestone-list').innerHTML = [['reviewedPicture', 'We paused to notice what is here'], ['chosePrompt', 'We chose one question to hold together'], ['agreedNextAction', 'We named one next step']].map(([key, label]) => `<label><input type="checkbox" data-milestone="${key}" ${trip.milestones[key] ? 'checked' : ''} /> <span>${label}</span></label>`).join('');
-  $$('[data-milestone]').forEach((input) => input.addEventListener('change', () => {
-    if (isCloudJourney(trip)) { input.checked = !input.checked; showToast('Check-ins for private sync will arrive with the shared-moment service.'); return; }
-    const before = { [input.dataset.milestone]: !input.checked };
-    trip.milestones[input.dataset.milestone] = input.checked;
-    eventRecord({ action: 'checkin_updated', entityType: 'checkin', entityId: input.dataset.milestone, summary: `${input.checked ? 'Completed' : 'Reopened'} check-in: ${input.nextElementSibling.textContent}`, before, after: { [input.dataset.milestone]: input.checked } });
-    persistAndRender('Check-in updated.');
-  }));
-
-  const filters = [['all', 'All moments'], ...MOMENT_TYPES.map(([value, label]) => [value, label])];
-  $('#moment-filters').innerHTML = filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('');
+  const kindsInUse = new Set(recent.map((moment) => moment.kind));
+  const filters = [['all', 'All moments'], ...MOMENT_TYPES.filter(([value]) => kindsInUse.has(value))];
+  if (!filters.some(([value]) => value === momentFilter)) momentFilter = 'all';
+  $('#moment-filters').hidden = !momentsExpanded;
+  $('#moment-filters').innerHTML = momentsExpanded ? filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('') : '';
   $$('[data-moment-filter]').forEach((button) => button.addEventListener('click', () => { momentFilter = button.dataset.momentFilter; renderSharedJourney(trip, moments); }));
-  const visible = recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter);
+  $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
+  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
   $('#open-threads').innerHTML = threads.length ? threads.map((thread) => `<article class="thread-row"><div><span class="status-chip open">open</span><strong>${escapeHtml(thread.title)}</strong>${thread.detail ? `<p>${escapeHtml(thread.detail)}</p>` : ''}</div><button data-edit-thread="${escapeHtml(thread.id)}">Open</button></article>`).join('') : '<p class="empty compact">No open threads. That can be a good place to rest.</p>';
   $$('[data-edit-thread]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editThread)));
-  $('#privacy-boundary-copy').textContent = isCloudJourney(trip)
-    ? 'This journey is signed in, but private / shared-now / share-later moments are not yet supported by the hosted service. Do not use this preview for a confidential reflection.'
-    : 'Browser-only visibility is a local cue, not account-separated privacy: anyone who can use this browser can see it. Shared-now and share-later will gain real per-person sharing when the private service adds moment authorization.';
 }
 
 function openMoment(id = '') {
@@ -668,6 +654,12 @@ $('#moment-form').addEventListener('submit', (event) => {
   } catch (error) {
     showToast(error.message);
   }
+});
+
+$('#toggle-moments-button').addEventListener('click', () => {
+  momentsExpanded = !momentsExpanded;
+  momentFilter = 'all';
+  renderSharedJourney(activeTrip(state), activeMoments(state));
 });
 $('#guidance-done').addEventListener('click', async () => {
   const trip = activeTrip(state);
