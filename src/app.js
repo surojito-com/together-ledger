@@ -147,6 +147,8 @@ function render() {
   const moments = activeMoments(state);
   const isEmptyStart = trip.id === 'first-shared-space' && !moments.length && !state.entries.length && !state.concerns.length;
   renderJourneyControls(trip);
+  $('.trip-bar').hidden = isEmptyStart;
+  $$('[data-open-moment]').forEach((button) => { button.textContent = isEmptyStart ? 'Begin' : '＋ Hold a moment'; });
   $('#trip-name').textContent = trip.name;
   $('#trip-period').textContent = isEmptyStart ? 'Nothing has been written here yet.' : `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
   $('#guidance').hidden = isEmptyStart;
