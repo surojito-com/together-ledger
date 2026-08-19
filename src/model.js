@@ -38,28 +38,18 @@ function practicalMoments(entries) {
 }
 
 export function demoState() {
-  const entries = [
-    { id: 'demo-1', tripId: 'demo-coast', merchant: 'Train to Portland', category: 'Transportation', amountCents: 12800, occurredOn: '2026-08-14', paidBy: 'Alex', account: 'Travel card', status: 'paid', reference: '', notes: 'Refundable fare' },
-    { id: 'demo-2', tripId: 'demo-coast', merchant: 'Harbor guesthouse', category: 'Hotel', amountCents: 46800, occurredOn: '2026-08-14', paidBy: 'Jordan', account: 'Credit card', status: 'paid', reference: 'DEMO-4821', notes: 'Two nights' },
-    { id: 'demo-3', tripId: 'demo-coast', merchant: 'Tidepool dinner', category: 'Restaurants', amountCents: 9350, occurredOn: '2026-08-15', paidBy: 'Alex', account: 'Debit card', status: 'paid', reference: '', notes: 'Anniversary dinner' },
-  ];
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
-    activeTripId: 'demo-coast',
-    preferences: { onboardingComplete: false, activeActorByTrip: { 'demo-coast': 'Alex' } },
+    activeTripId: 'first-shared-space',
+    preferences: { onboardingComplete: false, activeActorByTrip: { 'first-shared-space': 'You' } },
     trips: [{
-      id: 'demo-coast', name: 'Coastal Weekend', location: 'Oregon Coast', startDate: '2026-08-14', endDate: '2026-08-17', budgetCents: 120000, members: ['Alex', 'Jordan'], archivedAt: '',
+      id: 'first-shared-space', name: 'A shared space', location: 'Nothing recorded yet', startDate: '2026-01-01', endDate: '2026-01-01', budgetCents: 0, members: ['You', 'Your journeyer'], archivedAt: '',
       milestones: { reviewedPicture: false, chosePrompt: false, agreedNextAction: false },
     }],
-    entries,
-    moments: [
-      { id: 'moment-1', tripId: 'demo-coast', kind: 'memory', title: 'First walk on the shore', detail: 'The wind was wild, and we laughed anyway.', occurredOn: '2026-08-14', visibility: 'shared-now', moneyCents: null, createdAt: '2026-08-14T20:00:00.000Z', updatedAt: '2026-08-14T20:00:00.000Z' },
-      { id: 'moment-2', tripId: 'demo-coast', kind: 'acknowledgment', title: 'Thank you for carrying the plan', detail: 'I noticed the care it took to make room for this weekend.', occurredOn: '2026-08-15', visibility: 'shared-now', moneyCents: null, createdAt: '2026-08-15T18:00:00.000Z', updatedAt: '2026-08-15T18:00:00.000Z' },
-      { id: 'moment-3', tripId: 'demo-coast', kind: 'repair-request', title: 'Come back to the missed check-in', detail: 'Can we set aside ten calm minutes after breakfast tomorrow?', occurredOn: '2026-08-16', visibility: 'share-later', moneyCents: null, createdAt: '2026-08-16T08:00:00.000Z', updatedAt: '2026-08-16T08:00:00.000Z' },
-      ...practicalMoments(entries),
-    ],
-    concerns: [{ id: 'thread-1', tripId: 'demo-coast', title: 'Choose a gentle time to talk', detail: 'A short, unhurried check-in after breakfast.', status: 'open', createdAt: '2026-08-15T19:00:00.000Z', createdBy: 'Alex', updatedAt: '2026-08-15T19:00:00.000Z', updatedBy: 'Alex' }],
-    events: [{ id: 'demo-event-1', tripId: 'demo-coast', sequence: 1, occurredAt: '2026-08-01T20:00:00.000Z', actorName: 'Alex', action: 'journey_created', entityType: 'journey', entityId: 'demo-coast', summary: 'Created the Coastal Weekend journey', before: null, after: { name: 'Coastal Weekend' }, previousEventId: '', source: 'synthetic-demo' }],
+    entries: [],
+    moments: [],
+    concerns: [],
+    events: [],
   };
 }
 

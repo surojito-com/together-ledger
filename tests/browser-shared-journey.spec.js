@@ -5,14 +5,16 @@ async function skipOnboarding(page) {
   if (await page.locator('#onboarding-dialog').getAttribute('open') !== null) await page.locator('#skip-onboarding').click();
 }
 
-test('browser-only journeys hold visible moments without money-first dashboards', async ({ page }) => {
+test('the first browser-only screen begins empty and explains what can be held', async ({ page }) => {
   await page.goto('/');
   await skipOnboarding(page);
 
-  await expect(page.getByRole('heading', { name: 'Recent moments' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Open threads' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'One question, if now is a good time.' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /See all \d+ moments/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What can live here?' })).toBeVisible();
+  await expect(page.locator('#moment-timeline')).toContainText('There are no examples here—only possibilities:');
+  await expect(page.locator('#moment-timeline')).toContainText('Repair request');
+  await expect(page.getByRole('heading', { name: 'Open threads' })).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'One question, if now is a good time.' })).toBeHidden();
+  await expect(page.getByRole('button', { name: /See all \d+ moments/ })).toBeHidden();
   await expect(page.locator('body')).not.toContainText('Total trip cost');
   await expect(page.locator('body')).not.toContainText('Daily spending');
 

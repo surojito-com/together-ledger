@@ -145,10 +145,13 @@ function initializeThemePicker() {
 function render() {
   const trip = activeTrip(state);
   const moments = activeMoments(state);
+  const isEmptyStart = trip.id === 'first-shared-space' && !moments.length && !state.entries.length && !state.concerns.length;
   renderJourneyControls(trip);
   $('#trip-name').textContent = trip.name;
-  $('#trip-period').textContent = `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
-  renderSharedJourney(trip, moments);
+  $('#trip-period').textContent = isEmptyStart ? 'Nothing has been written here yet.' : `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
+  $('#guidance').hidden = isEmptyStart;
+  $('#threads').hidden = isEmptyStart;
+  renderSharedJourney(trip, moments, isEmptyStart);
 }
 
 function renderJourneyControls(trip) {
@@ -169,7 +172,7 @@ function momentLabel(kind) {
   return MOMENT_TYPES.find(([value]) => value === kind)?.[1] || 'Moment';
 }
 
-function renderSharedJourney(trip, moments) {
+function renderSharedJourney(trip, moments, isEmptyStart) {
   const threads = state.concerns.filter((concern) => concern.tripId === trip.id && concern.status === 'open');
   const recent = [...moments].sort((a, b) => `${b.occurredOn}-${b.updatedAt}`.localeCompare(`${a.occurredOn}-${a.updatedAt}`));
 
@@ -183,12 +186,16 @@ function renderSharedJourney(trip, moments) {
   const kindsInUse = new Set(recent.map((moment) => moment.kind));
   const filters = [['all', 'All moments'], ...MOMENT_TYPES.filter(([value]) => kindsInUse.has(value))];
   if (!filters.some(([value]) => value === momentFilter)) momentFilter = 'all';
-  $('#moment-filters').hidden = !momentsExpanded;
+  $('#moments-eyebrow').textContent = isEmptyStart ? 'A place to begin' : 'Our shared journey';
+  $('#moments-title').textContent = isEmptyStart ? 'What can live here?' : 'Recent moments';
+  $('#moments-copy').textContent = isEmptyStart ? 'A ledger can hold the things you want to remember, name, or return to. It begins empty.' : 'Hold what happened in words that feel true.';
+  $('#moment-filters').hidden = !momentsExpanded || !recent.length;
   $('#moment-filters').innerHTML = momentsExpanded ? filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('') : '';
   $$('[data-moment-filter]').forEach((button) => button.addEventListener('click', () => { momentFilter = button.dataset.momentFilter; renderSharedJourney(trip, moments); }));
+  $('#toggle-moments-button').hidden = !recent.length;
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
-  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
+  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}</div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
   $('#open-threads').innerHTML = threads.length ? threads.map((thread) => `<article class="thread-row"><div><span class="status-chip open">open</span><strong>${escapeHtml(thread.title)}</strong>${thread.detail ? `<p>${escapeHtml(thread.detail)}</p>` : ''}</div><button data-edit-thread="${escapeHtml(thread.id)}">Open</button></article>`).join('') : '<p class="empty compact">No open threads. That can be a good place to rest.</p>';
   $$('[data-edit-thread]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editThread)));
@@ -926,12 +933,12 @@ $('#import-file').addEventListener('change', async (event) => {
 });
 
 $('#reset-button').addEventListener('click', () => {
-  if (!window.confirm('Replace this browser’s ledger with synthetic demo data? Export first if you need a backup.')) return;
+  if (!window.confirm('Clear this browser’s ledger and begin with an empty shared space? Export first if you need a backup.')) return;
   state = resetState();
   selectedDay = null;
   selectedCategory = null;
   render();
-  showToast('Synthetic demo restored.');
+  showToast('This browser has a fresh shared space.');
 });
 
 $('#onboarding-back').addEventListener('click', () => {
