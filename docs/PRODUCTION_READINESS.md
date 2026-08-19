@@ -18,7 +18,7 @@ This checklist records what must be true before Together Ledger's private-sync A
 - [ ] The PostgreSQL role is application-only and the database has no public port.
 - [ ] Caddy receives only ports `80` and `443`; it proxies privately to the application.
 - [ ] A Caddy domain and Cloudflare DNS record are configured only after private health checks pass.
-- [ ] `PUBLIC_ORIGIN` is exactly `https://together.surojito.com`, cookies are secure, and proxy trust is enabled.
+- [ ] `PUBLIC_ORIGIN` is exactly `https://together-ledger.com`, cookies are secure, and proxy trust is enabled.
 
 ## Recoverability
 
@@ -30,4 +30,4 @@ This checklist records what must be true before Together Ledger's private-sync A
 
 ## Public release decision
 
-Only after every applicable item is checked may the owner open Lightsail ports `80` and `443`, direct `api.together.surojito.com` to AWS, and configure the Pages frontend to use that exact API origin. A budget alert is monitoring—not an automatic spending stop.
+Only after every applicable item is checked may the owner open Lightsail ports `80` and `443`, direct `api.together-ledger.com` to AWS, and configure the Pages frontend to use that exact API origin. Do not redirect `together.surojito.com` until the new public and API paths pass their synthetic-account checks. A budget alert is monitoring—not an automatic spending stop.

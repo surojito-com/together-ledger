@@ -31,7 +31,7 @@
   "bugs": {
     "url": "https://github.com/surojito-com/together-ledger/issues"
   },
-  "homepage": "https://together.surojito.com/",
+  "homepage": "https://together-ledger.com/",
   "engines": {
     "node": ">=22"
   },

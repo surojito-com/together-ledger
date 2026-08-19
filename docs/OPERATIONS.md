@@ -44,9 +44,9 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 
 1. Build and review an image, then record its immutable registry digest as `TOGETHER_IMAGE`. A registry is not configured yet; do this only during the later server deployment pass.
 2. Copy `.env.production.example` to a root-owned, mode-0600 file outside the repository, such as `/run/together-ledger/production.env`. In production, materialize its real values from AWS Secrets Manager; do not commit it.
-3. Set `CADDY_DOMAIN=api.together.surojito.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together.surojito.com`.
+3. Set `CADDY_DOMAIN=api.together-ledger.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together-ledger.com`.
 4. Start the bundle with `TOGETHER_ENV_FILE=/run/together-ledger/production.env docker compose --env-file /run/together-ledger/production.env -f compose.production.yaml up -d`. Compose needs `--env-file` for its own image and database variable substitutions; service-level `env_file` alone is not enough.
-5. Check `https://api.together.surojito.com/healthz` and `/readyz`; do not route the public frontend to the API until the synthetic-account checks pass.
+5. Check `https://api.together-ledger.com/healthz` and `/readyz`; do not route the public frontend to the API until the synthetic-account checks pass.
 
 ### Encrypted logical backup
 
@@ -68,7 +68,7 @@ The script creates a custom-format PostgreSQL dump, encrypts it before writing i
 4. Exercise registration, verification, invitation, two-seat enforcement, access denial, recovery, concurrent edit conflict, Event Manager integrity, export, and deletion with synthetic data.
 5. Deploy AWS primary, run `/healthz`, then run authenticated smoke tests.
 6. Copy a backup to GCP, restore it into the standby database, deploy the same digest, and test using a private temporary hostname.
-7. Configure `api.together.surojito.com`, then set the public frontend's API-origin configuration only after both the rollback and standby restore paths have passed. `together.surojito.com` remains the GitHub Pages frontend.
+7. Configure `api.together-ledger.com`, then set the public frontend's API-origin configuration only after both the rollback and standby restore paths have passed. `together-ledger.com` becomes the GitHub Pages frontend. Keep `together.surojito.com` as a redirect only after the new path is verified.
 
 Read the companion [production readiness gate](PRODUCTION_READINESS.md) before opening ports 80 or 443. The host preflight is deliberately read-only:
 

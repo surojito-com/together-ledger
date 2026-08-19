@@ -22,7 +22,7 @@ Signing in never uploads an existing browser ledger. A signed-in person delibera
 - `src/styles.css` contains the responsive, 16-theme visual system.
 - `src/model.js` contains calculations and local validation.
 - `src/store.js` owns browser persistence, migration, and JSON backup/restore.
-- `src/api.js` is a configurable-origin, cookie-authenticated API client. It remains same-origin by default for the public demo and switches to `api.together.surojito.com` only when the deployment meta configuration is set.
+- `src/api.js` is a configurable-origin, cookie-authenticated API client. It remains same-origin by default for the public demo and switches to `api.together-ledger.com` only when the deployment meta configuration is set.
 - `src/app.js` renders both modes and maps authoritative snapshots into the established UI model.
 - `server/app.js` applies origin, session, CSRF, rate-limit, cookie, and HTTP security boundaries.
 - `server/platform.js` owns authorization and transactional domain operations.
