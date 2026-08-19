@@ -1,4 +1,4 @@
-import { demoState, isValidState, migrateState } from './model.js';
+import { demoState, isRetiredSyntheticDemo, isValidState, migrateState } from './model.js';
 
 export const STORAGE_KEY = 'together-ledger-v3';
 export const PREVIOUS_STORAGE_KEY = 'together-ledger-v2';
@@ -10,6 +10,11 @@ export function loadState() {
       const raw = localStorage.getItem(key);
       if (!raw) continue;
       const state = migrateState(JSON.parse(raw));
+      if (isRetiredSyntheticDemo(state)) {
+        const fresh = demoState();
+        saveState(fresh);
+        return fresh;
+      }
       if (key !== STORAGE_KEY) saveState(state);
       return state;
     } catch {

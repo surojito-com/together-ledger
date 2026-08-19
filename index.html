@@ -27,8 +27,8 @@
     </header>
 
     <main id="top">
-      <section class="trip-bar" aria-label="Selected trip">
-        <div class="trip-identity"><small>Selected journey</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
+      <section class="trip-bar" aria-label="Your shared space">
+        <div class="trip-identity"><small>Your shared space</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
         <div class="journey-actions">
           <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
           <button class="button quiet" id="new-journey-button">＋ New journey</button>
@@ -51,7 +51,7 @@
         </section>
 
         <section class="card moments-section" id="moments" aria-labelledby="moments-title">
-          <div class="section-heading"><div><p class="eyebrow">Our shared journey</p><h2 id="moments-title">Recent moments</h2><p>Hold what happened in words that feel true.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
+          <div class="section-heading"><div><p class="eyebrow" id="moments-eyebrow">Your shared ledger</p><h2 id="moments-title">What can live here?</h2><p id="moments-copy">Choose what feels true. Nothing is added until you decide.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
           <div class="filters" id="moment-filters" role="group" aria-label="Filter moments by kind"></div>
           <div class="moment-timeline" id="moment-timeline"></div>
         </section>
@@ -145,7 +145,7 @@
           <section id="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" /></label><button class="button primary">Send invitation</button></form><div id="member-list"></div></section>
           <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select></label></section>
           <section><h3>Backup and restore</h3><p>Exports include every local journey, moment, practical detail, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
-          <section><h3>Start over</h3><p>Reset replaces this browser’s journeys with synthetic demonstration data. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Reset demo</button></section>
+          <section><h3>Start fresh</h3><p>Reset clears this browser’s journeys and starts with an empty shared space. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Start fresh</button></section>
           <section><h3>Privacy boundary</h3><p>Browser-only journeys stay in this browser. Signed-in private journeys are loaded from the account service and removed from view on sign-out; signing in never uploads the browser ledger.</p></section>
         </div>
       </div>
@@ -195,7 +195,7 @@
     <dialog id="confirm-dialog">
       <form method="dialog">
         <h2>Remove this expense?</h2>
-        <p>This changes the local demo data on this browser. Export first if you want a backup.</p>
+        <p>This clears the local data on this browser and starts with an empty shared space. Export first if you want a backup.</p>
         <div class="dialog-actions"><button class="button quiet" value="cancel">Keep it</button><button class="button danger" value="confirm">Remove</button></div>
       </form>
     </dialog>

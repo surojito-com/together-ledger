@@ -160,6 +160,7 @@
 :root[data-theme-base="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { background: var(--paper); scroll-behavior: smooth; }
 body { background: var(--paper); color: var(--ink); font-size: 17px; line-height: 1.55; margin: 0; transition: background-color .15s ease, color .15s ease; }
 button, input, select, textarea { font: inherit; }
@@ -399,6 +400,10 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .moments-section, .threads-section, .privacy-boundary { overflow: hidden; }
 .moments-section .filters { border-top: 1px solid var(--line); padding: 17px 28px 0; }
 .moment-timeline { display: grid; gap: 12px; padding: 18px 28px 28px; }
+.log-types { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.log-types p { color: var(--muted); margin: 0 0 16px; }
+.log-types div { display: flex; flex-wrap: wrap; gap: 8px; }
+.log-types span { background: var(--card); border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 800; padding: 9px 12px; }
 .moment-card { background: color-mix(in srgb, var(--soft) 72%, var(--card)); border: 1px solid var(--line); border-left: 5px solid var(--teal); border-radius: 18px; padding: 18px; }
 .moment-card.private { border-left-color: var(--muted); }
 .moment-card.share-later { border-left-color: var(--red); }

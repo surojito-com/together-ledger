@@ -8,6 +8,7 @@ import {
   dateRange,
   demoState,
   groupDayByCategory,
+  isRetiredSyntheticDemo,
   isValidState,
   migrateState,
   normalizeConcern,
@@ -17,35 +18,48 @@ import {
   summarize,
 } from '../src/model.js';
 
-test('synthetic demo state is valid and isolated to its active trip', () => {
+test('a fresh shared space is valid and begins without invented records', () => {
   const state = demoState();
   assert.equal(isValidState(state), true);
-  assert.equal(activeEntries(state).length, 3);
-  assert.ok(activeMoments(state).length >= 6);
-  assert.deepEqual(state.trips[0].members, ['Alex', 'Jordan']);
+  assert.equal(activeEntries(state).length, 0);
+  assert.equal(activeMoments(state).length, 0);
+  assert.deepEqual(state.trips[0].members, ['You', 'Your journeyer']);
+});
+
+test('only the untouched retired sample is recognized for replacement', () => {
+  const sample = {
+    activeTripId: 'demo-coast',
+    trips: [{ id: 'demo-coast', name: 'Coastal Weekend' }],
+    entries: [{ id: 'demo-1' }, { id: 'demo-2' }, { id: 'demo-3' }],
+    moments: [{ id: 'moment-1' }, { id: 'moment-2' }, { id: 'moment-3' }, { id: 'practical-demo-1' }, { id: 'practical-demo-2' }, { id: 'practical-demo-3' }],
+    concerns: [{ id: 'thread-1' }],
+    events: [{ id: 'demo-event-1', source: 'synthetic-demo' }],
+  };
+  assert.equal(isRetiredSyntheticDemo(sample), true);
+  assert.equal(isRetiredSyntheticDemo({ ...sample, moments: [...sample.moments, { id: 'a-real-moment' }] }), false);
 });
 
 test('summary calculates totals, due costs, categories, payers, and budget', () => {
-  const entries = activeEntries(demoState());
+  const entries = [normalizeEntry({ merchant: 'Museum', category: 'Activities', amount: '19.95', occurredOn: '2026-08-15', paidBy: 'You', status: 'paid' }, 'first-shared-space')];
   const summary = summarize(entries, 120000);
-  assert.equal(summary.totalCents, 68950);
+  assert.equal(summary.totalCents, 1995);
   assert.equal(summary.dueCents, 0);
-  assert.equal(summary.budgetLeftCents, 51050);
-  assert.equal(summary.byCategory.Restaurants, 9350);
-  assert.equal(summary.byPayer.Alex, 22150);
+  assert.equal(summary.budgetLeftCents, 118005);
+  assert.equal(summary.byCategory.Activities, 1995);
+  assert.equal(summary.byPayer.You, 1995);
 });
 
 test('date range includes every trip day', () => {
   const state = demoState();
   assert.deepEqual(dateRange(state.trips[0].startDate, state.trips[0].endDate, state.entries), [
-    '2026-08-14', '2026-08-15', '2026-08-16', '2026-08-17',
+    '2026-01-01',
   ]);
 });
 
 test('day drilldown groups existing practical records by category', () => {
-  const groups = groupDayByCategory(activeEntries(demoState()), '2026-08-14');
-  assert.equal(groups.Transportation.length, 1);
-  assert.equal(groups.Hotel.length, 1);
+  const entry = normalizeEntry({ merchant: 'Museum', category: 'Activities', amount: '19.95', occurredOn: '2026-08-15', paidBy: 'You', status: 'paid' }, 'first-shared-space');
+  const groups = groupDayByCategory([entry], '2026-08-15');
+  assert.equal(groups.Activities.length, 1);
 });
 
 test('entry normalization uses integer cents and validates categories', () => {
@@ -65,6 +79,7 @@ test('conversation prompts make room for a shared check-in without scoring', () 
 
 test('schema version 1 migrates losslessly into multiple-journey state', () => {
   const current = demoState();
+  current.entries.push(normalizeEntry({ merchant: 'Museum', category: 'Activities', amount: '19.95', occurredOn: '2026-08-15', paidBy: 'You', status: 'paid' }, current.activeTripId));
   const legacy = {
     schemaVersion: 1,
     activeTripId: current.activeTripId,
@@ -144,12 +159,12 @@ test('journey events are append-only, attributable, and sequential per journey',
     after: { budgetCents: 130000 },
     occurredAt: '2026-08-02T07:06:00.000Z',
   });
-  assert.equal(event.sequence, 2);
-  assert.equal(event.previousEventId, 'demo-event-1');
+  assert.equal(event.sequence, 1);
+  assert.equal(event.previousEventId, '');
   assert.equal(event.actorName, 'Jordan');
   assert.deepEqual(event.before, { budgetCents: 120000 });
   assert.equal(isValidState(state), true);
-  state.events[1].previousEventId = 'wrong-event';
+  state.events[0].previousEventId = 'wrong-event';
   assert.equal(isValidState(state), false);
 });
 
