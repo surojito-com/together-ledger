@@ -11,7 +11,8 @@ test('browser-only journeys hold visible moments without money-first dashboards'
 
   await expect(page.getByRole('heading', { name: 'Recent moments' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Open threads' })).toBeVisible();
-  await expect(page.locator('#journey-summary')).toContainText('Current check-in');
+  await expect(page.getByRole('heading', { name: 'One question, if now is a good time.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /See all \d+ moments/ })).toBeVisible();
   await expect(page.locator('body')).not.toContainText('Total trip cost');
   await expect(page.locator('body')).not.toContainText('Daily spending');
 

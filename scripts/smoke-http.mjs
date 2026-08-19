@@ -17,7 +17,7 @@ try {
   assert.match(html, /data-open-moment/);
   assert.match(html, /id="moment-timeline"/);
   assert.match(html, /Our shared journey/);
-  assert.match(html, /id="privacy-boundary-copy"/);
+  assert.match(html, /id="toggle-moments-button"/);
   assert.match(html, /src="\.\/src\/themes\.js"/);
   assert.match(html, /id="theme-select"/);
   assert.match(html, /id="journey-select"/);
