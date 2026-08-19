@@ -8,6 +8,7 @@ import {
   dateRange,
   demoState,
   groupDayByCategory,
+  isRetiredSyntheticDemo,
   isValidState,
   migrateState,
   normalizeConcern,
@@ -23,6 +24,19 @@ test('a fresh shared space is valid and begins without invented records', () => 
   assert.equal(activeEntries(state).length, 0);
   assert.equal(activeMoments(state).length, 0);
   assert.deepEqual(state.trips[0].members, ['You', 'Your journeyer']);
+});
+
+test('only the untouched retired sample is recognized for replacement', () => {
+  const sample = {
+    activeTripId: 'demo-coast',
+    trips: [{ id: 'demo-coast', name: 'Coastal Weekend' }],
+    entries: [{ id: 'demo-1' }, { id: 'demo-2' }, { id: 'demo-3' }],
+    moments: [{ id: 'moment-1' }, { id: 'moment-2' }, { id: 'moment-3' }, { id: 'practical-demo-1' }, { id: 'practical-demo-2' }, { id: 'practical-demo-3' }],
+    concerns: [{ id: 'thread-1' }],
+    events: [{ id: 'demo-event-1', source: 'synthetic-demo' }],
+  };
+  assert.equal(isRetiredSyntheticDemo(sample), true);
+  assert.equal(isRetiredSyntheticDemo({ ...sample, moments: [...sample.moments, { id: 'a-real-moment' }] }), false);
 });
 
 test('summary calculates totals, due costs, categories, payers, and budget', () => {

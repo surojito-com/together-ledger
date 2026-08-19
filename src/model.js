@@ -53,6 +53,22 @@ export function demoState() {
   };
 }
 
+export function isRetiredSyntheticDemo(state) {
+  return state?.activeTripId === 'demo-coast'
+    && state.trips?.length === 1
+    && state.trips[0]?.id === 'demo-coast'
+    && state.trips[0]?.name === 'Coastal Weekend'
+    && state.entries?.length === 3
+    && state.entries.every((entry) => /^demo-[1-3]$/.test(entry.id))
+    && state.moments?.length === 6
+    && state.moments.every((moment) => /^(moment-[1-3]|practical-demo-[1-3])$/.test(moment.id))
+    && state.concerns?.length === 1
+    && state.concerns[0]?.id === 'thread-1'
+    && state.events?.length === 1
+    && state.events[0]?.id === 'demo-event-1'
+    && state.events[0]?.source === 'synthetic-demo';
+}
+
 export function normalizeMilestones(value = {}) {
   return { reviewedPicture: value.reviewedPicture === true, chosePrompt: value.chosePrompt === true, agreedNextAction: value.agreedNextAction === true };
 }
