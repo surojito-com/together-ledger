@@ -43,9 +43,9 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 `compose.production.yaml` is deliberately separate from the local `compose.yaml` file. It has no Mailpit service and exposes only Caddy on ports 80 and 443. PostgreSQL and the Node service have no host ports and communicate only on the Docker network.
 
 1. Build and review an image, then record its immutable registry digest as `TOGETHER_IMAGE`. A registry is not configured yet; do this only during the later server deployment pass.
-2. Copy `.env.production.example` to a root-owned, mode-0600 file outside the repository, such as `/run/together-ledger/production.env`. In production, materialize its real values from AWS Secrets Manager; do not commit it.
-3. Set `CADDY_DOMAIN=api.together-ledger.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together-ledger.com`.
-4. Start the bundle with `TOGETHER_ENV_FILE=/run/together-ledger/production.env docker compose --env-file /run/together-ledger/production.env -f compose.production.yaml up -d`. Compose needs `--env-file` for its own image and database variable substitutions; service-level `env_file` alone is not enough.
+2. Copy `.env.production.example` to a persistent, root-owned, mode-0600 file outside the repository, such as `/etc/together-ledger/production.env`. Do not use `/run`, which is cleared at reboot. In production, materialize its real values from AWS Secrets Manager; do not commit it.
+3. Set `CADDY_DOMAIN=api.together-ledger.com` and `API_ORIGIN=https://api.together-ledger.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together-ledger.com`.
+4. Start the bundle with `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d`. Compose needs `--env-file` for its own image and database variable substitutions; service-level `env_file` alone is not enough.
 5. Check `https://api.together-ledger.com/healthz` and `/readyz`; do not route the public frontend to the API until the synthetic-account checks pass.
 
 ### Encrypted logical backup
@@ -53,7 +53,7 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 Install `age` on the server and create an offline backup encryption key. Keep only its public recipient in the scheduled job. Run:
 
 ```sh
-TOGETHER_ENV_FILE=/run/together-ledger/production.env \
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env \
 AGE_RECIPIENT=age1replace-with-your-public-recipient \
 ./scripts/backup-postgres.sh
 ```
@@ -82,7 +82,7 @@ Use this procedure only after a deployed release. It does not replace the incide
 
 1. Record the failing release digest, UTC time, symptoms, and whether writes may have succeeded. Do not delete volumes, logs, backups, or the running database.
 2. If the issue is limited to the app or proxy, keep PostgreSQL running and return the application image to the last reviewed digest in the root-owned environment file.
-3. Run `TOGETHER_ENV_FILE=/run/together-ledger/production.env docker compose --env-file /run/together-ledger/production.env -f compose.production.yaml up -d` from the reviewed checkout.
+3. Run `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d` from the reviewed checkout.
 4. Verify `/healthz` and `/readyz` privately first. Then test one synthetic account flow; never use a real user's account as a probe.
 5. If database integrity is in doubt, freeze writes and stop. Choose the newest validated encrypted logical backup, restore it only into an isolated database, verify HMAC event chains and synthetic checks, then make a separate promotion decision.
 6. Record the outcome in the product journey document without secrets, IP addresses, account identifiers, or user data.
