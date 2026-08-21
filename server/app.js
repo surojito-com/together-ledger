@@ -36,7 +36,7 @@ export async function buildApp({ platform, config, logger = false }) {
     '<meta name="together-accounts-enabled" content="false" />',
     '<meta name="together-accounts-enabled" content="true" />',
   );
-  const allowedOrigins = new Set([config.PUBLIC_ORIGIN, config.API_ORIGIN].filter(Boolean));
+  const allowedOrigins = new Set([config.PUBLIC_ORIGIN, config.API_ORIGIN, config.ACCOUNT_ORIGIN].filter(Boolean));
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message } });

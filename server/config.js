@@ -6,6 +6,7 @@ const ConfigSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(4174),
   PUBLIC_ORIGIN: z.string().url().default('http://127.0.0.1:4174'),
   API_ORIGIN: z.string().url().or(z.literal('')).default(''),
+  ACCOUNT_ORIGIN: z.string().url().or(z.literal('')).default(''),
   DATABASE_URL: z.string().min(1).default('postgres://together@127.0.0.1:5432/together_ledger'),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   SESSION_SECRET: z.string().min(32).default('development-session-secret-change-me-0001'),
@@ -23,6 +24,7 @@ export function loadConfig(overrides = {}) {
   if (config.NODE_ENV === 'production') {
     if (!config.PUBLIC_ORIGIN.startsWith('https://')) throw new Error('Production PUBLIC_ORIGIN must use HTTPS.');
     if (!config.API_ORIGIN.startsWith('https://')) throw new Error('Production API_ORIGIN must use HTTPS.');
+    if (!config.ACCOUNT_ORIGIN.startsWith('https://')) throw new Error('Production ACCOUNT_ORIGIN must use HTTPS.');
     if (config.COOKIE_SECURE !== 'true') throw new Error('Production cookies must be secure.');
     if (config.SESSION_SECRET.startsWith('development-') || config.AUDIT_HMAC_KEY.startsWith('development-')) throw new Error('Production secrets must not use development defaults.');
     if (!config.SMTP_URL) throw new Error('Production SMTP delivery must be configured.');

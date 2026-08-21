@@ -26,6 +26,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
     API_ORIGIN: apiOrigin,
+    ACCOUNT_ORIGIN: apiOrigin,
     SESSION_SECRET: 's'.repeat(32),
     AUDIT_HMAC_KEY: 'a'.repeat(32),
   });

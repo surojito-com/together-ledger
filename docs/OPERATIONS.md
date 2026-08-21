@@ -44,7 +44,7 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 
 1. Build and review an image, then record its immutable registry digest as `TOGETHER_IMAGE`. A registry is not configured yet; do this only during the later server deployment pass.
 2. Copy `.env.production.example` to a persistent, root-owned, mode-0600 file outside the repository, such as `/etc/together-ledger/production.env`. Do not use `/run`, which is cleared at reboot. In production, materialize its real values from AWS Secrets Manager; do not commit it.
-3. Set `CADDY_DOMAIN=api.together-ledger.com` and `API_ORIGIN=https://api.together-ledger.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together-ledger.com`.
+3. Set `CADDY_DOMAIN=api.together-ledger.com`, `API_ORIGIN=https://api.together-ledger.com`, and `ACCOUNT_ORIGIN=https://api.together-ledger.com` only after staging DNS and TLS are ready. Keep `PUBLIC_ORIGIN=https://together-ledger.com`. `ACCOUNT_ORIGIN` is the explicit account-capable page used in verification, recovery, and invitation emails; never substitute the public information site unless it can complete those flows.
 4. Start the bundle with `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d`. Compose needs `--env-file` for its own image and database variable substitutions; service-level `env_file` alone is not enough.
 5. Check `https://api.together-ledger.com/healthz` and `/readyz`; do not route the public frontend to the API until the synthetic-account checks pass.
 
