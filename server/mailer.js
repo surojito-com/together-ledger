@@ -31,10 +31,10 @@ export class ConsoleBlockedMailer {
 }
 
 export class SmtpMailer {
-  constructor({ smtpUrl, from, publicOrigin, transport }) {
+  constructor({ smtpUrl, from, accountOrigin, transport }) {
     this.transport = transport || nodemailer.createTransport(smtpUrl);
     this.from = from;
-    this.publicOrigin = publicOrigin;
+    this.accountOrigin = accountOrigin;
   }
 
   send({ to, subject, text }) {
@@ -45,7 +45,7 @@ export class SmtpMailer {
     return this.send({
       to,
       subject: 'You are invited to a Together Ledger journey',
-      text: `A journey owner invited this email address. Sign in with your own account and accept: ${this.publicOrigin}/?invite=${encodeURIComponent(token)}\n\nIf you did not expect this invitation, ignore this message.`,
+      text: `A journey owner invited this email address. Sign in with your own account and accept: ${this.accountOrigin}/?invite=${encodeURIComponent(token)}\n\nIf you did not expect this invitation, ignore this message.`,
     });
   }
 
@@ -53,7 +53,7 @@ export class SmtpMailer {
     return this.send({
       to,
       subject: 'Reset your Together Ledger password',
-      text: `Reset your password: ${this.publicOrigin}/?recovery=${encodeURIComponent(token)}\n\nThis short-lived link works once. If you did not request it, ignore this message.`,
+      text: `Reset your password: ${this.accountOrigin}/?recovery=${encodeURIComponent(token)}\n\nThis short-lived link works once. If you did not request it, ignore this message.`,
     });
   }
 
@@ -61,7 +61,7 @@ export class SmtpMailer {
     return this.send({
       to,
       subject: 'Verify your Together Ledger email',
-      text: `Verify this email address: ${this.publicOrigin}/?verify=${encodeURIComponent(token)}\n\nThis short-lived link works once.`,
+      text: `Verify this email address: ${this.accountOrigin}/?verify=${encodeURIComponent(token)}\n\nThis short-lived link works once.`,
     });
   }
 }
