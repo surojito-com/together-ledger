@@ -18,7 +18,7 @@ export async function buildApp({ platform, config, logger = false }) {
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin;
-    if (origin && origin === config.PUBLIC_ORIGIN) {
+    if (origin && allowedOrigins.has(origin)) {
       reply.header('Access-Control-Allow-Origin', origin);
       reply.header('Access-Control-Allow-Credentials', 'true');
       reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Together-CSRF');
@@ -26,12 +26,17 @@ export async function buildApp({ platform, config, logger = false }) {
       reply.header('Vary', 'Origin');
     }
     if (request.method === 'OPTIONS') {
-      if (origin !== config.PUBLIC_ORIGIN) return reply.code(403).send({ error: { code: 'invalid_origin', message: 'This request did not come from the Together Ledger app.' } });
+      if (!allowedOrigins.has(origin)) return reply.code(403).send({ error: { code: 'invalid_origin', message: 'This request did not come from the Together Ledger app.' } });
       return reply.code(204).send();
     }
   });
   await app.register(fastifyStatic, { root: join(rootDirectory, 'src'), prefix: '/src/' });
   const indexMarkup = await readFile(join(rootDirectory, 'index.html'), 'utf8');
+  const hostedIndexMarkup = indexMarkup.replace(
+    '<meta name="together-accounts-enabled" content="false" />',
+    '<meta name="together-accounts-enabled" content="true" />',
+  );
+  const allowedOrigins = new Set([config.PUBLIC_ORIGIN, config.API_ORIGIN].filter(Boolean));
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message } });
@@ -46,7 +51,7 @@ export async function buildApp({ platform, config, logger = false }) {
   }
 
   function requireOrigin(request) {
-    if (request.headers.origin !== config.PUBLIC_ORIGIN) throw new PlatformError(403, 'invalid_origin', 'This request did not come from the Together Ledger app.');
+    if (!allowedOrigins.has(request.headers.origin)) throw new PlatformError(403, 'invalid_origin', 'This request did not come from the Together Ledger app.');
   }
 
   async function authenticate(request) {
@@ -74,7 +79,7 @@ export async function buildApp({ platform, config, logger = false }) {
       return reply.code(503).send({ status: 'unavailable' });
     }
   });
-  app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(indexMarkup));
+  app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(hostedIndexMarkup));
 
   app.post('/api/v1/auth/register', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
     requireOrigin(request);

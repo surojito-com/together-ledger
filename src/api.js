@@ -18,7 +18,14 @@ function configuredBase() {
   return origin ? `${origin.replace(/\/$/, '')}/api/v1` : '/api/v1';
 }
 
-function hasLocalApi() {
+function pageEnablesAccounts() {
+  const enabled = typeof document !== 'undefined'
+    ? document.querySelector('meta[name="together-accounts-enabled"]')?.content.trim()
+    : '';
+  return enabled === 'true';
+}
+
+function hasDevelopmentApi() {
   if (typeof location === 'undefined') return true;
   return ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 }
@@ -27,7 +34,7 @@ export class TogetherApi {
   constructor(base = configuredBase()) {
     this.base = base;
     this.csrfToken = '';
-    this.accountsAvailable = Boolean(configuredApiOrigin()) || hasLocalApi();
+    this.accountsAvailable = pageEnablesAccounts() || Boolean(configuredApiOrigin()) || hasDevelopmentApi();
     this.crossOrigin = typeof location !== 'undefined' && new URL(base, location.href).origin !== location.origin;
   }
 

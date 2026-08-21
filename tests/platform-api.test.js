@@ -8,6 +8,7 @@ import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
 
 const origin = 'http://127.0.0.1:4174';
+const apiOrigin = 'https://api.example.test';
 
 async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
@@ -24,6 +25,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
+    API_ORIGIN: apiOrigin,
     SESSION_SECRET: 's'.repeat(32),
     AUDIT_HMAC_KEY: 'a'.repeat(32),
   });
@@ -52,13 +54,16 @@ async function register(app, mailer, { email, username = email.split('@')[0] }) 
   return { cookie, csrf: body.csrfToken, user: body.user };
 }
 
-test('hosted API bridge allows only the configured frontend origin', async (t) => {
+test('hosted API bridge allows the configured frontend and API origins only', async (t) => {
   const { app, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
   const allowed = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin } });
   assert.equal(allowed.statusCode, 204);
   assert.equal(allowed.headers['access-control-allow-origin'], origin);
   assert.equal(allowed.headers['access-control-allow-credentials'], 'true');
+  const apiAllowed = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin: apiOrigin } });
+  assert.equal(apiAllowed.statusCode, 204);
+  assert.equal(apiAllowed.headers['access-control-allow-origin'], apiOrigin);
   const denied = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin: 'https://evil.example' } });
   assert.equal(denied.statusCode, 403);
 });
@@ -191,7 +196,9 @@ test('public service routes expose health and only the intended static app', asy
   t.after(async () => { await app.close(); await pool.end(); });
   assert.equal((await app.inject({ method: 'GET', url: '/healthz' })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: '/readyz' })).statusCode, 200);
-  assert.match((await app.inject({ method: 'GET', url: '/' })).body, /Together Ledger/);
+  const root = await app.inject({ method: 'GET', url: '/' });
+  assert.match(root.body, /Together Ledger/);
+  assert.match(root.body, /together-accounts-enabled" content="true"/);
   assert.equal((await app.inject({ method: 'GET', url: '/src/app.js' })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: '/src/api.js' })).statusCode, 200);
   assert.equal((await app.inject({ method: 'GET', url: '/server/platform.js' })).statusCode, 404);

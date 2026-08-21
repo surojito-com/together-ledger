@@ -24,6 +24,7 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(environment, /TRUST_PROXY=true/);
   assert.match(environment, /CADDY_DOMAIN=api\.together-ledger\.com/);
   assert.match(environment, /PUBLIC_ORIGIN=https:\/\/together-ledger\.com/);
+  assert.match(environment, /API_ORIGIN=https:\/\/api\.together-ledger\.com/);
   assert.match(environment, /no-reply@together-ledger\.com/);
   assert.match(environment, /POSTGRES_PASSWORD=replace-with-64-hex-characters/);
   assert.match(environment, /replace-with-a-different-long-random-secret/);
@@ -44,5 +45,5 @@ test('production deployment bundle keeps the database private and requires delib
 
 test('operations use the production environment file for Compose substitutions', async () => {
   const operations = await readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8');
-  assert.match(operations, /docker compose --env-file \/run\/together-ledger\/production\.env -f compose\.production\.yaml up -d/);
+  assert.match(operations, /docker compose --env-file \/etc\/together-ledger\/production\.env -f compose\.production\.yaml up -d/);
 });
