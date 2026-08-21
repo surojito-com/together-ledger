@@ -30,6 +30,9 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(backup, /pg_dump/);
   assert.match(backup, /age -r/);
   assert.match(backup, /export TOGETHER_ENV_FILE/);
+  assert.match(backup, /production environment file is not readable/);
+  assert.match(backup, /mkfifo/);
+  assert.match(backup, /wait "\$dump_pid"/);
   assert.match(hostCheck, /does not deploy the app or open any network port/);
   assert.match(hostCheck, /grep -Eq '5432:5432\|4174:4174\|mailpit'/);
   assert.match(readiness, /never committed/);
