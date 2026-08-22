@@ -87,7 +87,7 @@ test('schema version 1 migrates losslessly into multiple-journey state', () => {
     entries: current.entries.map((entry) => ({ ...entry })),
   };
   const migrated = migrateState(legacy);
-  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.schemaVersion, 4);
   assert.equal(migrated.preferences.onboardingComplete, false);
   assert.deepEqual(migrated.events, []);
   assert.deepEqual(migrated.concerns, []);

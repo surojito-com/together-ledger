@@ -24,7 +24,7 @@
         <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
         <input id="import-file" type="file" accept="application/json" hidden />
         <button class="button quiet" id="account-button">Sign in</button>
-        <button class="button quiet" id="settings-button">Settings</button>
+        <button class="button quiet" id="settings-button">Journey settings</button>
       </div>
     </header>
 
@@ -39,18 +39,19 @@
       </section>
 
       <section class="workspace">
-        <section class="today-card card" id="guidance" aria-labelledby="conversation-title">
-          <div>
-            <p class="eyebrow">A small place to begin</p>
-            <h2 id="conversation-title">One question, if now is a good time.</h2>
-            <p>Nothing you say here is saved. Pause, skip, or return later.</p>
+        <details class="today-card card guidance-card" id="guidance" aria-labelledby="conversation-title">
+          <summary>
+            <span><p class="eyebrow">A small place to begin</p><strong id="conversation-title">One question, if now is a good time.</strong><small>Nothing you say here is saved. Open only if this feels useful today.</small></span>
+            <span class="expando" aria-hidden="true">＋</span>
+          </summary>
+          <div class="guidance-content">
+            <div class="guided-prompt">
+              <span id="guidance-progress"></span>
+              <p id="guidance-prompt"></p>
+              <div class="guidance-actions"><button class="button quiet" id="guidance-skip">Next question</button><button class="button quiet" id="guidance-prev">Back</button><button class="button quiet" id="guidance-end">End for today</button><button class="button primary" id="guidance-done">Finish for today</button></div>
+            </div>
           </div>
-          <div class="guided-prompt">
-            <span id="guidance-progress"></span>
-            <p id="guidance-prompt"></p>
-            <div class="guidance-actions"><button class="button quiet" id="guidance-skip">Skip</button><button class="button quiet" id="guidance-prev">Back</button><button class="button primary" id="guidance-next">Next</button><button class="button primary" id="guidance-done">Done</button></div>
-          </div>
-        </section>
+        </details>
 
         <section class="card moments-section" id="moments" aria-labelledby="moments-title">
           <div class="section-heading"><div><p class="eyebrow" id="moments-eyebrow">Your shared ledger</p><h2 id="moments-title">What can live here?</h2><p id="moments-copy">Choose what feels true. Nothing is added until you decide.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
@@ -59,7 +60,7 @@
         </section>
 
         <section class="card threads-section" id="threads" aria-labelledby="threads-title">
-          <div class="section-heading"><div><p class="eyebrow">What wants care</p><h2 id="threads-title">Open threads</h2><p>Threads are invitations to return, not a record of who owes what.</p></div><button class="button quiet" type="button" id="add-thread-button">＋ Start a thread</button></div>
+          <div class="section-heading"><div><p class="eyebrow">What wants care</p><h2 id="threads-title">Return-to conversations</h2><p>A place to hold something you want to come back to together.</p></div><button class="button quiet" type="button" id="add-thread-button">＋ Start a conversation</button></div>
           <div id="open-threads"></div>
         </section>
 
@@ -78,13 +79,13 @@
         <div class="dialog-head"><div><p class="eyebrow">Our shared journey</p><h2 id="moment-dialog-title">Hold a moment</h2><p id="moment-dialog-copy">Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.</p></div><button class="icon-button" type="button" data-close-moment aria-label="Close">×</button></div>
         <input name="id" type="hidden" />
         <div class="form-grid">
-          <label class="field"><span>Kind of moment</span><select name="kind" required></select></label>
+          <label class="field"><span>Kind of moment</span><select name="kind" required aria-describedby="moment-kind-help"></select><small id="moment-kind-help">Choose a suggestion from the menu, or make one your own.</small></label>
           <label class="field" id="moment-kind-label-field" hidden><span>Name this kind of moment</span><input name="kindLabel" maxlength="60" placeholder="e.g. A small win" /></label>
           <label class="field"><span>When</span><input name="occurredOn" type="date" required /></label>
           <label class="field full"><span>A short name</span><input name="title" required maxlength="120" placeholder="e.g. A quiet apology after dinner" /></label>
           <label class="field full"><span>What would you like to hold? <small>Optional</small></span><textarea name="detail" maxlength="1200" rows="5" placeholder="Use your own words. Keep it simple and kind."></textarea></label>
           <fieldset class="field full" id="moment-visibility-field"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div></fieldset>
-          <label class="field full"><span>Practical money context <small>Optional; never counted as a score</small></span><input name="money" type="number" min="0" max="1000000" step="0.01" placeholder="Leave blank unless it helps tell this moment's story" /></label>
+          <div class="field full money-fields"><span>Practical money context <small>Optional; never counted as a score</small></span><div><label><span class="sr-only">Amount</span><input name="money" type="number" min="0" max="1000000" step="0.01" placeholder="Amount (optional)" /></label><label><span class="sr-only">Currency</span><select name="moneyCurrency"><option value="">Currency (optional)</option><option value="USD">USD — US dollar</option><option value="EUR">EUR — Euro</option><option value="GBP">GBP — British pound</option><option value="CAD">CAD — Canadian dollar</option><option value="AUD">AUD — Australian dollar</option><option value="JPY">JPY — Japanese yen</option><option value="INR">INR — Indian rupee</option></select></label></div></div>
         </div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-moment>Cancel</button><button class="button primary" id="save-moment">Hold this moment</button></div>
       </form>
@@ -93,15 +94,17 @@
     <dialog id="journey-dialog">
       <form id="journey-form" method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Local journey details</p><h2 id="journey-dialog-title">Begin a shared journey</h2><p>Two people share the journey. The information stays in this browser until you export it.</p></div>
+          <div><p class="eyebrow" id="journey-dialog-eyebrow">Local journey details</p><h2 id="journey-dialog-title">Begin a shared journey</h2><p id="journey-dialog-copy">Two people share the journey. The information stays in this browser until you export it.</p></div>
           <button class="icon-button" type="button" data-close-journey aria-label="Close">×</button>
         </div>
         <div class="form-grid">
           <input name="id" type="hidden" />
           <label class="field full"><span>Journey name</span><input name="name" required maxlength="80" placeholder="e.g. Mountain weekend" /></label>
-          <label class="field full"><span>Place or season</span><input name="location" required maxlength="80" placeholder="e.g. Asheville, North Carolina or our first autumn" /></label>
-          <label class="field"><span>Start date</span><input name="startDate" type="date" required /></label>
-          <label class="field"><span>End date</span><input name="endDate" type="date" required /></label>
+          <label class="field full"><span>Place or season <small>Optional</small></span><input name="location" maxlength="80" placeholder="Add this only if it helps you recognize the journey" /></label>
+          <label class="field"><span>When it began</span><select name="startDateStatus"><option value="exact">Today</option><option value="unknown">I don’t remember exactly</option></select></label>
+          <label class="field" id="start-date-field"><span>Exact start date</span><input name="startDate" type="date" /></label>
+          <label class="field"><span>How long it lasts</span><select name="endDateStatus"><option value="forever">Forever — no end date planned</option><option value="unsure">Not sure yet</option><option value="date">Choose an end date</option></select></label>
+          <label class="field" id="end-date-field" hidden><span>Exact end date</span><input name="endDate" type="date" /></label>
           <input name="budget" type="hidden" value="0" />
           <label class="field member-field"><span>First person</span><input name="memberOne" required maxlength="50" placeholder="Name" /></label>
           <label class="field member-field"><span>Second person</span><input name="memberTwo" required maxlength="50" placeholder="Name" /></label>
@@ -116,7 +119,7 @@
           <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p id="event-manager-copy">Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
           <button class="icon-button" value="close" aria-label="Close event history">×</button>
         </div>
-        <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Open threads</h3><p>Explicitly recorded threads are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Start a thread</button></section>
+          <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Return-to conversations</h3><p>Explicitly recorded conversations are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Start a conversation</button></section>
         <div id="concern-list"></div>
         <section class="event-list-section" aria-labelledby="event-list-title"><h3 id="event-list-title">All recorded changes</h3><div id="event-list"></div></section>
       </form>
@@ -125,28 +128,28 @@
     <dialog id="concern-dialog">
       <form id="concern-form" method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Open thread</p><h2 id="concern-dialog-title">Start a thread</h2><p>This is intentional shared journey data—not a private reflection field.</p></div>
+          <div><p class="eyebrow">Return-to conversation</p><h2 id="concern-dialog-title">Start a return-to conversation</h2><p>Use this for something you want to come back to together. It stays open until you choose otherwise.</p></div>
           <button class="icon-button" type="button" data-close-concern aria-label="Close concern">×</button>
         </div>
         <input name="id" type="hidden" />
         <div class="form-grid">
-          <label class="field full"><span>What wants care?</span><input name="title" maxlength="100" required placeholder="What would feel good to return to?" /></label>
-          <label class="field full"><span>Context <small>Optional</small></span><textarea name="detail" maxlength="500" rows="4" placeholder="Record only what both journeyers should see"></textarea></label>
+          <label class="field full"><span>What would you like to return to?</span><input name="title" maxlength="100" required placeholder="What would feel good to return to?" /></label>
+          <label class="field full"><span>A little context <small>Optional</small></span><textarea name="detail" maxlength="500" rows="4" placeholder="Record only what both journeyers should see"></textarea></label>
           <label class="field full"><span>Status</span><select name="status"><option value="open">Open</option><option value="resolved">Resolved</option></select></label>
         </div>
-        <div class="dialog-actions"><button class="button quiet" type="button" data-close-concern>Cancel</button><button class="button primary" id="save-concern-button">Log concern</button></div>
+        <div class="dialog-actions"><button class="button quiet" type="button" data-close-concern>Cancel</button><button class="button primary" id="save-concern-button">Keep this open</button></div>
       </form>
     </dialog>
 
     <dialog id="settings-dialog">
       <div>
         <div class="dialog-head">
-          <div><p class="eyebrow">Storage and appearance</p><h2>Journey settings</h2><p id="settings-storage-copy">Browser-only journeys stay on this device unless you download a backup.</p></div>
+          <div><p class="eyebrow">Journey settings</p><h2>Journey settings</h2><p id="settings-storage-copy">Browser-only journeys stay on this device unless you download a backup.</p></div>
           <button class="icon-button" type="button" data-close-settings aria-label="Close settings">×</button>
         </div>
         <div class="settings-grid">
-          <section id="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" /></label><button class="button primary">Send invitation</button></form><div id="member-list"></div></section>
-          <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select></label></section>
+          <section id="sharing-settings" class="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" placeholder="journeyer@example.com" /></label><button class="button primary" type="submit">Send invitation</button></form><div id="member-list"></div></section>
+          <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select><small id="theme-copy">Your theme changes only your own view. Each journeyer chooses what feels right on their screen.</small></label></section>
           <section><h3>Backup and restore</h3><p>Exports include every local journey, moment, practical detail, and action milestone.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
           <section><h3>Start fresh</h3><p>Reset clears this browser’s journeys and starts with an empty shared space. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Start fresh</button></section>
           <section><h3>Privacy boundary</h3><p>Browser-only journeys stay in this browser. Signed-in private journeys are loaded from the account service and removed from view on sign-out; signing in never uploads the browser ledger.</p></section>
@@ -156,7 +159,7 @@
 
     <dialog id="account-dialog">
       <div class="dialog-head">
-        <div><p class="eyebrow">Private account</p><h2>Separate accounts. One shared journey.</h2><p id="account-dialog-copy">Passwords are never shared between journeyers.</p></div>
+        <div><p class="eyebrow">Account settings</p><h2>Account settings</h2><p id="account-dialog-copy">Passwords are never shared between journeyers.</p></div>
         <button class="icon-button" type="button" data-close-account aria-label="Close account settings">×</button>
       </div>
       <section id="account-unavailable" class="account-panel account-notice" hidden><p class="eyebrow">Private accounts</p><h3>We are connecting this with care.</h3><p>This public page cannot create an account until the protected Together Ledger service is live. No name, email, or password has been sent from this screen.</p><p>Your browser-only journey remains on this device. We will invite you to create a separate private account when the service is ready.</p></section>
@@ -164,7 +167,7 @@
         <form id="login-form" class="account-panel"><h3>Sign in</h3><label class="field"><span>Email or username</span><input name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required minlength="12" /></label><button class="button primary">Sign in</button><button class="text-button" type="button" id="recovery-button">I forgot my password</button></form>
         <form id="register-form" class="account-panel"><h3>Create account</h3><label class="field"><span>Choose a username</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="30" pattern="[a-z][a-z0-9-]{2,29}" required /><small>3–30 lowercase letters, numbers, or single hyphens. It is for signing in and is not shown to your journeyer. You can choose the names used together when a journey calls for them.</small></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><small>Use at least 12 characters. We send a verification link before invitations can be accepted.</small><button class="button primary">Create secure account</button></form>
       </div>
-      <div id="signed-in-account" class="account-panel" hidden><h3 id="account-name"></h3><p id="account-username"></p><p id="account-email"></p><p id="verification-status"></p><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes sessions. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
+      <div id="signed-in-account" class="account-panel" hidden><dl class="account-identity"><div><dt>Account name</dt><dd id="account-name"></dd></div><div><dt>Handle</dt><dd id="account-username"></dd></div><div><dt>Email address</dt><dd id="account-email"></dd></div><div><dt>Email status</dt><dd id="verification-status"></dd></div></dl><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes sessions. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
     </dialog>
 
     <dialog id="recovery-request-dialog">
