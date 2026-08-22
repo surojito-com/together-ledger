@@ -38,3 +38,17 @@ test('the first browser-only screen begins empty and explains what can be held',
   const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
   expect(accessibilityScan.violations).toEqual([]);
 });
+
+test('the browser-only starter offers a named add-your-own moment', async ({ page }) => {
+  await page.goto('/');
+  await skipOnboarding(page);
+
+  await page.getByRole('button', { name: '+ Add your own moment' }).click();
+  await expect(page.locator('#moment-kind-label-field')).toBeVisible();
+  await page.locator('#moment-form [name="kindLabel"]').fill('A small win');
+  await page.locator('#moment-form [name="title"]').fill('We paused before replying');
+  await page.getByRole('button', { name: 'Hold this moment' }).click();
+
+  await expect(page.locator('#moment-timeline')).toContainText('A small win');
+  await expect(page.locator('#moment-timeline')).toContainText('We paused before replying');
+});

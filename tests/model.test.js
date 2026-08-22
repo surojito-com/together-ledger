@@ -118,6 +118,13 @@ test('moments keep optional money as context and require an honest visibility ch
   assert.throws(() => normalizeMoment({ ...moment, visibility: 'everyone' }, state.activeTripId), /who can see/);
 });
 
+test('a browser-only journey can name a moment outside the preset list', () => {
+  const moment = normalizeMoment({ kind: 'other', kindLabel: 'A small win', title: 'We paused before replying', detail: '', occurredOn: '2026-08-16', visibility: 'shared-now', money: '' }, demoState().activeTripId);
+  assert.equal(moment.kindLabel, 'A small win');
+  assert.equal(moment.label, 'A small win');
+  assert.throws(() => normalizeMoment({ ...moment, kindLabel: '' }, demoState().activeTripId), /short name/);
+});
+
 test('journey normalization requires two people and preserves trip boundaries', () => {
   const trip = normalizeTrip({
     name: 'Mountain Weekend',

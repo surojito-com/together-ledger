@@ -159,6 +159,13 @@ export async function buildApp({ platform, config, logger = false }) {
     return reply.code(204).send();
   });
 
+  app.post('/api/v1/journeys/:journeyId/moments', { preHandler: protectMutation }, async (request, reply) => reply.code(201).send({ data: { moment: await platform.createMoment(request.auth.userId, request.params.journeyId, request.body || {}) } }));
+  app.patch('/api/v1/journeys/:journeyId/moments/:momentId', { preHandler: protectMutation }, async (request) => ({ data: { moment: await platform.mutateMoment(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) } }));
+  app.delete('/api/v1/journeys/:journeyId/moments/:momentId', { preHandler: protectMutation }, async (request, reply) => {
+    await platform.mutateMoment(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}, { remove: true });
+    return reply.code(204).send();
+  });
+
   app.post('/api/v1/journeys/:journeyId/concerns', { preHandler: protectMutation }, async (request, reply) => reply.code(201).send({ data: { concern: await platform.createConcern(request.auth.userId, request.params.journeyId, request.body || {}) } }));
   app.patch('/api/v1/journeys/:journeyId/concerns/:concernId', { preHandler: protectMutation }, async (request) => ({ data: { concern: await platform.mutateConcern(request.auth.userId, request.params.journeyId, request.params.concernId, request.body || {}) } }));
   app.delete('/api/v1/journeys/:journeyId/concerns/:concernId', { preHandler: protectMutation }, async (request, reply) => {

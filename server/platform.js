@@ -24,6 +24,7 @@ const forbidden = () => new PlatformError(403, 'forbidden', 'You do not have acc
 const CATEGORIES = new Set(['Flights', 'Hotel', 'Restaurants', 'Transportation', 'Activities', 'Shopping', 'Other']);
 const STATUSES = new Set(['paid', 'due']);
 const CONCERN_STATUSES = new Set(['open', 'resolved']);
+const MOMENT_KINDS = new Set(['promise', 'acknowledgment', 'trigger', 'missed-chance', 'heart-to-heart', 'memory', 'feeling', 'boundary', 'repair-request', 'practical-matter', 'other']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function cleanText(value, label, max) {
@@ -131,6 +132,50 @@ function publicConcern(row) {
     version: row.version,
     createdAt: dateTime(row.created_at),
     updatedAt: dateTime(row.updated_at),
+  };
+}
+
+function publicMoment(row) {
+  return {
+    id: row.id,
+    journeyId: row.journey_id,
+    kind: row.kind,
+    kindLabel: row.kind_label,
+    occurredOn: dateOnly(row.occurred_on),
+    title: row.title,
+    detail: row.detail,
+    visibility: row.visibility,
+    moneyCents: row.money_cents,
+    version: row.version,
+    createdAt: dateTime(row.created_at),
+    updatedAt: dateTime(row.updated_at),
+  };
+}
+
+function auditMoment(moment) {
+  if (!moment) return null;
+  const { detail: _detail, ...safe } = moment;
+  return safe;
+}
+
+function cleanMoment(input, existing = null) {
+  const kind = input.kind ?? existing?.kind;
+  if (!MOMENT_KINDS.has(kind)) throw new PlatformError(400, 'invalid_input', 'Choose a valid kind of moment.');
+  const kindLabel = kind === 'other'
+    ? cleanText(input.kindLabel ?? existing?.kindLabel, 'A name for this kind of moment', 60)
+    : '';
+  const occurredOn = input.occurredOn ?? existing?.occurredOn;
+  if (!DATE_PATTERN.test(occurredOn || '')) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
+  const moneyValue = Object.hasOwn(input, 'moneyCents') ? input.moneyCents : existing?.moneyCents;
+  const moneyCents = moneyValue == null || moneyValue === '' ? null : Number(moneyValue);
+  if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new PlatformError(400, 'invalid_input', 'Enter a valid optional money context.');
+  return {
+    kind,
+    kindLabel,
+    occurredOn,
+    title: cleanText(input.title ?? existing?.title, 'Moment title', 120),
+    detail: String(input.detail ?? existing?.detail ?? '').slice(0, 1200),
+    moneyCents,
   };
 }
 
@@ -491,6 +536,47 @@ export class PlatformService {
     });
   }
 
+  async createMoment(userId, journeyId, input) {
+    return withTransaction(this.pool, async (client) => {
+      await this.requireMember(client, userId, journeyId);
+      await this.lockJourney(client, journeyId);
+      const id = randomUUID();
+      const next = cleanMoment(input);
+      const created = await client.query(
+        `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,money_cents)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents],
+      );
+      const moment = publicMoment(created.rows[0]);
+      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
+      return moment;
+    });
+  }
+
+  async mutateMoment(userId, journeyId, momentId, input, { remove = false } = {}) {
+    return withTransaction(this.pool, async (client) => {
+      await this.requireMember(client, userId, journeyId);
+      await this.lockJourney(client, journeyId);
+      const found = await client.query('SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 FOR UPDATE', [momentId, journeyId]);
+      if (!found.rowCount) throw notFound();
+      const before = publicMoment(found.rows[0]);
+      if (Number(input.version) !== before.version) throw new PlatformError(409, 'conflict', 'This moment changed on another device.');
+      if (remove) {
+        await client.query('DELETE FROM journey_moments WHERE id=$1', [momentId]);
+        await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_deleted', entityType: 'moment', entityId: momentId, summary: `Deleted moment: ${before.title}`, before: auditMoment(before), after: null });
+        return null;
+      }
+      const next = cleanMoment(input, before);
+      const updated = await client.query(
+        `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,money_cents=$6,version=version+1,updated_at=$7 WHERE id=$8 RETURNING *`,
+        [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, this.now(), momentId],
+      );
+      const after = publicMoment(updated.rows[0]);
+      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_updated', entityType: 'moment', entityId: momentId, summary: `Updated moment: ${after.title}`, before: auditMoment(before), after: auditMoment(after) });
+      return after;
+    });
+  }
+
   async createConcern(userId, journeyId, input) {
     return withTransaction(this.pool, async (client) => {
       await this.requireMember(client, userId, journeyId);
@@ -555,9 +641,10 @@ export class PlatformService {
     try {
       if (this.config.NODE_ENV !== 'test') await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const journey = await this.requireMember(client, userId, journeyId);
-      const [members, expenses, concerns, milestones, events] = await Promise.all([
+      const [members, expenses, moments, concerns, milestones, events] = await Promise.all([
         client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1`, [journeyId]),
         client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
+        client.query('SELECT * FROM journey_moments WHERE journey_id=$1 ORDER BY occurred_on,created_at,id', [journeyId]),
         client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
         client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
         client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
@@ -574,6 +661,7 @@ export class PlatformService {
         journey: publicJourney(journey),
         members: members.rows.map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, joinedAt: row.joined_at })),
         expenses: expenses.rows.map(publicExpense),
+        moments: moments.rows.map(publicMoment),
         concerns: concerns.rows.map(publicConcern),
         milestones: milestones.rows.map((row) => ({ key: row.key, completed: row.completed, updatedAt: row.updated_at })),
         events: publicEvents,

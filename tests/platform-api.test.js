@@ -22,6 +22,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   const pool = new adapter.Pool();
   await pool.query(await readFile(new URL('../server/migrations/001_platform.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/003_private_usernames.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/004_shared_moments.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -72,6 +73,133 @@ test('hosted API bridge allows the configured frontend and API origins only', as
 function authHeaders(client) {
   return { origin, cookie: client.cookie, 'x-together-csrf': client.csrf };
 }
+
+test('TC-00010 through TC-00120 prove two journeyers share server-authoritative moments', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  let alice;
+  let bob;
+  let journey;
+  let firstMoment;
+  let secondMoment;
+  let invitationToken;
+
+  await t.test('TC-00010: person A can start a new private journey', async () => {
+    alice = await register(app, mailer, { email: 'tc-a@example.test', username: 'tc-person-a' });
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
+      payload: { name: 'A place to return to', location: 'Our shared season', startDate: '2026-08-22', endDate: '2026-08-22', budgetCents: 0 },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    journey = response.json().data.journey;
+  });
+
+  await t.test('TC-00020: the new journey begins with exactly person A', async () => {
+    const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
+    assert.equal(snapshot.statusCode, 200, snapshot.body);
+    assert.deepEqual(snapshot.json().data.members.map((member) => member.id), [alice.user.id]);
+    assert.deepEqual(snapshot.json().data.moments, []);
+  });
+
+  await t.test('TC-00030: person A can hold a shared entry before person B joins', async () => {
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+      payload: { kind: 'memory', title: 'We made room to listen', detail: 'A shared truth held before the invitation was accepted.', occurredOn: '2026-08-22', moneyCents: null },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    firstMoment = response.json().data.moment;
+    assert.equal(firstMoment.visibility, 'shared-now');
+  });
+
+  await t.test('TC-00031: person A can add their own named kind of moment', async () => {
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+      payload: { kind: 'other', kindLabel: 'A small win', title: 'We paused before replying', detail: 'The name is intentionally ours.', occurredOn: '2026-08-22', moneyCents: null },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    const customMoment = response.json().data.moment;
+    assert.equal(customMoment.kind, 'other');
+    assert.equal(customMoment.kindLabel, 'A small win');
+  });
+
+  await t.test('TC-00040: person A can send person B an invitation', async () => {
+    const response = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'tc-b@example.test' } });
+    assert.equal(response.statusCode, 202, response.body);
+    invitationToken = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').token;
+  });
+
+  await t.test('TC-00050: person B can create and verify a separate account', async () => {
+    bob = await register(app, mailer, { email: 'tc-b@example.test', username: 'tc-person-b' });
+    assert.notEqual(alice.user.id, bob.user.id);
+  });
+
+  await t.test('TC-00060: person B can accept the shared journey', async () => {
+    const response = await app.inject({ method: 'POST', url: `/api/v1/invitations/${invitationToken}/accept`, headers: authHeaders(bob) });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().data.journeyId, journey.id);
+  });
+
+  await t.test('TC-00070: person B sees the entry person A made before joining', async () => {
+    const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
+    assert.equal(snapshot.statusCode, 200, snapshot.body);
+    assert.equal(snapshot.json().data.members.length, 2);
+    assert.equal(snapshot.json().data.moments.find((moment) => moment.id === firstMoment.id).title, 'We made room to listen');
+  });
+
+  await t.test('TC-00080: person B can edit person A’s shared entry', async () => {
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${firstMoment.id}`, headers: authHeaders(bob),
+      payload: { ...firstMoment, detail: 'Person B added the next sentence with care.' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    firstMoment = response.json().data.moment;
+    assert.equal(firstMoment.version, 2);
+  });
+
+  await t.test('TC-00090: person B can create a shared entry', async () => {
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob),
+      payload: { kind: 'acknowledgment', title: 'Thank you for returning', detail: 'A shared entry from person B.', occurredOn: '2026-08-22', moneyCents: null },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    secondMoment = response.json().data.moment;
+  });
+
+  await t.test('TC-00100: person A sees and can edit person B’s entry', async () => {
+    const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
+    assert.equal(snapshot.statusCode, 200, snapshot.body);
+    const bMoment = snapshot.json().data.moments.find((moment) => moment.id === secondMoment.id);
+    const response = await app.inject({
+      method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${secondMoment.id}`, headers: authHeaders(alice),
+      payload: { ...bMoment, title: 'Thank you for returning with care' },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().data.moment.version, 2);
+  });
+
+  await t.test('TC-00110: a used invitation cannot be accepted again', async () => {
+    const response = await app.inject({ method: 'POST', url: `/api/v1/invitations/${invitationToken}/accept`, headers: authHeaders(bob) });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error.code, 'invalid_invitation');
+  });
+
+  await t.test('TC-00120: both people can sign back in and still see the same journey', async () => {
+    const signedOutA = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: authHeaders(alice) });
+    const signedOutB = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: authHeaders(bob) });
+    assert.equal(signedOutA.statusCode, 204, signedOutA.body);
+    assert.equal(signedOutB.statusCode, 204, signedOutB.body);
+    const loginA = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'tc-person-a', password: 'correct horse battery staple' } });
+    const loginB = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'tc-person-b', password: 'correct horse battery staple' } });
+    assert.equal(loginA.statusCode, 200, loginA.body);
+    assert.equal(loginB.statusCode, 200, loginB.body);
+    const aSnapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: cookieFrom(loginA) } });
+    const bSnapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: cookieFrom(loginB) } });
+    assert.equal(aSnapshot.statusCode, 200, aSnapshot.body);
+    assert.equal(bSnapshot.statusCode, 200, bSnapshot.body);
+    assert.deepEqual(aSnapshot.json().data.moments.map((moment) => moment.title).sort(), bSnapshot.json().data.moments.map((moment) => moment.title).sort());
+  });
+});
 
 test('accounts share an authorized journey with conflicts, events, recovery, and deletion', async (t) => {
   const { app, mailer, pool } = await testPlatform();

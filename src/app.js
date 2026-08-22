@@ -56,6 +56,7 @@ function snapshotToState(snapshots) {
   const preferences = state.preferences;
   const trips = [];
   const entries = [];
+  const moments = [];
   const concerns = [];
   const events = [];
   for (const snapshot of snapshots) {
@@ -64,6 +65,7 @@ function snapshotToState(snapshots) {
     snapshot.milestones.forEach((item) => { milestones[item.key] = item.completed; });
     trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, milestones, archivedAt: '' });
     entries.push(...snapshot.expenses.map((expense) => ({ ...expense, tripId: expense.journeyId, paidBy: expense.payerLabel })));
+    moments.push(...snapshot.moments.map((moment) => ({ ...moment, tripId: moment.journeyId })));
     concerns.push(...snapshot.concerns.map((concern) => ({ ...concern, tripId: concern.journeyId, updatedBy: 'Journey member', updatedAt: new Date(concern.updatedAt).toISOString() })));
     snapshot.events.forEach((event, index) => events.push({
       ...event,
@@ -80,7 +82,7 @@ function snapshotToState(snapshots) {
     preferences,
     trips,
     entries,
-    moments: [],
+    moments,
     concerns,
     events,
   };
@@ -116,7 +118,7 @@ function renderAccountState() {
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
   $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
-  $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. The current hosted service records journey changes in its Event Manager.' : 'Your account is ready. Browser-only moments are not uploaded when you sign in.';
+  $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. Shared moments, threads, and practical context are recorded by the account service.' : 'Your account is ready. Create a private journey when you are ready to invite another journeyer.';
   $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to your browser-only journey.' : 'Browser-only journeys stay on this device unless you download a backup.';
   $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : accountsAvailable ? 'Browser only' : 'Accounts soon';
   $('#sync-badge').classList.toggle('cloud', signedIn);
@@ -146,9 +148,10 @@ function render() {
   const trip = activeTrip(state);
   const moments = activeMoments(state);
   const isEmptyStart = trip.id === 'first-shared-space' && !moments.length && !state.entries.length && !state.concerns.length;
+  const accountNeedsJourney = Boolean(accountUser && !isCloudJourney(trip));
   renderJourneyControls(trip);
   $('.trip-bar').hidden = isEmptyStart;
-  $$('[data-open-moment]').forEach((button) => { button.textContent = isEmptyStart ? 'Begin' : '＋ Hold a moment'; });
+  $$('[data-open-moment]').forEach((button) => { button.textContent = accountNeedsJourney ? 'Create a journey' : isEmptyStart ? 'Begin' : '＋ Hold a moment'; });
   $('#trip-name').textContent = trip.name;
   $('#trip-period').textContent = isEmptyStart ? 'Nothing has been written here yet.' : `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
   $('#guidance').hidden = isEmptyStart;
@@ -164,13 +167,14 @@ function renderJourneyControls(trip) {
   $('#actor-select').value = actor;
   $('#event-count').textContent = `(${state.events.filter((event) => event.tripId === trip.id).length})`;
   const accountWithoutJourney = Boolean(accountUser && !isCloudJourney(trip));
-  $$('[data-open-moment]').forEach((button) => { button.disabled = accountWithoutJourney || isCloudJourney(trip); });
+  $$('[data-open-moment]').forEach((button) => { button.disabled = false; });
   $('#edit-journey-button').disabled = accountWithoutJourney;
   $('#event-manager-button').disabled = accountWithoutJourney;
   renderAccountState();
 }
 
-function momentLabel(kind) {
+function momentLabel(kind, kindLabel = '') {
+  if (kind === 'other') return kindLabel || 'A shared note';
   return MOMENT_TYPES.find(([value]) => value === kind)?.[1] || 'Moment';
 }
 
@@ -197,24 +201,43 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#toggle-moments-button').hidden = !recent.length;
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
-  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}</div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
+  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
+  $$('[data-open-custom-moment]').forEach((button) => button.addEventListener('click', () => {
+    if (accountUser && !isCloudJourney(trip)) { openJourney(); return; }
+    openMoment('', 'other');
+  }));
   $('#open-threads').innerHTML = threads.length ? threads.map((thread) => `<article class="thread-row"><div><span class="status-chip open">open</span><strong>${escapeHtml(thread.title)}</strong>${thread.detail ? `<p>${escapeHtml(thread.detail)}</p>` : ''}</div><button data-edit-thread="${escapeHtml(thread.id)}">Open</button></article>`).join('') : '<p class="empty compact">No open threads. That can be a good place to rest.</p>';
   $$('[data-edit-thread]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editThread)));
 }
 
-function openMoment(id = '') {
+function updateMomentKindField(form) {
+  const custom = form.elements.kind.value === 'other';
+  $('#moment-kind-label-field').hidden = !custom;
+  form.elements.kindLabel.required = custom;
+  form.elements.kindLabel.disabled = !custom;
+}
+
+function openMoment(id = '', initialKind = '') {
   const form = $('#moment-form');
   const moment = state.moments.find((item) => item.id === id);
+  const shared = isCloudJourney();
   form.reset();
   form.elements.kind.innerHTML = MOMENT_TYPES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
   form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
   form.elements.visibility.value = 'shared-now';
   $('#moment-dialog-title').textContent = moment ? 'Edit this moment' : 'Hold a moment';
   $('#save-moment').textContent = moment ? 'Save moment' : 'Hold this moment';
+  $('#moment-dialog-copy').textContent = shared ? 'This is a shared moment. Both journeyers can see it and return to it with care.' : 'Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.';
+  $('#moment-visibility-field').hidden = shared;
+  $$('input[name="visibility"]', form).forEach((input) => { input.disabled = shared; });
   if (moment) {
-    form.elements.id.value = moment.id; form.elements.kind.value = moment.kind; form.elements.title.value = moment.title; form.elements.detail.value = moment.detail; form.elements.occurredOn.value = moment.occurredOn; form.elements.visibility.value = moment.visibility; form.elements.money.value = moment.moneyCents == null ? '' : (moment.moneyCents / 100).toFixed(2);
+    form.elements.id.value = moment.id; form.elements.kind.value = moment.kind; form.elements.kindLabel.value = moment.kindLabel || ''; form.elements.title.value = moment.title; form.elements.detail.value = moment.detail; form.elements.occurredOn.value = moment.occurredOn; form.elements.visibility.value = moment.visibility; form.elements.money.value = moment.moneyCents == null ? '' : (moment.moneyCents / 100).toFixed(2);
+  } else if (initialKind) {
+    form.elements.kind.value = initialKind;
   }
+  form.elements.kind.onchange = () => updateMomentKindField(form);
+  updateMomentKindField(form);
   $('#moment-dialog').showModal(); form.elements.title.focus({ preventScroll: true });
 }
 
@@ -544,7 +567,7 @@ function showToast(message) {
 
 $$('[data-open-expense]').forEach((button) => button.addEventListener('click', () => openExpense()));
 $$('[data-open-moment]').forEach((button) => button.addEventListener('click', () => {
-  if (isCloudJourney()) { showToast('Moments are browser-only until the private service adds visibility authorization.'); return; }
+  if (accountUser && !isCloudJourney()) { openJourney(); return; }
   openMoment();
 }));
 $$('[data-close-moment]').forEach((button) => button.addEventListener('click', () => $('#moment-dialog').close()));
@@ -648,16 +671,27 @@ $('#guidance-next').addEventListener('click', async () => {
   renderSharedJourney(trip, activeMoments(state));
 });
 
-$('#moment-form').addEventListener('submit', (event) => {
+$('#moment-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const input = Object.fromEntries(new FormData(event.currentTarget));
     const existingIndex = state.moments.findIndex((moment) => moment.id === input.id);
     const before = existingIndex >= 0 ? structuredClone(state.moments[existingIndex]) : null;
+    const trip = activeTrip(state);
+    if (isCloudJourney(trip)) {
+      const moneyCents = input.money === '' ? null : Math.round(Number(input.money) * 100);
+      const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, moneyCents, ...(before ? { version: before.version } : {}) };
+      if (before) await api.mutate(`/journeys/${trip.id}/moments/${before.id}`, 'PATCH', payload);
+      else await api.mutate(`/journeys/${trip.id}/moments`, 'POST', payload);
+      $('#moment-dialog').close();
+      await refreshCloudState();
+      showToast(before ? 'Shared moment updated.' : 'Shared moment held.');
+      return;
+    }
     const moment = normalizeMoment(input, activeTrip(state).id, before);
     if (existingIndex >= 0) state.moments[existingIndex] = moment;
     else state.moments.push(moment);
-    eventRecord({ action: existingIndex >= 0 ? 'moment_updated' : 'moment_added', entityType: 'moment', entityId: moment.id, summary: `${existingIndex >= 0 ? 'Updated' : 'Held'} ${momentLabel(moment.kind).toLowerCase()}: ${moment.title}`, before, after: moment });
+    eventRecord({ action: existingIndex >= 0 ? 'moment_updated' : 'moment_added', entityType: 'moment', entityId: moment.id, summary: `${existingIndex >= 0 ? 'Updated' : 'Held'} ${momentLabel(moment.kind, moment.kindLabel).toLowerCase()}: ${moment.title}`, before, after: moment });
     $('#moment-dialog').close();
     persistAndRender(existingIndex >= 0 ? 'Moment updated.' : 'Moment held in this browser.');
   } catch (error) {
