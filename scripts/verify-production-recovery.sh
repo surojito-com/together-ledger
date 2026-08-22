@@ -4,6 +4,7 @@ umask 077
 
 production_env_file=${TOGETHER_ENV_FILE:-/etc/together-ledger/production.env}
 recipient_file=${BACKUP_RECIPIENT_FILE:-/etc/together-ledger/backup-recipient.env}
+runtime_file=${BACKUP_RUNTIME_FILE:-/etc/together-ledger/backup-runtime.env}
 backup_dir=${BACKUP_DIR:-/var/backups/together-ledger}
 receipt=${OFFSITE_RECEIPT_FILE:-/var/lib/together-ledger/last-offsite-backup.env}
 max_age_hours=${BACKUP_MAX_AGE_HOURS:-26}
@@ -34,12 +35,15 @@ read_field() {
 
 require_root_file "$production_env_file" "production environment file"
 require_root_file "$recipient_file" "backup recipient file"
+require_root_file "$runtime_file" "backup runtime file"
 require_root_file "$receipt" "offsite backup receipt"
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 command -v age >/dev/null || { echo "age is required" >&2; exit 1; }
 
 recipient=$(read_field AGE_RECIPIENT "$recipient_file")
 age -r "$recipient" -o /dev/null < /dev/null
+repo_dir=$(read_field TOGETHER_REPO_DIR "$runtime_file")
+[ -f "$repo_dir/compose.production.yaml" ] || { echo "backup runtime file does not point to a production Compose file" >&2; exit 1; }
 
 latest=$(find "$backup_dir" -maxdepth 1 -type f -name 'together-ledger-*.dump.age' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
 [ -n "$latest" ] || { echo "no encrypted database backup exists" >&2; exit 1; }

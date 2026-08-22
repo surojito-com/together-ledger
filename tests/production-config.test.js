@@ -40,6 +40,8 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(backup, /exactly one AGE_RECIPIENT value/);
   assert.match(backup, /export TOGETHER_ENV_FILE/);
   assert.match(backup, /production environment file is not readable/);
+  assert.match(backup, /TOGETHER_REPO_DIR/);
+  assert.match(backup, /production Compose file is missing/);
   assert.match(backup, /mkfifo/);
   assert.match(backup, /wait "\$dump_pid"/);
   assert.match(backupRunner, /GCP_BACKUP_BUCKET/);
@@ -51,10 +53,13 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(backupRunner, /gcloud storage cp/);
   assert.match(backupRunner, /last-offsite-backup\.env/);
   assert.match(recoveryCheck, /must have mode 0600/);
+  assert.match(recoveryCheck, /backup runtime file/);
   assert.match(recoveryCheck, /newest encrypted backup has no matching offsite upload receipt/);
   assert.match(recoveryCheck, /Recovery preflight passed/);
   assert.match(recoveryInstaller, /systemctl daemon-reload/);
+  assert.match(recoveryInstaller, /backup-runtime\.env/);
   assert.match(backupService, /BACKUP_RECIPIENT_FILE/);
+  assert.match(backupService, /EnvironmentFile=\/etc\/together-ledger\/backup-runtime\.env/);
   assert.match(backupService, /EnvironmentFile=\/etc\/together-ledger\/backup-uploader\.env/);
   assert.match(backupTimer, /OnCalendar=\*-\*-\* 03:30:00/);
   assert.match(backupTimer, /Persistent=true/);
