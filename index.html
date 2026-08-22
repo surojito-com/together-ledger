@@ -75,14 +75,15 @@
 
     <dialog id="moment-dialog">
       <form id="moment-form" method="dialog">
-        <div class="dialog-head"><div><p class="eyebrow">Our shared journey</p><h2 id="moment-dialog-title">Hold a moment</h2><p>Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.</p></div><button class="icon-button" type="button" data-close-moment aria-label="Close">×</button></div>
+        <div class="dialog-head"><div><p class="eyebrow">Our shared journey</p><h2 id="moment-dialog-title">Hold a moment</h2><p id="moment-dialog-copy">Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.</p></div><button class="icon-button" type="button" data-close-moment aria-label="Close">×</button></div>
         <input name="id" type="hidden" />
         <div class="form-grid">
           <label class="field"><span>Kind of moment</span><select name="kind" required></select></label>
+          <label class="field" id="moment-kind-label-field" hidden><span>Name this kind of moment</span><input name="kindLabel" maxlength="60" placeholder="e.g. A small win" /></label>
           <label class="field"><span>When</span><input name="occurredOn" type="date" required /></label>
           <label class="field full"><span>A short name</span><input name="title" required maxlength="120" placeholder="e.g. A quiet apology after dinner" /></label>
           <label class="field full"><span>What would you like to hold? <small>Optional</small></span><textarea name="detail" maxlength="1200" rows="5" placeholder="Use your own words. Keep it simple and kind."></textarea></label>
-          <fieldset class="field full"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div></fieldset>
+          <fieldset class="field full" id="moment-visibility-field"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div></fieldset>
           <label class="field full"><span>Practical money context <small>Optional; never counted as a score</small></span><input name="money" type="number" min="0" max="1000000" step="0.01" placeholder="Leave blank unless it helps tell this moment's story" /></label>
         </div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-moment>Cancel</button><button class="button primary" id="save-moment">Hold this moment</button></div>

@@ -38,7 +38,7 @@ The application enforces a maximum of two active members per journey. Removing a
 
 ## Concurrency and synchronization
 
-Journeys, expenses, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, expenses, concerns, milestones, and event stream.
+Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
 
 PR#0003 is online-first. Durable offline mutation queues and merge semantics are not claimed.
 
@@ -46,7 +46,7 @@ PR#0003 is online-first. Durable offline mutation queues and merge semantics are
 
 The same PostgreSQL transaction that changes a journey record appends its event. Per-journey advisory locking produces one monotonic sequence. Every event includes the authenticated actor, action, entity, bounded before/after evidence, previous hash, and HMAC hash. PostgreSQL rejects event update and deletion; the only exception is a transaction-local flag used to purge a sole-owner journey during required account deletion.
 
-Expense event snapshots intentionally omit notes, payment-account labels, and references. Concern event snapshots record whether context existed, not its text. This retains an undebatable change trail without duplicating the most sensitive free text indefinitely.
+Expense event snapshots intentionally omit notes, payment-account labels, and references. Concern and shared-moment event snapshots record whether free-text context existed, not its text. This retains an undebatable change trail without duplicating the most sensitive free text indefinitely.
 
 HMAC chaining is tamper-evident, not absolute immutability. A party controlling the database and HMAC secret could forge a chain. Secret isolation, encrypted cross-cloud backups, restricted roles, restore drills, and external evidence are still required.
 

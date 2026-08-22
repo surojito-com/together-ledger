@@ -12,6 +12,7 @@ export const MOMENT_TYPES = [
   ['boundary', 'Boundary'],
   ['repair-request', 'Repair request'],
   ['practical-matter', 'Practical matter'],
+  ['other', '+ Add your own moment'],
 ];
 export const MOMENT_VISIBILITIES = ['private', 'shared-now', 'share-later'];
 
@@ -147,13 +148,15 @@ export function normalizeConcern(input, tripId, actorName, existing = null) {
 export function normalizeMoment(input, tripId, existing = null) {
   if (!input.title?.trim()) throw new Error('A moment needs a short title.');
   if (!MOMENT_TYPES.some(([value]) => value === input.kind)) throw new Error('Choose a valid kind of moment.');
+  const kindLabel = input.kind === 'other' ? String(input.kindLabel || '').trim() : '';
+  if (input.kind === 'other' && (!kindLabel || kindLabel.length > 60)) throw new Error('Give this kind of moment a short name of 60 characters or fewer.');
   if (!MOMENT_VISIBILITIES.includes(input.visibility)) throw new Error('Choose who can see this moment.');
   if ((input.title?.length || 0) > 120 || (input.detail?.length || 0) > 1200) throw new Error('Keep the moment within the displayed limits.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.occurredOn || '')) throw new Error('Choose a valid date.');
   const moneyCents = input.money === '' || input.money == null ? null : Math.round(Number(input.money) * 100);
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new Error('Enter a valid optional money context.');
   const now = new Date().toISOString();
-  return { id: existing?.id || makeId('moment'), tripId, kind: input.kind, title: input.title.trim(), detail: input.detail?.trim() || '', occurredOn: input.occurredOn, visibility: input.visibility, moneyCents, sourceEntryId: existing?.sourceEntryId || '', createdAt: existing?.createdAt || now, updatedAt: now, label: momentLabel[input.kind] };
+  return { id: existing?.id || makeId('moment'), tripId, kind: input.kind, kindLabel, title: input.title.trim(), detail: input.detail?.trim() || '', occurredOn: input.occurredOn, visibility: input.visibility, moneyCents, sourceEntryId: existing?.sourceEntryId || '', createdAt: existing?.createdAt || now, updatedAt: now, label: input.kind === 'other' ? kindLabel : momentLabel[input.kind] };
 }
 
 export function normalizeTrip(input) {
@@ -178,7 +181,7 @@ export function isValidState(value) {
   if (!value.trips.every((trip) => trip.id && trip.name && trip.location && Array.isArray(trip.members) && trip.members.length >= 1 && trip.members.length <= 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
   const tripIds = new Set(value.trips.map((trip) => trip.id)); if (!tripIds.has(value.activeTripId)) return false;
   if (!value.entries.every((entry) => entry.id && tripIds.has(entry.tripId) && entry.merchant && CATEGORIES.includes(entry.category) && Number.isSafeInteger(entry.amountCents))) return false;
-  if (!value.moments.every((moment) => moment.id && tripIds.has(moment.tripId) && moment.title && MOMENT_TYPES.some(([kind]) => kind === moment.kind) && MOMENT_VISIBILITIES.includes(moment.visibility) && /^\d{4}-\d{2}-\d{2}$/.test(moment.occurredOn) && (moment.moneyCents === null || Number.isSafeInteger(moment.moneyCents)))) return false;
+  if (!value.moments.every((moment) => moment.id && tripIds.has(moment.tripId) && moment.title && MOMENT_TYPES.some(([kind]) => kind === moment.kind) && (moment.kind !== 'other' || (typeof moment.kindLabel === 'string' && moment.kindLabel.length > 0 && moment.kindLabel.length <= 60)) && MOMENT_VISIBILITIES.includes(moment.visibility) && /^\d{4}-\d{2}-\d{2}$/.test(moment.occurredOn) && (moment.moneyCents === null || Number.isSafeInteger(moment.moneyCents)))) return false;
   if (!Array.isArray(value.concerns) || !value.concerns.every((concern) => concern.id && tripIds.has(concern.tripId) && concern.title && ['open', 'resolved'].includes(concern.status))) return false;
   if (!Array.isArray(value.events) || !value.events.every((event) => event.id && tripIds.has(event.tripId) && Number.isInteger(event.sequence) && event.sequence > 0 && event.occurredAt && event.actorName && event.action && event.entityType && event.entityId && event.summary)) return false;
   for (const tripId of tripIds) { const events = value.events.filter((event) => event.tripId === tripId).sort((a, b) => a.sequence - b.sequence); if (events.some((event, index) => event.sequence !== index + 1 || event.previousEventId !== (events[index - 1]?.id || ''))) return false; }

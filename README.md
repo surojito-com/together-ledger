@@ -20,7 +20,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 ## What works today
 
 - A gentle **Our shared journey** timeline for moments, current check-ins, recent memories, and open threads.
-- Moment types for promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, and practical matters.
+- Moment types for promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, practical matters, and a person-named **Add your own moment** choice.
 - Per-moment visibility cues: **private**, **shared now**, or **share later**.
 - Optional practical money context inside a moment; no money totals, budgets, balances, cash-flow view, or spending dashboard.
 - Multiple browser-local journeys with creation and switching that never mixes records.
@@ -33,7 +33,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 - All 16 Surojito brand themes, with a global switcher that persists the user’s choice.
 - Synthetic demo data featuring Alex and Jordan—no household records.
 - An explicit browser-only mode that never uploads existing local journey data.
-- PR#0003 private-sync foundation: separate accounts, verified-email invitations, PostgreSQL journeys, recovery, deletion, conflict protection, and server-authoritative HMAC-chained events.
+- Private sync for separate accounts, verified-email invitations, PostgreSQL journeys, recovery, deletion, conflict protection, server-authoritative shared moments, and HMAC-chained events.
 - A portable container and active/passive AWS-primary/GCP-standby operations plan.
 
 ## Try it locally
@@ -78,7 +78,7 @@ UI → localStorage                    UI → same-origin API
                                           → append-only event chain
 ```
 
-The public static deployment remains safe to explore without an account. Its account screen states plainly when the protected service is unavailable; it never sends a name, email, or password to GitHub Pages. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** Per-moment visibility authorization will be added to the private service before it is presented as private cloud sharing. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+The public static deployment remains safe to explore without an account. Its account screen states plainly when the protected service is unavailable; it never sends a name, email, or password to GitHub Pages. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** Private shared moments are server-authoritative and visible to both authorized journeyers; person-specific private or share-later moment visibility is not yet offered by the private service. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 The Event Manager remains browser-local in browser-only mode. The private-service candidate creates events inside the authorized PostgreSQL mutation transaction and chains them with HMAC evidence. HMAC chaining is tamper-evident, not magically immutable; deployment secret isolation and backup controls still matter.
 
