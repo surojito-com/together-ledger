@@ -30,7 +30,12 @@ if [ ! -r "$TOGETHER_ENV_FILE" ]; then
 fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-repo_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+repo_dir=${TOGETHER_REPO_DIR:-$(CDPATH= cd -- "$script_dir/.." && pwd)}
+if [ ! -f "$repo_dir/compose.production.yaml" ]; then
+  echo "production Compose file is missing from TOGETHER_REPO_DIR" >&2
+  echo "reinstall the production recovery service from the reviewed production checkout" >&2
+  exit 1
+fi
 backup_dir=${BACKUP_DIR:-/var/backups/together-ledger}
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 target="$backup_dir/together-ledger-$timestamp.dump.age"
