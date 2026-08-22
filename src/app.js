@@ -6,6 +6,7 @@ import {
   CATEGORIES,
   CATEGORY_ICONS,
   conversationPrompts,
+  CURRENT_SCHEMA_VERSION,
   dateLabel,
   dateRange,
   groupDayByCategory,
@@ -77,7 +78,7 @@ function snapshotToState(snapshots) {
     }));
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     activeTripId: trips.some((trip) => trip.id === previousActive) ? previousActive : trips[0].id,
     preferences,
     trips,
@@ -111,7 +112,7 @@ function renderAccountState() {
   $('#account-unavailable').hidden = signedIn || accountsAvailable;
   $('#signed-out-account').hidden = signedIn || !accountsAvailable;
   $('#signed-in-account').hidden = !signedIn;
-  $('#account-button').textContent = signedIn ? accountUser.displayName : accountsAvailable ? 'Sign in' : 'Accounts soon';
+  $('#account-button').textContent = signedIn ? 'Account settings' : accountsAvailable ? 'Sign in' : 'Accounts soon';
   $('#account-dialog-copy').textContent = accountsAvailable ? 'Passwords are never shared between journeyers.' : 'The private account service is not live on this public page yet.';
   $('#account-name').textContent = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
@@ -127,6 +128,7 @@ function renderAccountState() {
   $('#invite-form').hidden = !sharing || activeTrip(state).members.length >= 2 || activeTrip(state).role !== 'owner';
   $('#sharing-copy').textContent = sharing ? `${activeTrip(state).members.length} of 2 journey seats are active. Each journeyer signs in separately.` : 'Sign in and create a private journey to invite another journeyer.';
   $('#member-list').innerHTML = sharing ? activeTrip(state).members.map((name) => `<div class="member-chip"><strong>${escapeHtml(name)}</strong><span>${name === accountUser.displayName ? 'You' : 'Journeyer'}</span></div>`).join('') : '';
+  $('#theme-copy').textContent = 'Your theme changes only your own view. Each journeyer chooses what feels right on their screen.';
 }
 
 function initializeThemePicker() {
@@ -153,8 +155,8 @@ function render() {
   $('.trip-bar').hidden = isEmptyStart;
   $$('[data-open-moment]').forEach((button) => { button.textContent = accountNeedsJourney ? 'Create a journey' : isEmptyStart ? 'Begin' : '＋ Hold a moment'; });
   $('#trip-name').textContent = trip.name;
-  $('#trip-period').textContent = isEmptyStart ? 'Nothing has been written here yet.' : `${trip.location} · ${dateLabel(trip.startDate)}–${dateLabel(trip.endDate)}`;
-  $('#guidance').hidden = isEmptyStart;
+  $('#trip-period').textContent = isEmptyStart ? 'Nothing has been written here yet.' : journeyPeriod(trip);
+  $('#guidance').hidden = isEmptyStart || guidanceEndedToday();
   $('#threads').hidden = isEmptyStart;
   renderSharedJourney(trip, moments, isEmptyStart);
 }
@@ -178,6 +180,22 @@ function momentLabel(kind, kindLabel = '') {
   return MOMENT_TYPES.find(([value]) => value === kind)?.[1] || 'Moment';
 }
 
+function localDayKey() {
+  return new Intl.DateTimeFormat('en-CA').format(new Date());
+}
+
+function guidanceEndedToday() {
+  return localStorage.getItem('together-ledger-guidance-ended-on') === localDayKey();
+}
+
+function journeyPeriod(trip) {
+  const pieces = [];
+  if (trip.location) pieces.push(trip.location);
+  pieces.push(trip.startDateStatus === 'unknown' ? 'Began at an unknown time' : `Began ${dateLabel(trip.startDate)}`);
+  pieces.push(trip.endDateStatus === 'forever' ? 'No end date planned' : trip.endDateStatus === 'unsure' ? 'Ending not decided yet' : `Ends ${dateLabel(trip.endDate)}`);
+  return pieces.join(' · ');
+}
+
 function renderSharedJourney(trip, moments, isEmptyStart) {
   const threads = state.concerns.filter((concern) => concern.tripId === trip.id && concern.status === 'open');
   const recent = [...moments].sort((a, b) => `${b.occurredOn}-${b.updatedAt}`.localeCompare(`${a.occurredOn}-${a.updatedAt}`));
@@ -187,7 +205,7 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#guidance-progress').textContent = `Check-in ${guidanceIndex + 1} of ${prompts.length}`;
   $('#guidance-prompt').textContent = prompts[guidanceIndex];
   $('#guidance-prev').disabled = guidanceIndex === 0;
-  $('#guidance-next').hidden = guidanceIndex === prompts.length - 1;
+  $('#guidance-skip').hidden = guidanceIndex === prompts.length - 1;
   $('#guidance-done').hidden = guidanceIndex !== prompts.length - 1;
   const kindsInUse = new Set(recent.map((moment) => moment.kind));
   const filters = [['all', 'All moments'], ...MOMENT_TYPES.filter(([value]) => kindsInUse.has(value))];
@@ -201,7 +219,12 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#toggle-moments-button').hidden = !recent.length;
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
-  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
+  $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
+    const attribution = moment.shapedByBoth
+      ? `Held by ${escapeHtml(moment.createdBy || 'Journey member')} · Shaped by both journeyers`
+      : `Held by ${escapeHtml(moment.createdBy || 'Journey member')}`;
+    return `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
+  }).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
   $$('[data-open-custom-moment]').forEach((button) => button.addEventListener('click', () => {
     if (accountUser && !isCloudJourney(trip)) { openJourney(); return; }
@@ -232,7 +255,7 @@ function openMoment(id = '', initialKind = '') {
   $('#moment-visibility-field').hidden = shared;
   $$('input[name="visibility"]', form).forEach((input) => { input.disabled = shared; });
   if (moment) {
-    form.elements.id.value = moment.id; form.elements.kind.value = moment.kind; form.elements.kindLabel.value = moment.kindLabel || ''; form.elements.title.value = moment.title; form.elements.detail.value = moment.detail; form.elements.occurredOn.value = moment.occurredOn; form.elements.visibility.value = moment.visibility; form.elements.money.value = moment.moneyCents == null ? '' : (moment.moneyCents / 100).toFixed(2);
+    form.elements.id.value = moment.id; form.elements.kind.value = moment.kind; form.elements.kindLabel.value = moment.kindLabel || ''; form.elements.title.value = moment.title; form.elements.detail.value = moment.detail; form.elements.occurredOn.value = moment.occurredOn; form.elements.visibility.value = moment.visibility; form.elements.money.value = moment.moneyCents == null ? '' : (moment.moneyCents / 100).toFixed(2); form.elements.moneyCurrency.value = moment.moneyCurrency || '';
   } else if (initialKind) {
     form.elements.kind.value = initialKind;
   }
@@ -259,39 +282,6 @@ function renderSummary(summary, count) {
     ['Shared clarity', count ? 'Up to date' : 'Start here', count ? 'A common picture for the next talk' : 'Add the first cost together', ''],
   ];
   $('#summary-grid').innerHTML = cards.map(([label, value, note, className]) => `<article class="card summary ${className}"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
-}
-
-function renderGuidance(summary, trip) {
-  const prompts = conversationPrompts(summary);
-  guidanceIndex = Math.min(guidanceIndex, Math.max(0, prompts.length - 1));
-  $('#guidance-progress').textContent = `Prompt ${guidanceIndex + 1} of ${prompts.length}`;
-  $('#guidance-prompt').textContent = prompts[guidanceIndex];
-  $('#guidance-prev').disabled = guidanceIndex === 0;
-  $('#guidance-next').hidden = guidanceIndex === prompts.length - 1;
-  $('#guidance-done').hidden = guidanceIndex !== prompts.length - 1;
-  const milestones = [
-    ['reviewedPicture', 'We reviewed the same trip totals'],
-    ['chosePrompt', 'We chose one question to discuss'],
-    ['agreedNextAction', 'We agreed on one next action'],
-  ];
-  $('#milestone-list').innerHTML = milestones.map(([key, label]) => `<label><input type="checkbox" data-milestone="${key}" ${trip.milestones[key] ? 'checked' : ''} /> <span>${label}</span></label>`).join('');
-  $$('[data-milestone]').forEach((input) => input.addEventListener('change', async () => {
-    if (isCloudJourney(trip)) {
-      try {
-        await api.mutate(`/journeys/${trip.id}/milestones/${input.dataset.milestone}`, 'PATCH', { completed: input.checked });
-        await refreshCloudState();
-        showToast('Journey action synced.');
-      } catch (error) {
-        input.checked = !input.checked;
-        showToast(accountMessage(error));
-      }
-      return;
-    }
-    const before = { [input.dataset.milestone]: !input.checked };
-    trip.milestones[input.dataset.milestone] = input.checked;
-    eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: input.dataset.milestone, summary: `${input.checked ? 'Completed' : 'Reopened'}: ${input.nextElementSibling.textContent}`, before, after: { [input.dataset.milestone]: input.checked } });
-    persistAndRender('Journey action updated.');
-  }));
 }
 
 function renderCategoryChart(summary) {
@@ -429,24 +419,46 @@ function openJourney(trip = null) {
   const today = new Date().toISOString().slice(0, 10);
   form.elements.startDate.value = today;
   form.elements.endDate.value = today;
+  form.elements.startDateStatus.value = 'exact';
+  form.elements.endDateStatus.value = 'forever';
   $('#journey-dialog-title').textContent = trip ? 'Edit journey details' : 'Begin a shared journey';
+  $('#journey-dialog-eyebrow').textContent = accountUser ? 'Private journey details' : 'Local journey details';
+  $('#journey-dialog-copy').textContent = accountUser
+    ? 'Begin with a name. The optional details can wait until they feel useful.'
+    : 'Two people share the journey. The information stays in this browser until you export it.';
   $('#save-journey-button').textContent = trip ? 'Save journey changes' : 'Create journey';
   $$('.member-field').forEach((field) => {
     field.hidden = Boolean(accountUser);
-    field.querySelector('input').disabled = Boolean(accountUser);
+    const input = field.querySelector('input');
+    input.disabled = Boolean(accountUser);
+    input.required = !accountUser;
   });
   if (trip) {
     form.elements.id.value = trip.id;
     form.elements.name.value = trip.name;
     form.elements.location.value = trip.location;
-    form.elements.startDate.value = trip.startDate;
-    form.elements.endDate.value = trip.endDate;
+    form.elements.startDateStatus.value = trip.startDateStatus || 'exact';
+    form.elements.endDateStatus.value = trip.endDateStatus || 'forever';
+    form.elements.startDate.value = trip.startDate || today;
+    form.elements.endDate.value = trip.endDate || today;
     form.elements.budget.value = (trip.budgetCents / 100).toFixed(2);
     form.elements.memberOne.value = trip.members[0];
     form.elements.memberTwo.value = trip.members[1];
   }
+  syncJourneyDateFields(form);
   $('#journey-dialog').showModal();
   form.elements.name.focus({ preventScroll: true });
+}
+
+function syncJourneyDateFields(form = $('#journey-form')) {
+  const hasExactStart = form.elements.startDateStatus.value === 'exact';
+  const hasExactEnd = form.elements.endDateStatus.value === 'date';
+  $('#start-date-field').hidden = !hasExactStart;
+  $('#end-date-field').hidden = !hasExactEnd;
+  form.elements.startDate.disabled = !hasExactStart;
+  form.elements.endDate.disabled = !hasExactEnd;
+  form.elements.startDate.required = hasExactStart;
+  form.elements.endDate.required = hasExactEnd;
 }
 
 function meaningfulChanges(before, after) {
@@ -468,7 +480,7 @@ function renderEventManager() {
   const events = state.events.filter((event) => event.tripId === trip.id).sort((a, b) => b.sequence - a.sequence);
   $('#event-dialog-title').textContent = `${trip.name} history`;
   $('#event-manager-copy').textContent = isCloudJourney(trip) ? 'Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones.' : 'Browser-local preview. Production attribution requires separate signed-in accounts.';
-  $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : '<p class="empty compact">No open threads have been recorded for this journey.</p>';
+  $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : '<p class="empty compact">No return-to conversations have been recorded for this journey.</p>';
   $('#event-list').innerHTML = events.length ? events.map((event) => {
     const changes = meaningfulChanges(event.before, event.after);
     return `<details class="event-row"><summary><span><strong>#${event.sequence} · ${escapeHtml(event.summary)}</strong><small>${escapeHtml(event.actorName)} · ${new Date(event.occurredAt).toLocaleString()}</small></span><span aria-hidden="true">＋</span></summary>${changes.length ? `<dl>${changes.map(({ key, before, after }) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(valueLabel(key, before))} → ${escapeHtml(valueLabel(key, after))}</dd></div>`).join('')}</dl>` : '<p>No field-level value change was stored for this event.</p>'}<small>Event ID ${escapeHtml(event.id)} · Previous ${escapeHtml(event.previousEventId || 'none')} · ${escapeHtml(event.source)}${event.eventHash ? ` · Hash ${escapeHtml(event.eventHash.slice(0, 12))}…` : ''}</small></details>`;
@@ -481,8 +493,8 @@ function openConcern(id = '') {
   const form = $('#concern-form');
   const concern = state.concerns.find((item) => item.id === id);
   form.reset();
-  $('#concern-dialog-title').textContent = concern ? 'Edit thread' : 'Start a thread';
-  $('#save-concern-button').textContent = concern ? 'Save thread changes' : 'Start thread';
+  $('#concern-dialog-title').textContent = concern ? 'Edit return-to conversation' : 'Start a return-to conversation';
+  $('#save-concern-button').textContent = concern ? 'Save conversation changes' : 'Keep this open';
   if (concern) {
     form.elements.id.value = concern.id;
     form.elements.title.value = concern.title;
@@ -584,6 +596,8 @@ $('#journey-select').addEventListener('change', (event) => {
 
 $('#new-journey-button').addEventListener('click', () => openJourney());
 $('#edit-journey-button').addEventListener('click', () => openJourney(activeTrip(state)));
+$('#journey-form').elements.startDateStatus.addEventListener('change', () => syncJourneyDateFields());
+$('#journey-form').elements.endDateStatus.addEventListener('change', () => syncJourneyDateFields());
 $('#actor-select').addEventListener('change', (event) => {
   state.preferences.activeActorByTrip[activeTrip(state).id] = event.target.value;
   saveWorkingState();
@@ -603,8 +617,10 @@ $('#journey-form').addEventListener('submit', async (event) => {
       const payload = {
         name: input.name,
         location: input.location,
-        startDate: input.startDate,
-        endDate: input.endDate,
+        startDateStatus: input.startDateStatus,
+        endDateStatus: input.endDateStatus,
+        startDate: input.startDateStatus === 'exact' ? input.startDate : null,
+        endDate: input.endDateStatus === 'date' ? input.endDate : null,
         budgetCents: Math.round(Number(input.budget) * 100),
         ...(existing ? { version: existing.version } : {}),
       };
@@ -650,26 +666,22 @@ $('#journey-form').addEventListener('submit', async (event) => {
 
 $('#guidance-skip').addEventListener('click', () => {
   const prompts = conversationPrompts();
-  guidanceIndex = (guidanceIndex + 1) % prompts.length;
+  guidanceIndex = Math.min(prompts.length - 1, guidanceIndex + 1);
   renderSharedJourney(activeTrip(state), activeMoments(state));
 });
 $('#guidance-prev').addEventListener('click', () => {
   guidanceIndex = Math.max(0, guidanceIndex - 1);
   renderSharedJourney(activeTrip(state), activeMoments(state));
 });
-$('#guidance-next').addEventListener('click', async () => {
-  const trip = activeTrip(state);
-  if (!trip.milestones.chosePrompt) {
-    if (isCloudJourney(trip)) {
-      try { await api.mutate(`/journeys/${trip.id}/milestones/chosePrompt`, 'PATCH', { completed: true }); } catch (error) { showToast(accountMessage(error)); return; }
-    }
-    trip.milestones.chosePrompt = true;
-    if (!isCloudJourney(trip)) eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
-  }
-  guidanceIndex += 1;
-  saveWorkingState();
-  renderSharedJourney(trip, activeMoments(state));
-});
+function endGuidanceForToday(message) {
+  localStorage.setItem('together-ledger-guidance-ended-on', localDayKey());
+  $('#guidance').open = false;
+  render();
+  showToast(message);
+}
+
+$('#guidance-end').addEventListener('click', () => endGuidanceForToday('Check-in set aside for today.'));
+$('#guidance-done').addEventListener('click', () => endGuidanceForToday('Check-in complete. It can rest until tomorrow.'));
 
 $('#moment-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -680,7 +692,7 @@ $('#moment-form').addEventListener('submit', async (event) => {
     const trip = activeTrip(state);
     if (isCloudJourney(trip)) {
       const moneyCents = input.money === '' ? null : Math.round(Number(input.money) * 100);
-      const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, moneyCents, ...(before ? { version: before.version } : {}) };
+      const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, moneyCents, moneyCurrency: input.moneyCurrency || '', ...(before ? { version: before.version } : {}) };
       if (before) await api.mutate(`/journeys/${trip.id}/moments/${before.id}`, 'PATCH', payload);
       else await api.mutate(`/journeys/${trip.id}/moments`, 'POST', payload);
       $('#moment-dialog').close();
@@ -688,7 +700,8 @@ $('#moment-form').addEventListener('submit', async (event) => {
       showToast(before ? 'Shared moment updated.' : 'Shared moment held.');
       return;
     }
-    const moment = normalizeMoment(input, activeTrip(state).id, before);
+    const actorName = currentActor();
+    const moment = normalizeMoment({ ...input, createdBy: actorName, updatedBy: actorName }, activeTrip(state).id, before);
     if (existingIndex >= 0) state.moments[existingIndex] = moment;
     else state.moments.push(moment);
     eventRecord({ action: existingIndex >= 0 ? 'moment_updated' : 'moment_added', entityType: 'moment', entityId: moment.id, summary: `${existingIndex >= 0 ? 'Updated' : 'Held'} ${momentLabel(moment.kind, moment.kindLabel).toLowerCase()}: ${moment.title}`, before, after: moment });
@@ -704,18 +717,6 @@ $('#toggle-moments-button').addEventListener('click', () => {
   momentFilter = 'all';
   renderSharedJourney(activeTrip(state), activeMoments(state));
 });
-$('#guidance-done').addEventListener('click', async () => {
-  const trip = activeTrip(state);
-  if (!trip.milestones.chosePrompt) {
-    if (isCloudJourney(trip)) {
-      try { await api.mutate(`/journeys/${trip.id}/milestones/chosePrompt`, 'PATCH', { completed: true }); } catch (error) { showToast(accountMessage(error)); return; }
-    }
-    trip.milestones.chosePrompt = true;
-    if (!isCloudJourney(trip)) eventRecord({ action: 'milestone_updated', entityType: 'milestone', entityId: 'chosePrompt', summary: 'Completed: We chose one question to discuss', before: { chosePrompt: false }, after: { chosePrompt: true } });
-  }
-  persistAndRender('Check-in complete. Agree on one next action together.');
-});
-
 $('#settings-button').addEventListener('click', () => $('#settings-dialog').showModal());
 $$('[data-close-settings]').forEach((button) => button.addEventListener('click', () => $('#settings-dialog').close()));
 $('#account-button').addEventListener('click', () => {
@@ -836,12 +837,17 @@ $('#delete-account-form').addEventListener('submit', async (event) => {
 
 $('#invite-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
   try {
-    await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(event.currentTarget)));
-    event.currentTarget.reset();
+    await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(form)));
+    form.reset();
     showToast('Invitation sent. The journeyer must use their own verified account.');
   } catch (error) {
     showToast(accountMessage(error));
+  } finally {
+    button.disabled = false;
   }
 });
 

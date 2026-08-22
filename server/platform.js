@@ -25,12 +25,19 @@ const CATEGORIES = new Set(['Flights', 'Hotel', 'Restaurants', 'Transportation',
 const STATUSES = new Set(['paid', 'due']);
 const CONCERN_STATUSES = new Set(['open', 'resolved']);
 const MOMENT_KINDS = new Set(['promise', 'acknowledgment', 'trigger', 'missed-chance', 'heart-to-heart', 'memory', 'feeling', 'boundary', 'repair-request', 'practical-matter', 'other']);
+const MONEY_CURRENCIES = new Set(['', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']);
+const START_DATE_STATUSES = new Set(['exact', 'unknown']);
+const END_DATE_STATUSES = new Set(['date', 'unsure', 'forever']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function cleanText(value, label, max) {
   const text = String(value || '').trim();
   if (!text || text.length > max) throw new PlatformError(400, 'invalid_input', `${label} is required and must be ${max} characters or fewer.`);
   return text;
+}
+
+function cleanOptionalText(value, max) {
+  return String(value ?? '').trim().slice(0, max);
 }
 
 function cleanEmail(value) {
@@ -87,7 +94,9 @@ function publicJourney(row) {
     name: row.name,
     location: row.location,
     startDate: dateOnly(row.start_date),
+    startDateStatus: row.start_date_status || 'exact',
     endDate: dateOnly(row.end_date),
+    endDateStatus: row.end_date_status || 'date',
     budgetCents: row.budget_cents,
     version: row.version,
     role: row.role,
@@ -146,6 +155,10 @@ function publicMoment(row) {
     detail: row.detail,
     visibility: row.visibility,
     moneyCents: row.money_cents,
+    moneyCurrency: row.money_currency || '',
+    createdBy: row.created_by_name || 'Journey member',
+    updatedBy: row.updated_by_name || row.created_by_name || 'Journey member',
+    shapedByBoth: Boolean(row.created_by_user_id && row.updated_by_user_id && row.created_by_user_id !== row.updated_by_user_id),
     version: row.version,
     createdAt: dateTime(row.created_at),
     updatedAt: dateTime(row.updated_at),
@@ -169,6 +182,8 @@ function cleanMoment(input, existing = null) {
   const moneyValue = Object.hasOwn(input, 'moneyCents') ? input.moneyCents : existing?.moneyCents;
   const moneyCents = moneyValue == null || moneyValue === '' ? null : Number(moneyValue);
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new PlatformError(400, 'invalid_input', 'Enter a valid optional money context.');
+  const moneyCurrency = String(input.moneyCurrency ?? existing?.moneyCurrency ?? '').trim().toUpperCase();
+  if (!MONEY_CURRENCIES.has(moneyCurrency)) throw new PlatformError(400, 'invalid_input', 'Choose a supported optional currency.');
   return {
     kind,
     kindLabel,
@@ -176,7 +191,22 @@ function cleanMoment(input, existing = null) {
     title: cleanText(input.title ?? existing?.title, 'Moment title', 120),
     detail: String(input.detail ?? existing?.detail ?? '').slice(0, 1200),
     moneyCents,
+    moneyCurrency,
   };
+}
+
+function cleanJourneyDetails(input, existing = null) {
+  const startDateStatus = input.startDateStatus ?? existing?.startDateStatus ?? 'exact';
+  const endDateStatus = input.endDateStatus ?? existing?.endDateStatus ?? 'date';
+  if (!START_DATE_STATUSES.has(startDateStatus) || !END_DATE_STATUSES.has(endDateStatus)) throw new PlatformError(400, 'invalid_input', 'Choose valid date options.');
+  const suppliedStartDate = Object.hasOwn(input, 'startDate') ? input.startDate : existing?.startDate;
+  const suppliedEndDate = Object.hasOwn(input, 'endDate') ? input.endDate : existing?.endDate;
+  const startDate = startDateStatus === 'exact' ? (suppliedStartDate ?? '') : null;
+  const endDate = endDateStatus === 'date' ? (suppliedEndDate ?? '') : null;
+  if (startDateStatus === 'exact' && !DATE_PATTERN.test(startDate)) throw new PlatformError(400, 'invalid_input', 'Choose a start date or select “I don’t remember exactly.”');
+  if (endDateStatus === 'date' && !DATE_PATTERN.test(endDate)) throw new PlatformError(400, 'invalid_input', 'Choose an end date or select another ending.');
+  if (startDate && endDate && endDate < startDate) throw new PlatformError(400, 'invalid_input', 'The end date must be on or after the start date.');
+  return { startDateStatus, endDateStatus, startDate, endDate };
 }
 
 function publicEvent(row) {
@@ -388,15 +418,15 @@ export class PlatformService {
 
   async createJourney(userId, input) {
     const name = cleanText(input.name, 'Journey name', 80);
-    const location = cleanText(input.location, 'Location', 80);
+    const location = cleanOptionalText(input.location, 80);
     const budgetCents = Number(input.budgetCents);
     if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new PlatformError(400, 'invalid_input', 'Enter a valid budget.');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate || '') || input.endDate < input.startDate) throw new PlatformError(400, 'invalid_input', 'Choose valid journey dates.');
+    const dates = cleanJourneyDetails(input);
     return withTransaction(this.pool, async (client) => {
       const id = randomUUID();
       const created = await client.query(
-        `INSERT INTO journeys (id,owner_user_id,name,location,start_date,end_date,budget_cents) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [id, userId, name, location, input.startDate, input.endDate, budgetCents],
+        `INSERT INTO journeys (id,owner_user_id,name,location,start_date,start_date_status,end_date,end_date_status,budget_cents) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [id, userId, name, location, dates.startDate, dates.startDateStatus, dates.endDate, dates.endDateStatus, budgetCents],
       );
       await client.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'owner')`, [id, userId]);
       await this.appendEvent(client, { journeyId: id, actorUserId: userId, action: 'journey_created', entityType: 'journey', entityId: id, summary: `Created journey: ${name}`, after: publicJourney({ ...created.rows[0], role: 'owner' }) });
@@ -411,15 +441,14 @@ export class PlatformService {
       if (Number(input.version) !== existing.version) throw new PlatformError(409, 'conflict', 'This journey changed on another device. Refresh before saving.');
       const next = {
         name: cleanText(input.name ?? existing.name, 'Journey name', 80),
-        location: cleanText(input.location ?? existing.location, 'Location', 80),
-        startDate: input.startDate ?? dateOnly(existing.start_date),
-        endDate: input.endDate ?? dateOnly(existing.end_date),
+        location: cleanOptionalText(input.location ?? existing.location, 80),
         budgetCents: input.budgetCents ?? existing.budget_cents,
       };
-      if (!DATE_PATTERN.test(next.startDate) || !DATE_PATTERN.test(next.endDate) || !Number.isSafeInteger(Number(next.budgetCents)) || Number(next.budgetCents) < 0 || Number(next.budgetCents) > 100000000 || next.endDate < next.startDate) throw new PlatformError(400, 'invalid_input', 'Journey details are not valid.');
+      const dates = cleanJourneyDetails(input, { startDateStatus: existing.start_date_status, endDateStatus: existing.end_date_status, startDate: dateOnly(existing.start_date), endDate: dateOnly(existing.end_date) });
+      if (!Number.isSafeInteger(Number(next.budgetCents)) || Number(next.budgetCents) < 0 || Number(next.budgetCents) > 100000000) throw new PlatformError(400, 'invalid_input', 'Journey details are not valid.');
       const updated = await client.query(
-        `UPDATE journeys SET name=$1,location=$2,start_date=$3,end_date=$4,budget_cents=$5,version=version+1,updated_at=$6 WHERE id=$7 AND version=$8 RETURNING *`,
-        [next.name, next.location, next.startDate, next.endDate, Number(next.budgetCents), this.now(), journeyId, existing.version],
+        `UPDATE journeys SET name=$1,location=$2,start_date=$3,start_date_status=$4,end_date=$5,end_date_status=$6,budget_cents=$7,version=version+1,updated_at=$8 WHERE id=$9 AND version=$10 RETURNING *`,
+        [next.name, next.location, dates.startDate, dates.startDateStatus, dates.endDate, dates.endDateStatus, Number(next.budgetCents), this.now(), journeyId, existing.version],
       );
       if (!updated.rowCount) throw new PlatformError(409, 'conflict', 'This journey changed on another device.');
       const before = publicJourney(existing);
@@ -543,9 +572,9 @@ export class PlatformService {
       const id = randomUUID();
       const next = cleanMoment(input);
       const created = await client.query(
-        `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,money_cents)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents],
+        `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,money_cents,money_currency,created_by_user_id,updated_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, next.moneyCurrency, userId, userId],
       );
       const moment = publicMoment(created.rows[0]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
@@ -568,8 +597,8 @@ export class PlatformService {
       }
       const next = cleanMoment(input, before);
       const updated = await client.query(
-        `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,money_cents=$6,version=version+1,updated_at=$7 WHERE id=$8 RETURNING *`,
-        [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, this.now(), momentId],
+        `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,money_cents=$6,money_currency=$7,updated_by_user_id=$8,version=version+1,updated_at=$9 WHERE id=$10 RETURNING *`,
+        [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, next.moneyCurrency, userId, this.now(), momentId],
       );
       const after = publicMoment(updated.rows[0]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_updated', entityType: 'moment', entityId: momentId, summary: `Updated moment: ${after.title}`, before: auditMoment(before), after: auditMoment(after) });
@@ -644,7 +673,11 @@ export class PlatformService {
       const [members, expenses, moments, concerns, milestones, events] = await Promise.all([
         client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1`, [journeyId]),
         client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
-        client.query('SELECT * FROM journey_moments WHERE journey_id=$1 ORDER BY occurred_on,created_at,id', [journeyId]),
+        client.query(`SELECT m.*,creator.display_name AS created_by_name,editor.display_name AS updated_by_name
+          FROM journey_moments m
+          LEFT JOIN users creator ON creator.id=m.created_by_user_id
+          LEFT JOIN users editor ON editor.id=m.updated_by_user_id
+          WHERE m.journey_id=$1 ORDER BY m.occurred_on,m.created_at,m.id`, [journeyId]),
         client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
         client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
         client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),

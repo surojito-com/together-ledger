@@ -1,5 +1,5 @@
 export const CATEGORIES = ['Flights', 'Hotel', 'Restaurants', 'Transportation', 'Activities', 'Shopping', 'Other'];
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export const MOMENT_TYPES = [
   ['promise', 'Promise'],
@@ -32,6 +32,7 @@ function practicalMoments(entries) {
     occurredOn: entry.occurredOn,
     visibility: 'shared-now',
     moneyCents: entry.amountCents,
+    moneyCurrency: 'USD',
     sourceEntryId: entry.id,
     createdAt: `${entry.occurredOn || '2026-01-01'}T12:00:00.000Z`,
     updatedAt: `${entry.occurredOn || '2026-01-01'}T12:00:00.000Z`,
@@ -42,9 +43,9 @@ export function demoState() {
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     activeTripId: 'first-shared-space',
-    preferences: { onboardingComplete: false, activeActorByTrip: { 'first-shared-space': 'You' } },
+    preferences: { onboardingComplete: false, guidanceDismissedOn: '', activeActorByTrip: { 'first-shared-space': 'You' } },
     trips: [{
-      id: 'first-shared-space', name: 'A shared space', location: 'Nothing recorded yet', startDate: '2026-01-01', endDate: '2026-01-01', budgetCents: 0, members: ['You', 'Your journeyer'], archivedAt: '',
+      id: 'first-shared-space', name: 'A shared space', location: 'Nothing recorded yet', startDate: '2026-01-01', startDateStatus: 'exact', endDate: '2026-01-01', endDateStatus: 'date', budgetCents: 0, members: ['You', 'Your journeyer'], archivedAt: '',
       milestones: { reviewedPicture: false, chosePrompt: false, agreedNextAction: false },
     }],
     entries: [],
@@ -75,18 +76,27 @@ export function normalizeMilestones(value = {}) {
 }
 
 export function migrateState(value) {
-  if (!value || ![1, 2, CURRENT_SCHEMA_VERSION].includes(value.schemaVersion) || !Array.isArray(value.trips) || !Array.isArray(value.entries)) throw new Error('This does not look like valid Together Ledger data.');
-  const trips = value.trips.map((trip) => ({ ...trip, archivedAt: typeof trip.archivedAt === 'string' ? trip.archivedAt : '', milestones: normalizeMilestones(trip.milestones) }));
+  if (!value || ![1, 2, 3, CURRENT_SCHEMA_VERSION].includes(value.schemaVersion) || !Array.isArray(value.trips) || !Array.isArray(value.entries)) throw new Error('This does not look like valid Together Ledger data.');
+  const trips = value.trips.map((trip) => ({
+    ...trip,
+    location: typeof trip.location === 'string' ? trip.location : '',
+    startDateStatus: trip.startDateStatus === 'unknown' ? 'unknown' : 'exact',
+    endDateStatus: ['date', 'unsure', 'forever'].includes(trip.endDateStatus) ? trip.endDateStatus : 'date',
+    startDate: trip.startDateStatus === 'unknown' ? '' : trip.startDate || '',
+    endDate: ['unsure', 'forever'].includes(trip.endDateStatus) ? '' : trip.endDate || '',
+    archivedAt: typeof trip.archivedAt === 'string' ? trip.archivedAt : '',
+    milestones: normalizeMilestones(trip.milestones),
+  }));
   const activeTripId = trips.some((trip) => trip.id === value.activeTripId) ? value.activeTripId : trips[0]?.id;
   const entries = value.entries.map((entry) => ({ ...entry }));
   const migrated = {
     ...value,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     activeTripId,
-    preferences: { ...value.preferences, onboardingComplete: value.preferences?.onboardingComplete === true, activeActorByTrip: value.preferences?.activeActorByTrip && typeof value.preferences.activeActorByTrip === 'object' ? { ...value.preferences.activeActorByTrip } : {} },
+    preferences: { ...value.preferences, onboardingComplete: value.preferences?.onboardingComplete === true, guidanceDismissedOn: typeof value.preferences?.guidanceDismissedOn === 'string' ? value.preferences.guidanceDismissedOn : '', activeActorByTrip: value.preferences?.activeActorByTrip && typeof value.preferences.activeActorByTrip === 'object' ? { ...value.preferences.activeActorByTrip } : {} },
     trips,
     entries,
-    moments: Array.isArray(value.moments) ? value.moments.map((moment) => ({ ...moment, moneyCents: moment.moneyCents == null ? null : Number(moment.moneyCents) })) : practicalMoments(entries),
+    moments: Array.isArray(value.moments) ? value.moments.map((moment) => ({ ...moment, moneyCents: moment.moneyCents == null ? null : Number(moment.moneyCents), moneyCurrency: typeof moment.moneyCurrency === 'string' ? moment.moneyCurrency : '' })) : practicalMoments(entries),
     concerns: Array.isArray(value.concerns) ? value.concerns.map((concern) => ({ ...concern })) : [],
     events: Array.isArray(value.events) ? value.events.map((event) => ({ ...event })) : [],
   };
@@ -128,7 +138,11 @@ export function conversationPrompts() {
   return ['What feels important to name with care today?', 'What is one thing you noticed and appreciated?', 'Is there an open thread that would feel lighter with a small next step?', 'What boundary would help this journey feel more spacious?', 'What do we want to remember about this season together?'];
 }
 
-export function money(cents) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100); }
+export function money(cents, currency = 'USD') {
+  const value = (Number(cents) || 0) / 100;
+  if (!currency) return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value); } catch { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value); }
+}
 export function dateLabel(date, options = { month: 'short', day: 'numeric' }) { if (!date) return 'Date not set'; return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...options }).format(new Date(`${date}T12:00:00Z`)); }
 export function makeId(prefix = 'entry') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 
@@ -155,18 +169,27 @@ export function normalizeMoment(input, tripId, existing = null) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.occurredOn || '')) throw new Error('Choose a valid date.');
   const moneyCents = input.money === '' || input.money == null ? null : Math.round(Number(input.money) * 100);
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new Error('Enter a valid optional money context.');
+  const moneyCurrency = String(input.moneyCurrency ?? existing?.moneyCurrency ?? '').trim().toUpperCase();
+  if (moneyCurrency && !['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR'].includes(moneyCurrency)) throw new Error('Choose a supported optional currency.');
   const now = new Date().toISOString();
-  return { id: existing?.id || makeId('moment'), tripId, kind: input.kind, kindLabel, title: input.title.trim(), detail: input.detail?.trim() || '', occurredOn: input.occurredOn, visibility: input.visibility, moneyCents, sourceEntryId: existing?.sourceEntryId || '', createdAt: existing?.createdAt || now, updatedAt: now, label: input.kind === 'other' ? kindLabel : momentLabel[input.kind] };
+  const createdBy = existing?.createdBy || input.createdBy || 'Journey member';
+  const updatedBy = input.updatedBy || existing?.updatedBy || createdBy;
+  return { id: existing?.id || makeId('moment'), tripId, kind: input.kind, kindLabel, title: input.title.trim(), detail: input.detail?.trim() || '', occurredOn: input.occurredOn, visibility: input.visibility, moneyCents, moneyCurrency, sourceEntryId: existing?.sourceEntryId || '', createdAt: existing?.createdAt || now, updatedAt: now, createdBy, updatedBy, shapedByBoth: Boolean(existing?.shapedByBoth || (existing?.createdBy && existing.createdBy !== updatedBy)), label: input.kind === 'other' ? kindLabel : momentLabel[input.kind] };
 }
 
 export function normalizeTrip(input) {
   const budgetCents = input.budget === '' || input.budget == null ? 0 : Math.round(Number(input.budget) * 100);
   const members = [input.memberOne, input.memberTwo].map((value) => value?.trim()).filter(Boolean);
-  if (!input.name?.trim()) throw new Error('Journey name is required.'); if (!input.location?.trim()) throw new Error('Location is required.');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(input.endDate || '')) throw new Error('Choose valid journey dates.');
-  if (input.endDate < input.startDate) throw new Error('The end date must be on or after the start date.'); if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new Error('Enter a valid planning amount.');
+  const startDateStatus = input.startDateStatus === 'unknown' ? 'unknown' : 'exact';
+  const endDateStatus = ['date', 'unsure', 'forever'].includes(input.endDateStatus) ? input.endDateStatus : 'forever';
+  const startDate = startDateStatus === 'exact' ? input.startDate : '';
+  const endDate = endDateStatus === 'date' ? input.endDate : '';
+  if (!input.name?.trim()) throw new Error('Journey name is required.');
+  if (startDateStatus === 'exact' && !/^\d{4}-\d{2}-\d{2}$/.test(startDate || '')) throw new Error('Choose a valid start date or select “I don’t remember exactly.”');
+  if (endDateStatus === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(endDate || '')) throw new Error('Choose a valid end date or select another ending.');
+  if (startDate && endDate && endDate < startDate) throw new Error('The end date must be on or after the start date.'); if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new Error('Enter a valid planning amount.');
   if (members.length !== 2) throw new Error('Add both people sharing this journey.'); if (new Set(members.map((member) => member.toLocaleLowerCase())).size !== 2) throw new Error('Use a distinct name for each journeyer.');
-  return { id: input.id || makeId('trip'), name: input.name.trim(), location: input.location.trim(), startDate: input.startDate, endDate: input.endDate, budgetCents, members, archivedAt: '', milestones: normalizeMilestones() };
+  return { id: input.id || makeId('trip'), name: input.name.trim(), location: input.location?.trim() || '', startDate, startDateStatus, endDate, endDateStatus, budgetCents, members, archivedAt: '', milestones: normalizeMilestones() };
 }
 
 export function normalizeEntry(input, tripId) {
@@ -177,11 +200,11 @@ export function normalizeEntry(input, tripId) {
 
 export function isValidState(value) {
   if (!value || value.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(value.trips) || !Array.isArray(value.entries) || !Array.isArray(value.moments)) return false;
-  if (!value.trips.length || !value.preferences || typeof value.preferences.onboardingComplete !== 'boolean' || !value.preferences.activeActorByTrip || typeof value.preferences.activeActorByTrip !== 'object') return false;
-  if (!value.trips.every((trip) => trip.id && trip.name && trip.location && Array.isArray(trip.members) && trip.members.length >= 1 && trip.members.length <= 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
+  if (!value.trips.length || !value.preferences || typeof value.preferences.onboardingComplete !== 'boolean' || typeof value.preferences.guidanceDismissedOn !== 'string' || !value.preferences.activeActorByTrip || typeof value.preferences.activeActorByTrip !== 'object') return false;
+  if (!value.trips.every((trip) => trip.id && trip.name && typeof trip.location === 'string' && ['exact', 'unknown'].includes(trip.startDateStatus) && ['date', 'unsure', 'forever'].includes(trip.endDateStatus) && (trip.startDateStatus !== 'exact' || /^\d{4}-\d{2}-\d{2}$/.test(trip.startDate)) && (trip.startDateStatus !== 'unknown' || !trip.startDate) && (trip.endDateStatus !== 'date' || /^\d{4}-\d{2}-\d{2}$/.test(trip.endDate)) && (trip.endDateStatus === 'date' || !trip.endDate) && (!trip.startDate || !trip.endDate || trip.endDate >= trip.startDate) && Array.isArray(trip.members) && trip.members.length >= 1 && trip.members.length <= 2 && Number.isSafeInteger(trip.budgetCents) && trip.milestones && ['reviewedPicture', 'chosePrompt', 'agreedNextAction'].every((key) => typeof trip.milestones[key] === 'boolean'))) return false;
   const tripIds = new Set(value.trips.map((trip) => trip.id)); if (!tripIds.has(value.activeTripId)) return false;
   if (!value.entries.every((entry) => entry.id && tripIds.has(entry.tripId) && entry.merchant && CATEGORIES.includes(entry.category) && Number.isSafeInteger(entry.amountCents))) return false;
-  if (!value.moments.every((moment) => moment.id && tripIds.has(moment.tripId) && moment.title && MOMENT_TYPES.some(([kind]) => kind === moment.kind) && (moment.kind !== 'other' || (typeof moment.kindLabel === 'string' && moment.kindLabel.length > 0 && moment.kindLabel.length <= 60)) && MOMENT_VISIBILITIES.includes(moment.visibility) && /^\d{4}-\d{2}-\d{2}$/.test(moment.occurredOn) && (moment.moneyCents === null || Number.isSafeInteger(moment.moneyCents)))) return false;
+  if (!value.moments.every((moment) => moment.id && tripIds.has(moment.tripId) && moment.title && MOMENT_TYPES.some(([kind]) => kind === moment.kind) && (moment.kind !== 'other' || (typeof moment.kindLabel === 'string' && moment.kindLabel.length > 0 && moment.kindLabel.length <= 60)) && MOMENT_VISIBILITIES.includes(moment.visibility) && /^\d{4}-\d{2}-\d{2}$/.test(moment.occurredOn) && (moment.moneyCents === null || Number.isSafeInteger(moment.moneyCents)) && typeof moment.moneyCurrency === 'string' && (!moment.moneyCurrency || ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR'].includes(moment.moneyCurrency)))) return false;
   if (!Array.isArray(value.concerns) || !value.concerns.every((concern) => concern.id && tripIds.has(concern.tripId) && concern.title && ['open', 'resolved'].includes(concern.status))) return false;
   if (!Array.isArray(value.events) || !value.events.every((event) => event.id && tripIds.has(event.tripId) && Number.isInteger(event.sequence) && event.sequence > 0 && event.occurredAt && event.actorName && event.action && event.entityType && event.entityId && event.summary)) return false;
   for (const tripId of tripIds) { const events = value.events.filter((event) => event.tripId === tripId).sort((a, b) => a.sequence - b.sequence); if (events.some((event, index) => event.sequence !== index + 1 || event.previousEventId !== (events[index - 1]?.id || ''))) return false; }

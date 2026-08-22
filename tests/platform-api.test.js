@@ -23,6 +23,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   await pool.query(await readFile(new URL('../server/migrations/001_platform.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/003_private_usernames.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/004_shared_moments.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/005_make-shared-journeys-more-humane.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -74,7 +75,7 @@ function authHeaders(client) {
   return { origin, cookie: client.cookie, 'x-together-csrf': client.csrf };
 }
 
-test('TC-00010 through TC-00120 prove two journeyers share server-authoritative moments', async (t) => {
+test('TC-00010 through TC-00120 prove the shared journey is clear and durable', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
 
@@ -85,34 +86,38 @@ test('TC-00010 through TC-00120 prove two journeyers share server-authoritative 
   let secondMoment;
   let invitationToken;
 
-  await t.test('TC-00010: person A can start a new private journey', async () => {
+  await t.test('TC-00010: Journey setup creates a private journey', async () => {
     alice = await register(app, mailer, { email: 'tc-a@example.test', username: 'tc-person-a' });
     const response = await app.inject({
       method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
-      payload: { name: 'A place to return to', location: 'Our shared season', startDate: '2026-08-22', endDate: '2026-08-22', budgetCents: 0 },
+      payload: { name: 'A place to return to', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
     });
     assert.equal(response.statusCode, 201, response.body);
     journey = response.json().data.journey;
+    assert.equal(journey.location, '');
+    assert.equal(journey.startDateStatus, 'unknown');
+    assert.equal(journey.endDateStatus, 'forever');
   });
 
-  await t.test('TC-00020: the new journey begins with exactly person A', async () => {
+  await t.test('TC-00020: Journey membership begins with its creator', async () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
     assert.equal(snapshot.statusCode, 200, snapshot.body);
     assert.deepEqual(snapshot.json().data.members.map((member) => member.id), [alice.user.id]);
     assert.deepEqual(snapshot.json().data.moments, []);
   });
 
-  await t.test('TC-00030: person A can hold a shared entry before person B joins', async () => {
+  await t.test('TC-00030: Shared moments can begin before another journeyer joins', async () => {
     const response = await app.inject({
       method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
-      payload: { kind: 'memory', title: 'We made room to listen', detail: 'A shared truth held before the invitation was accepted.', occurredOn: '2026-08-22', moneyCents: null },
+      payload: { kind: 'memory', title: 'We made room to listen', detail: 'A shared truth held before the invitation was accepted.', occurredOn: '2026-08-22', moneyCents: 110, moneyCurrency: '' },
     });
     assert.equal(response.statusCode, 201, response.body);
     firstMoment = response.json().data.moment;
     assert.equal(firstMoment.visibility, 'shared-now');
+    assert.equal(firstMoment.moneyCurrency, '');
   });
 
-  await t.test('TC-00031: person A can add their own named kind of moment', async () => {
+  await t.test('TC-00031: Shared moments can use a name of their own', async () => {
     const response = await app.inject({
       method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
       payload: { kind: 'other', kindLabel: 'A small win', title: 'We paused before replying', detail: 'The name is intentionally ours.', occurredOn: '2026-08-22', moneyCents: null },
@@ -123,41 +128,47 @@ test('TC-00010 through TC-00120 prove two journeyers share server-authoritative 
     assert.equal(customMoment.kindLabel, 'A small win');
   });
 
-  await t.test('TC-00040: person A can send person B an invitation', async () => {
+  await t.test('TC-00040: Journey settings sends an invitation', async () => {
     const response = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'tc-b@example.test' } });
     assert.equal(response.statusCode, 202, response.body);
     invitationToken = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').token;
   });
 
-  await t.test('TC-00050: person B can create and verify a separate account', async () => {
+  await t.test('TC-00050: Account verification keeps each journeyer separate', async () => {
     bob = await register(app, mailer, { email: 'tc-b@example.test', username: 'tc-person-b' });
     assert.notEqual(alice.user.id, bob.user.id);
   });
 
-  await t.test('TC-00060: person B can accept the shared journey', async () => {
+  await t.test('TC-00060: Journey sharing accepts an invitation once', async () => {
     const response = await app.inject({ method: 'POST', url: `/api/v1/invitations/${invitationToken}/accept`, headers: authHeaders(bob) });
     assert.equal(response.statusCode, 200, response.body);
     assert.equal(response.json().data.journeyId, journey.id);
   });
 
-  await t.test('TC-00070: person B sees the entry person A made before joining', async () => {
+  await t.test('TC-00070: Shared moments retain the story before joining', async () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
     assert.equal(snapshot.statusCode, 200, snapshot.body);
     assert.equal(snapshot.json().data.members.length, 2);
     assert.equal(snapshot.json().data.moments.find((moment) => moment.id === firstMoment.id).title, 'We made room to listen');
   });
 
-  await t.test('TC-00080: person B can edit person A’s shared entry', async () => {
+  await t.test('TC-00080: Shared moments let another journeyer add care', async () => {
     const response = await app.inject({
       method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${firstMoment.id}`, headers: authHeaders(bob),
-      payload: { ...firstMoment, detail: 'Person B added the next sentence with care.' },
+      payload: { ...firstMoment, detail: 'Person B added the next sentence with care.', moneyCurrency: 'EUR' },
     });
     assert.equal(response.statusCode, 200, response.body);
     firstMoment = response.json().data.moment;
     assert.equal(firstMoment.version, 2);
+    assert.equal(firstMoment.moneyCurrency, 'EUR');
+    const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
+    const edited = snapshot.json().data.moments.find((moment) => moment.id === firstMoment.id);
+    assert.equal(edited.shapedByBoth, true);
+    assert.equal(edited.createdBy, 'tc-person-a');
+    assert.equal(edited.updatedBy, 'tc-person-b');
   });
 
-  await t.test('TC-00090: person B can create a shared entry', async () => {
+  await t.test('TC-00090: Shared moments let each journeyer hold an entry', async () => {
     const response = await app.inject({
       method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob),
       payload: { kind: 'acknowledgment', title: 'Thank you for returning', detail: 'A shared entry from person B.', occurredOn: '2026-08-22', moneyCents: null },
@@ -166,7 +177,7 @@ test('TC-00010 through TC-00120 prove two journeyers share server-authoritative 
     secondMoment = response.json().data.moment;
   });
 
-  await t.test('TC-00100: person A sees and can edit person B’s entry', async () => {
+  await t.test('TC-00100: Shared moments remain editable from either account', async () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
     assert.equal(snapshot.statusCode, 200, snapshot.body);
     const bMoment = snapshot.json().data.moments.find((moment) => moment.id === secondMoment.id);
@@ -178,13 +189,13 @@ test('TC-00010 through TC-00120 prove two journeyers share server-authoritative 
     assert.equal(response.json().data.moment.version, 2);
   });
 
-  await t.test('TC-00110: a used invitation cannot be accepted again', async () => {
+  await t.test('TC-00110: Journey sharing protects a used invitation', async () => {
     const response = await app.inject({ method: 'POST', url: `/api/v1/invitations/${invitationToken}/accept`, headers: authHeaders(bob) });
     assert.equal(response.statusCode, 400, response.body);
     assert.equal(response.json().error.code, 'invalid_invitation');
   });
 
-  await t.test('TC-00120: both people can sign back in and still see the same journey', async () => {
+  await t.test('TC-00120: Account return restores the same shared journey', async () => {
     const signedOutA = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: authHeaders(alice) });
     const signedOutB = await app.inject({ method: 'POST', url: '/api/v1/auth/logout', headers: authHeaders(bob) });
     assert.equal(signedOutA.statusCode, 204, signedOutA.body);

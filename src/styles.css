@@ -265,6 +265,13 @@ h1 em { color: var(--on-accent); font-weight: 500; opacity: .82; }
 .guidance-actions .button { border-color: var(--line); color: var(--ink); }
 .guidance-actions .button.primary { background: var(--spruce); color: var(--on-accent); }
 .guidance-actions button:disabled { cursor: not-allowed; opacity: .45; }
+.guidance-card { display: block; padding: 0; }
+.guidance-card > summary { padding: clamp(24px, 4vw, 40px); }
+.guidance-card > summary > span:first-child { max-width: 760px; }
+.guidance-card > summary strong { font-size: clamp(31px, 3.6vw, 48px); }
+.guidance-card > summary small { font-size: 16px; line-height: 1.5; }
+.guidance-content { border-top: 1px solid var(--line); padding: clamp(20px, 3vw, 32px); }
+.guidance-card .guided-prompt { min-height: 0; }
 
 .insight-grid { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; margin-top: 24px; }
 .insight { padding: 28px; }
@@ -342,12 +349,16 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .field small { color: var(--muted); font-weight: 500; }
 .field input, .field select, .field textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; color: var(--ink); min-height: 52px; padding: 11px 13px; width: 100%; }
 .field textarea { resize: vertical; }
+.money-fields > div { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(190px, .55fr); }
+.money-fields label { display: block; }
+.sr-only { clip: rect(0, 0, 0, 0); height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
 .radio-row { display: grid; gap: 9px; grid-template-columns: 1fr 1fr; }
 .radio-row label { border: 1px solid var(--line); border-radius: 12px; padding: 13px; }
 .radio-row input { min-height: auto; width: auto; }
 .dialog-actions { display: flex; gap: 10px; justify-content: end; margin-top: 25px; }
 .settings-grid { display: grid; gap: 13px; grid-template-columns: 1fr 1fr; margin-top: 22px; }
 .settings-grid section { background: var(--soft); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+.settings-grid .sharing-settings { grid-column: 1 / -1; }
 .settings-grid h3 { font-family: Georgia, serif; font-size: 25px; font-weight: 500; margin: 0 0 8px; }
 .settings-grid p { color: var(--muted); font-size: 14px; }
 .account-grid { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; padding-top: 20px; }
@@ -355,9 +366,14 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .account-grid .account-panel { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
 .account-notice { background: var(--soft); border: 1px solid var(--line); border-radius: 18px; max-width: 620px; padding: 26px; }
 .account-panel h3, .account-panel p { margin: 0; }
+.account-identity { display: grid; gap: 10px; margin: 0; }
+.account-identity div { border-bottom: 1px solid var(--line); display: grid; gap: 3px; padding: 0 0 10px; }
+.account-identity dt { color: var(--muted); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.account-identity dd { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
 .account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
 .inline-form { align-items: end; display: flex; gap: 8px; }
 .inline-form .field { flex: 1; }
+.inline-form .button { flex: 0 0 auto; min-width: 190px; }
 #member-list { display: grid; gap: 7px; margin-top: 14px; }
 .member-chip { align-items: center; border: 1px solid var(--line); border-radius: 12px; display: flex; justify-content: space-between; padding: 10px 12px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -416,6 +432,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .moment-card > strong { display: block; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
 .moment-card > p { color: var(--muted); line-height: 1.55; margin: 8px 0 0; white-space: pre-wrap; }
 .moment-actions { display: flex; gap: 7px; justify-content: end; margin-top: 13px; }
+.moment-author { align-self: center; color: var(--muted); font-size: 12px; font-weight: 800; margin-right: auto; }
 .moment-actions button, .thread-row button { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); font-size: 12px; font-weight: 800; padding: 7px 10px; }
 .money-context { border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; margin-top: 14px; padding-top: 11px; }
 .money-context summary { display: block; font-family: inherit; font-size: 13px; padding: 0; }
@@ -480,8 +497,11 @@ footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
   .form-grid { grid-template-columns: 1fr; }
   .field.full { grid-column: auto; }
   .settings-grid { grid-template-columns: 1fr; }
+  .guidance-card { padding: 0; }
   .account-grid { grid-template-columns: 1fr; }
   .inline-form { align-items: stretch; flex-direction: column; }
+  .inline-form .button { min-width: 0; }
+  .money-fields > div { grid-template-columns: 1fr; }
   .concern-manager, .concern-row { align-items: stretch; display: grid; }
   .event-row dl div { grid-template-columns: 1fr; gap: 2px; }
   dialog { border-radius: 24px 24px 0 0; margin: auto 0 0; max-height: 94vh; padding: 24px 18px; width: 100%; }

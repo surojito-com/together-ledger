@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Together Ledger — PR17 acceptance matrix</title>
+    <style>
+      :root { color-scheme: light; --ink:#34345c; --muted:#68677b; --paper:#fbf8ec; --card:#fffdf6; --line:#ded6bd; --accent:#4d699b; --warm:#9c4445; --soft:#f0e8bd; }
+      * { box-sizing:border-box; }
+      body { background:var(--paper); color:var(--ink); font:16px/1.55 Inter, ui-sans-serif, system-ui, sans-serif; margin:0; }
+      main { margin:auto; max-width:1160px; padding:48px 28px 80px; }
+      header { background:linear-gradient(125deg,#9c4445,#4d699b); border-radius:28px; color:#fffdf6; padding:42px; }
+      .eyebrow { font-size:12px; font-weight:900; letter-spacing:.16em; margin:0 0 8px; text-transform:uppercase; }
+      h1,h2 { font-family:Georgia,serif; font-weight:500; letter-spacing:-.03em; line-height:1.05; }
+      h1 { font-size:clamp(38px,6vw,66px); margin:0; max-width:800px; }
+      header p:last-child { font-size:19px; margin:18px 0 0; max-width:720px; }
+      .legend { display:flex; flex-wrap:wrap; gap:10px; margin:28px 0; }
+      .tag { border:1px solid var(--line); border-radius:999px; font-size:13px; font-weight:800; padding:7px 11px; }
+      .tag.fix { background:#e4efff; border-color:#b9cceb; } .tag.flow { background:#edf3d8; border-color:#c7d69a; } .tag.copy { background:#f7e4df; border-color:#dfb9af; }
+      h2 { font-size:34px; margin:44px 0 14px; }
+      p { color:var(--muted); }
+      .matrix { background:var(--card); border:1px solid var(--line); border-radius:22px; overflow:auto; }
+      table { border-collapse:collapse; min-width:880px; width:100%; }
+      th,td { border-bottom:1px solid var(--line); padding:18px; text-align:left; vertical-align:top; }
+      th { background:#f4eed5; color:var(--ink); font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+      tr:last-child td { border-bottom:0; }
+      td:first-child { color:var(--warm); font-weight:900; white-space:nowrap; }
+      td:nth-child(2) { font-weight:800; min-width:210px; }
+      .prove { color:#355b4b; font-size:14px; }
+      .boundary { background:var(--soft); border:1px solid var(--line); border-radius:22px; margin-top:28px; padding:25px 28px; }
+      .boundary h2 { font-size:28px; margin:0 0 10px; }
+      ol { margin:0; padding-left:22px; }
+      li { margin:8px 0; }
+      @media (max-width:650px) { main { padding:22px 14px 56px; } header { border-radius:20px; padding:28px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Together Ledger · PR17 acceptance matrix · August 22, 2026</p>
+        <h1>Make the next shared action clear, kind, and real.</h1>
+        <p>This is the complete corrective scope requested after PR16. A case is complete only when the observable result and proof are both present.</p>
+      </header>
+
+      <div class="legend"><span class="tag fix">Reliability</span><span class="tag flow">Flow and interaction</span><span class="tag copy">Language and comprehension</span></div>
+
+      <h2>Acceptance cases</h2>
+      <div class="matrix">
+        <table>
+          <thead><tr><th>Test case</th><th>What a person does</th><th>Expected result</th><th>Proof</th></tr></thead>
+          <tbody>
+            <tr><td>TC-00130<br />Journey settings: send an invitation</td><td>In Journey settings, enter a valid email and send an invitation.</td><td>The invitation is sent once, the email field clears, and the interface confirms success rather than showing a false failure.</td><td class="prove">Browser interaction test plus API invitation test.</td></tr>
+            <tr><td>TC-00140<br />Journey settings: make sharing readable</td><td>Open Journey settings on a one-seat private journey.</td><td>Journey sharing is a generous, full-width panel: a readable email field, clear send control, and member list below.</td><td class="prove">Browser layout and interaction assertion.</td></tr>
+            <tr><td>TC-00150<br />Appearance: explain personal themes</td><td>Change the theme from Journey settings.</td><td>The helper explains that a theme changes only that person’s view; the other journeyer’s chosen appearance is untouched.</td><td class="prove">Visible copy assertion and per-browser preference behavior.</td></tr>
+            <tr><td>TC-00160<br />Settings: distinguish journey and account</td><td>Open the two top-level settings controls.</td><td>They are plainly named Journey settings and Account settings; account identity uses Account name, Handle, Email address, and Email status.</td><td class="prove">Browser labels and dialog-heading assertions.</td></tr>
+            <tr><td>TC-00170<br />Daily check-in: keep it optional</td><td>Return to the home view after having seen a check-in.</td><td>The optional check-in is closed by default. It can be opened, moved back and forward, and ended for today at any point.</td><td class="prove">Browser interaction test; the local daily preference is asserted.</td></tr>
+            <tr><td>TC-00180<br />Daily check-in: finish without looping</td><td>Reach the fifth check-in prompt or choose to stop.</td><td>Finish for today or End for today hides the check-in until the next local day. Nothing entered in a prompt is recorded.</td><td class="prove">Browser state test and no-write regression check.</td></tr>
+            <tr><td>TC-00190<br />Hold a moment: reveal the choices</td><td>Open Hold a moment.</td><td>The moment-kind helper makes the menu discoverable: choose a suggestion or “＋ Add your own moment.”</td><td class="prove">Browser copy and select accessibility assertion.</td></tr>
+            <tr><td>TC-00200<br />Practical context: keep currency optional</td><td>Add practical context with an amount and no currency.</td><td>The amount is optional, currency is optional, and the card reads “1.10 is held here as context, not a score.” No dollar sign is invented.</td><td class="prove">Model, API, and browser assertion.</td></tr>
+            <tr><td>TC-00210<br />Practical context: respect the chosen currency</td><td>Select a supported currency for practical context.</td><td>The saved moment shows the chosen currency accurately; all options remain optional.</td><td class="prove">API validation and browser rendering assertion.</td></tr>
+            <tr><td>TC-00220<br />Journey details: allow the unknown</td><td>Begin or edit a journey with only a name.</td><td>Place/season is optional. Start can be exact or “I don’t remember exactly.” End can be a chosen date, “Not sure yet,” or “Forever — no end date planned.”</td><td class="prove">Model and API lifecycle test, including database migration.</td></tr>
+            <tr><td>TC-00230<br />Return-to conversations: make their purpose clear</td><td>Open, create, edit, and view a return-to conversation.</td><td>It is named a Return-to conversation, explains its purpose in plain language, and uses “Keep this open” for the primary action.</td><td class="prove">Browser copy and interaction assertion.</td></tr>
+            <tr><td>TC-00240<br />Shared moments: show who held one</td><td>One journeyer holds a moment in a private journey.</td><td>The card clearly says who held it, using server-authoritative account attribution.</td><td class="prove">Two-account API acceptance test and card assertion.</td></tr>
+            <tr><td>TC-00250<br />Shared moments: show shared shaping</td><td>The other journeyer edits that moment.</td><td>The card retains who first held it and adds “Shaped by both journeyers.” It never claims shared shaping after a same-person edit.</td><td class="prove">Two-account API acceptance test and card assertion.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <section class="boundary">
+        <h2>What remains deliberately outside PR17</h2>
+        <p>This branch improves the private API-hosted experience only. It does not move together-ledger.com from its browser-only version, add per-moment private/share-later access, create a mobile app, or claim a public launch.</p>
+      </section>
+
+      <h2>One-commit delivery plan</h2>
+      <ol>
+        <li>Finish the database and API shape for optional journey timing, optional currency, and real moment attribution.</li>
+        <li>Correct the invitation success path and reshape the settings, account, check-in, moment, and return-to conversation interfaces.</li>
+        <li>Extend the model, API, and browser tests through every case above; run the full project checks.</li>
+        <li>Commit everything once on <code>agent/make-every-important-action-clear-and-kind</code> with the subject <code>make-every-important-action-clear-and-kind</code>, then open PR#0017 only with evidence.</li>
+      </ol>
+    </main>
+  </body>
+</html>
