@@ -3,8 +3,25 @@ set -eu
 umask 077
 
 : "${TOGETHER_ENV_FILE:?Set TOGETHER_ENV_FILE to the root-owned production environment file}"
-: "${AGE_RECIPIENT:?Set AGE_RECIPIENT to the public age recipient used for backup encryption}"
 export TOGETHER_ENV_FILE
+
+if [ -n "${BACKUP_RECIPIENT_FILE:-}" ]; then
+  if [ -n "${AGE_RECIPIENT:-}" ]; then
+    echo "set either BACKUP_RECIPIENT_FILE or AGE_RECIPIENT, not both" >&2
+    exit 1
+  fi
+  if [ ! -r "$BACKUP_RECIPIENT_FILE" ]; then
+    echo "backup recipient file is not readable by this user" >&2
+    echo "run this backup with the account permitted to read it; do not loosen its permissions" >&2
+    exit 1
+  fi
+  AGE_RECIPIENT=$(sed -n 's/^AGE_RECIPIENT=//p' "$BACKUP_RECIPIENT_FILE")
+  if [ "$(printf '%s\n' "$AGE_RECIPIENT" | sed '/^$/d' | wc -l | tr -d ' ')" -ne 1 ]; then
+    echo "backup recipient file must contain exactly one AGE_RECIPIENT value" >&2
+    exit 1
+  fi
+fi
+: "${AGE_RECIPIENT:?Set BACKUP_RECIPIENT_FILE to the root-owned recipient file}"
 
 if [ ! -r "$TOGETHER_ENV_FILE" ]; then
   echo "production environment file is not readable by this user" >&2

@@ -22,8 +22,11 @@ This checklist records what must be true before Together Ledger's private-sync A
 
 ## Recoverability
 
-- [ ] An encrypted logical PostgreSQL backup completes and its SHA-256 sidecar is retained.
-- [ ] One encrypted backup is copied to GCP storage using a separately reviewed transfer procedure.
+- [ ] The root-owned production environment and backup-recipient files are persistent, mode `0600`, and outside the repository.
+- [ ] An encrypted logical PostgreSQL backup completes, is current, and its SHA-256 sidecar verifies.
+- [ ] The separate least-privilege GCP uploader identity can create the encrypted dump and sidecar in the one private backup bucket. It is not an application credential.
+- [ ] The root-only offsite upload receipt matches the current encrypted backup, and `verify-production-recovery.sh` passes.
+- [ ] The daily recovery timer is enabled and its most recent successful run is reviewed.
 - [ ] A synthetic-data restore succeeds into an isolated PostgreSQL database.
 - [ ] Registration, verification, invitation, recovery, deletion, conflict protection, two-person limit, and Event Manager integrity pass using synthetic accounts.
 - [ ] The rollback procedure in `docs/OPERATIONS.md` has been rehearsed without production user data.
