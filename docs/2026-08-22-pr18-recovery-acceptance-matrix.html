@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PR18 Recovery Acceptance Matrix</title>
+  <style>
+    body{margin:0;background:#fff9ef;color:#29233e;font:16px/1.55 system-ui,sans-serif}.page{max-width:1060px;margin:auto;padding:42px 24px}h1,h2{font-family:Georgia,serif}h1{font-size:3rem;margin:0 0 10px}.lead{max-width:760px;font-size:1.18rem}.matrix{width:100%;border-collapse:collapse;margin-top:28px;background:#fffdf8}.matrix th,.matrix td{padding:16px;text-align:left;vertical-align:top;border:1px solid #decfaf}.matrix th{background:#f2e6c6;font-size:.75rem;letter-spacing:.1em;text-transform:uppercase}.matrix td:first-child{font-weight:800;white-space:nowrap}.state{font-weight:800;color:#2d745a}.note{margin-top:24px;padding:18px;border-left:5px solid #8a4354;background:#f4ebd5}a{color:#355e9d;font-weight:700}@media(max-width:720px){.matrix{display:block;overflow-x:auto}h1{font-size:2.35rem}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p>TOGETHER LEDGER / PR18</p>
+    <h1>Production recovery acceptance matrix</h1>
+    <p class="lead">A release is recoverable only when protected configuration, a fresh encrypted backup, and evidence of its offsite copy agree. These checks are deliberately operational; they do not inspect personal journey content.</p>
+    <table class="matrix">
+      <thead><tr><th>Test case</th><th>What to prove</th><th>Expected result</th><th>Defect / boundary</th></tr></thead>
+      <tbody>
+        <tr><td>TC-00310</td><td>Run the recovery preflight with the protected production environment file absent, non-root-owned, or not mode 0600.</td><td>The preflight stops before any deployment action.</td><td>Prevents configuration disappearing at reboot or being made broadly readable.</td></tr>
+        <tr><td>TC-00320</td><td>Run the backup with the persistent recipient file missing, malformed, or unreadable.</td><td>No encrypted output is treated as successful; the error names the missing safeguard.</td><td>Closes the run-time-recipient gap left after PR13.</td></tr>
+        <tr><td>TC-00330</td><td>Run one production backup with valid protected configuration.</td><td>A new encrypted dump and matching SHA-256 sidecar exist; checksum verification passes.</td><td>Never use a partial encrypted file as a recovery point.</td></tr>
+        <tr><td>TC-00340</td><td>Run the offsite backup service using the restricted backup uploader identity.</td><td>The uploader creates the encrypted pair and a root-only local receipt that records the exact archive name and checksum.</td><td>The service identity is not an application credential and cannot read, alter, or delete old backups.</td></tr>
+        <tr><td>TC-00350</td><td>Open the private owner view of the configured Google Cloud backup bucket.</td><td>The current dump and its SHA-256 sidecar are visible; neither object is public.</td><td>Manual owner confirmation remains a useful independent check because the uploader is intentionally write-only. The private bucket URL belongs in the owner runbook, not this public repository.</td></tr>
+        <tr><td>TC-00360</td><td>Run the recovery preflight once the newest local encrypted pair and offsite receipt agree and are younger than the allowed age.</td><td>The preflight passes. If either becomes stale or mismatched, it fails closed.</td><td>This is the deployment gate, not a claim that a restore has already been performed.</td></tr>
+        <tr><td>TC-00370</td><td>Enable the daily timer only after TC-00340 and TC-00360 pass; review the next scheduled run.</td><td>The timer is enabled, persistent across reboot, and its journal records a successful backup and copy.</td><td>A scheduled backup is not a substitute for a periodic isolated restore drill.</td></tr>
+      </tbody>
+    </table>
+    <p class="note"><strong>Release boundary:</strong> PR18 does not move together-ledger.com, expose private ports, add a mobile app, or place any recovery secret in Git or the application container.</p>
+  </main>
+</body>
+</html>

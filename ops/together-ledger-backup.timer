@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Together Ledger encrypted backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=together-ledger-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -50,15 +50,38 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 
 ### Encrypted logical backup
 
-Install `age` on the server and create an offline backup encryption key. Keep only its public recipient in the scheduled job. Run:
+Install `age` on the server and create an offline backup encryption key. Keep the private identity off the server and out of the repository. Put only its public recipient in the root-owned `/etc/together-ledger/backup-recipient.env` file:
 
 ```sh
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env \
-AGE_RECIPIENT=age1replace-with-your-public-recipient \
-./scripts/backup-postgres.sh
+sudo install -d -m 700 /etc/together-ledger
+sudo sh -c 'printf "%s\\n" "AGE_RECIPIENT=age1replace-with-your-public-recipient" > /etc/together-ledger/backup-recipient.env'
+sudo chmod 600 /etc/together-ledger/backup-recipient.env
 ```
 
-The script creates a custom-format PostgreSQL dump, encrypts it before writing it to disk, writes a SHA-256 sidecar, and prints the created path. Copy both files to AWS and GCP storage through a separately reviewed transfer procedure. Test restoring into an isolated database before treating any backup as usable.
+The recipient file must be root-owned with mode `0600`. The backup script reads that file without executing it, creates a custom-format PostgreSQL dump, encrypts it before writing it to disk, writes a SHA-256 sidecar, and prints the created path.
+
+### Automated offsite recovery copy
+
+PR#0018 makes the recovery job explicit but does not add a cloud credential to the application or its container. Create a separate GCP service identity that has only `Storage Object Creator` on this one backup bucket. It can add a new uniquely named encrypted backup pair but cannot read, list, alter, or delete historic backups.
+
+Keep that uploader credential in a root-owned mode-0600 file outside the repository. The matching root-owned `/etc/together-ledger/backup-uploader.env` contains the bucket name, the uploader's service-account email, and the credential path. The job activates that named identity only in a short-lived root-only Google CLI configuration, then removes that configuration when the job exits; it cannot fall back to a personal Google login. Then install the reviewed timer files:
+
+```sh
+GCP_BACKUP_BUCKET=replace-with-private-bucket
+GCP_BACKUP_SERVICE_ACCOUNT=backup-uploader@your-project.iam.gserviceaccount.com
+GOOGLE_APPLICATION_CREDENTIALS=/etc/together-ledger/backup-uploader-key.json
+```
+
+```sh
+sudo ./scripts/install-production-recovery-timer.sh
+sudo systemctl start together-ledger-backup.service
+sudo /usr/local/lib/together-ledger/verify-production-recovery.sh
+sudo systemctl enable --now together-ledger-backup.timer
+```
+
+The one-off service first makes and checksum-verifies the local encrypted dump, uploads the dump and sidecar, and then records a root-only upload receipt. The recovery preflight accepts only a current local backup whose checksum agrees with that receipt. It deliberately fails closed if the recipient file, uploader configuration, backup, checksum, or receipt is missing or stale.
+
+The uploader's successful cloud response is deployment evidence, but a human GCP owner should still periodically check the private bucket and perform an isolated restore drill. Do not upload the private age identity.
 
 ## Release gate
 
@@ -67,7 +90,7 @@ The script creates a custom-format PostgreSQL dump, encrypts it before writing i
 3. Apply migrations using the same image against a pre-production copy.
 4. Exercise registration, verification, invitation, two-seat enforcement, access denial, recovery, concurrent edit conflict, Event Manager integrity, export, and deletion with synthetic data.
 5. Deploy AWS primary, run `/healthz`, then run authenticated smoke tests.
-6. Copy a backup to GCP, restore it into the standby database, deploy the same digest, and test using a private temporary hostname.
+6. Run `sudo /usr/local/lib/together-ledger/verify-production-recovery.sh`; it must pass before deployment. Confirm the encrypted pair is visible in the private GCP bucket, restore it into the standby database, deploy the same digest, and test using a private temporary hostname.
 7. Configure `api.together-ledger.com`, then set the public frontend's API-origin configuration only after both the rollback and standby restore paths have passed. `together-ledger.com` becomes the GitHub Pages frontend. Keep `together.surojito.com` as a redirect only after the new path is verified.
 
 Read the companion [production readiness gate](PRODUCTION_READINESS.md) before opening ports 80 or 443. The host preflight is deliberately read-only:
