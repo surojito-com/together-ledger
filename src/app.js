@@ -62,9 +62,13 @@ function snapshotToState(snapshots) {
   const events = [];
   for (const snapshot of snapshots) {
     const membersById = Object.fromEntries(snapshot.members.map((member) => [member.id, member.displayName]));
+    const creationEvent = snapshot.events.find((event) => event.action === 'journey_created');
+    const fallbackCreator = snapshot.members.find((member) => member.role === 'owner');
+    const createdByUserId = creationEvent?.actorUserId || fallbackCreator?.id || '';
+    const createdByDisplayName = membersById[createdByUserId] || (creationEvent ? 'Former journeyer' : fallbackCreator?.displayName || 'Journey member');
     const milestones = { reviewedPicture: false, chosePrompt: false, agreedNextAction: false };
     snapshot.milestones.forEach((item) => { milestones[item.key] = item.completed; });
-    trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, milestones, archivedAt: '' });
+    trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, invitationRecords: snapshot.invitations || [], createdByUserId, createdByDisplayName, createdAt: creationEvent?.createdAt || snapshot.journey.createdAt, milestones, archivedAt: '' });
     entries.push(...snapshot.expenses.map((expense) => ({ ...expense, tripId: expense.journeyId, paidBy: expense.payerLabel })));
     moments.push(...snapshot.moments.map((moment) => ({ ...moment, tripId: moment.journeyId })));
     concerns.push(...snapshot.concerns.map((concern) => ({ ...concern, tripId: concern.journeyId, updatedBy: 'Journey member', updatedAt: new Date(concern.updatedAt).toISOString() })));
@@ -133,8 +137,33 @@ function renderAccountState() {
     : needsPrivateJourney
       ? 'Your account is ready. Create a private journey to invite another journeyer.'
       : 'Sign in and create a private journey to invite another journeyer.';
-  $('#member-list').innerHTML = sharing ? activeTrip(state).members.map((name) => `<div class="member-chip"><strong>${escapeHtml(name)}</strong><span>${name === accountUser.displayName ? 'You' : 'Journeyer'}</span></div>`).join('') : '';
+  $('#journey-record').hidden = !sharing;
+  if (sharing) {
+    const trip = activeTrip(state);
+    const members = trip.memberRecords || [];
+    const createdByCurrentUser = trip.createdByUserId === accountUser.id;
+    const creatorRow = `<div class="journey-record-row"><div><strong>Created by ${escapeHtml(trip.createdByDisplayName)}</strong><small>Created <time datetime="${escapeHtml(trip.createdAt)}">${escapeHtml(dateTimeLabel(trip.createdAt))}</time></small></div><span class="journey-role">Creator${createdByCurrentUser ? ' · You' : ''}</span></div>`;
+    const joinedRows = members.filter((member) => member.id !== trip.createdByUserId).map((member) => `<div class="journey-record-row"><div><strong>${escapeHtml(member.displayName)} joined the journey</strong><small>Joined <time datetime="${escapeHtml(member.joinedAt)}">${escapeHtml(dateTimeLabel(member.joinedAt))}</time></small></div><span class="journey-role">${member.role === 'owner' ? 'Owner' : 'Journeyer'}${member.id === accountUser.id ? ' · You' : ''}</span></div>`).join('');
+    $('#member-list').innerHTML = creatorRow + joinedRows;
+    const invitations = trip.invitationRecords || [];
+    $('#invitation-history').hidden = !invitations.length;
+    $('#invitation-list').innerHTML = invitations.map((invitation) => `<div class="journey-record-row"><div><strong>Invitation sent to ${escapeHtml(invitation.email)}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt)}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small></div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`).join('');
+  } else {
+    $('#member-list').innerHTML = '';
+    $('#invitation-history').hidden = true;
+    $('#invitation-list').innerHTML = '';
+  }
   $('#theme-copy').textContent = 'Your theme changes only your own view. Each journeyer chooses what feels right on their screen.';
+}
+
+function dateTimeLabel(value) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return 'Time not recorded';
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+function invitationStatusLabel(status) {
+  return ({ accepted: 'Accepted', expired: 'Expired', pending: 'Pending', revoked: 'Revoked' })[status] || 'Recorded';
 }
 
 function initializeThemePicker() {
@@ -226,9 +255,7 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
-    const attribution = moment.shapedByBoth
-      ? `Held by ${escapeHtml(moment.createdBy || 'Journey member')} · Shaped by both journeyers`
-      : `Held by ${escapeHtml(moment.createdBy || 'Journey member')}`;
+    const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by both journeyers</span>' : ''}`;
     return `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
   }).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));

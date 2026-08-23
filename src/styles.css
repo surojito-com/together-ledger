@@ -374,8 +374,17 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .inline-form { align-items: end; display: flex; gap: 8px; }
 .inline-form .field { flex: 1; }
 .inline-form .button { flex: 0 0 auto; min-width: 190px; }
-#member-list { display: grid; gap: 7px; margin-top: 14px; }
-.member-chip { align-items: center; border: 1px solid var(--line); border-radius: 12px; display: flex; justify-content: space-between; padding: 10px 12px; }
+#journey-record { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 15px; }
+#journey-record h4 { color: var(--muted); font-size: 11px; letter-spacing: .1em; margin: 0 0 8px; text-transform: uppercase; }
+#member-list, #invitation-list { display: grid; gap: 7px; }
+#invitation-history { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
+.journey-record-row { align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 14px; justify-content: space-between; padding: 11px 12px; }
+.journey-record-row strong, .journey-record-row small { display: block; overflow-wrap: anywhere; }
+.journey-record-row small { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.journey-role, .invitation-status { border: 1px solid var(--line); border-radius: 999px; flex: 0 0 auto; font-size: 10px; font-weight: 900; letter-spacing: .06em; padding: 5px 8px; text-transform: uppercase; }
+.invitation-status.pending { background: var(--teal); border-color: var(--teal); color: var(--on-accent); }
+.invitation-status.accepted { background: color-mix(in srgb, var(--teal) 18%, var(--card)); border-color: var(--teal); color: var(--ink); }
+.invitation-status.expired, .invitation-status.revoked { color: var(--muted); }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .onboarding-step { background: var(--soft); border: 1px solid var(--line); border-radius: 19px; margin-top: 21px; min-height: 220px; padding: 28px; }
 .onboarding-step > span { color: var(--red); display: block; font-size: 12px; font-weight: 900; letter-spacing: .12em; margin-bottom: 17px; text-transform: uppercase; }
@@ -432,7 +441,8 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .moment-card > strong { display: block; font-family: Georgia, serif; font-size: 25px; font-weight: 500; }
 .moment-card > p { color: var(--muted); line-height: 1.55; margin: 8px 0 0; white-space: pre-wrap; }
 .moment-actions { display: flex; gap: 7px; justify-content: end; margin-top: 13px; }
-.moment-author { align-self: center; color: var(--muted); font-size: 12px; font-weight: 800; margin-right: auto; }
+.moment-author { align-items: center; align-self: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: 12px; font-weight: 800; gap: 8px; margin-right: auto; }
+.moment-collaboration-badge { background: var(--teal); border: 1px solid var(--teal); border-radius: 999px; color: var(--on-accent); display: inline-flex; letter-spacing: .01em; padding: 5px 9px; }
 .moment-actions button, .thread-row button { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); font-size: 12px; font-weight: 800; padding: 7px 10px; }
 .money-context { border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; margin-top: 14px; padding-top: 11px; }
 .money-context summary { display: block; font-family: inherit; font-size: 13px; padding: 0; }

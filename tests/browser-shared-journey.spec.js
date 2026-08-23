@@ -40,6 +40,12 @@ test('the first browser-only screen begins empty and explains what can be held',
   await page.getByRole('button', { name: 'End for today' }).click();
   await expect(page.locator('#guidance')).toBeHidden();
 
+  await page.locator('#actor-select').selectOption('Your journeyer');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.locator('#moment-form [name="detail"]').fill('We both returned to this moment with care.');
+  await page.getByRole('button', { name: 'Save moment' }).click();
+  await expect(page.locator('.moment-collaboration-badge')).toHaveText('Shaped by both journeyers');
+
   const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
   expect(accessibilityScan.violations).toEqual([]);
 });
@@ -89,4 +95,45 @@ test('a verified account without a journey can begin one from Journey settings',
   await expect(page.locator('#sharing-copy')).toHaveText('Your account is ready. Create a private journey to invite another journeyer.');
   await page.locator('#sharing-create-journey-button').click();
   await expect(page.getByRole('heading', { name: 'Begin a shared journey' })).toBeVisible();
+});
+
+test('Journey settings keeps creation, joining, and invitation history visible', async ({ page }) => {
+  let invitationAccepted = false;
+  const owner = { id: 'user-owner', username: 'journey-owner', displayName: 'journey-owner', email: 'owner@example.test', emailVerified: true };
+  const member = { id: 'user-member', displayName: 'journey-member', role: 'member', joinedAt: '2026-08-23T15:30:00.000Z' };
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { journeys: [{ id: 'journey-1' }] } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/journey-1/snapshot', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: {
+      journey: { id: 'journey-1', name: 'A careful beginning', location: '', startDate: '', startDateStatus: 'unknown', endDate: '', endDateStatus: 'forever', budgetCents: 0, version: 1, role: 'owner', createdAt: '2026-08-23T14:00:00.000Z', updatedAt: '2026-08-23T15:30:00.000Z' },
+      members: [{ id: owner.id, displayName: owner.displayName, role: 'owner', joinedAt: '2026-08-23T14:00:00.000Z' }, ...(invitationAccepted ? [member] : [])],
+      invitations: [{ id: 'invitation-1', email: 'invited@example.test', invitedByUserId: owner.id, invitedByDisplayName: owner.displayName, status: invitationAccepted ? 'accepted' : 'pending', sentAt: '2026-08-23T15:00:00.000Z', expiresAt: '2026-08-24T15:00:00.000Z', acceptedAt: invitationAccepted ? member.joinedAt : null, revokedAt: null }],
+      expenses: [], moments: [], concerns: [], milestones: [],
+      events: [{ id: 'event-1', sequence: 1, actorUserId: owner.id, action: 'journey_created', entityType: 'journey', entityId: 'journey-1', summary: 'Created journey', before: null, after: null, previousHash: '', eventHash: '', createdAt: '2026-08-23T14:00:00.000Z' }],
+      eventChainValid: true,
+    } }),
+  }));
+
+  await page.goto('/');
+  await skipOnboarding(page);
+  await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Journey settings' }).click();
+  await expect(page.locator('#member-list')).toContainText('Created by journey-owner');
+  await expect(page.locator('#invitation-list')).toContainText('Invitation sent to invited@example.test');
+  await expect(page.locator('.invitation-status')).toHaveText('Pending');
+
+  invitationAccepted = true;
+  await page.reload();
+  await skipOnboarding(page);
+  await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Journey settings' }).click();
+  await expect(page.locator('#member-list')).toContainText('journey-member joined the journey');
+  await expect(page.locator('.invitation-status')).toHaveText('Accepted');
 });

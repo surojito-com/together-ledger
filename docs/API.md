@@ -25,7 +25,7 @@ All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }
 | POST | `/journeys/:journeyId/invitations` | Owner creates a hashed, expiring invitation token. |
 | POST | `/invitations/:token/accept` | Authenticated matching account accepts one seat. |
 | DELETE | `/journeys/:journeyId/members/:userId` | Owner removes a member; the removed member cannot be the owner. |
-| GET | `/journeys/:journeyId/snapshot?after=0` | Return authorized state and ordered events after a sequence cursor. A full snapshot includes `eventChainValid`. |
+| GET | `/journeys/:journeyId/snapshot?after=0` | Return authorized state, membership join times, invitation history without tokens, and ordered events after a sequence cursor. A full snapshot includes `eventChainValid`. |
 
 ## Journey records
 

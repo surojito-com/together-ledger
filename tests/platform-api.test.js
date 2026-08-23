@@ -102,8 +102,13 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
   await t.test('TC-00020: Journey membership begins with its creator', async () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
     assert.equal(snapshot.statusCode, 200, snapshot.body);
-    assert.deepEqual(snapshot.json().data.members.map((member) => member.id), [alice.user.id]);
-    assert.deepEqual(snapshot.json().data.moments, []);
+    const body = snapshot.json().data;
+    assert.deepEqual(body.members.map((member) => member.id), [alice.user.id]);
+    assert.equal(body.members[0].role, 'owner');
+    assert.ok(body.members[0].joinedAt);
+    assert.ok(body.journey.createdAt);
+    assert.deepEqual(body.invitations, []);
+    assert.deepEqual(body.moments, []);
   });
 
   await t.test('TC-00030: Shared moments can begin before another journeyer joins', async () => {
@@ -132,6 +137,16 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     const response = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'tc-b@example.test' } });
     assert.equal(response.statusCode, 202, response.body);
     invitationToken = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').token;
+    const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
+    const invitation = snapshot.json().data.invitations[0];
+    assert.equal(invitation.email, 'tc-b@example.test');
+    assert.equal(invitation.invitedByUserId, alice.user.id);
+    assert.equal(invitation.invitedByDisplayName, 'tc-person-a');
+    assert.equal(invitation.status, 'pending');
+    assert.ok(invitation.sentAt);
+    assert.ok(invitation.expiresAt);
+    assert.equal(Object.hasOwn(invitation, 'token'), false);
+    assert.equal(Object.hasOwn(invitation, 'tokenHash'), false);
   });
 
   await t.test('TC-00050: Account verification keeps each journeyer separate', async () => {
@@ -148,8 +163,12 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
   await t.test('TC-00070: Shared moments retain the story before joining', async () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
     assert.equal(snapshot.statusCode, 200, snapshot.body);
-    assert.equal(snapshot.json().data.members.length, 2);
-    assert.equal(snapshot.json().data.moments.find((moment) => moment.id === firstMoment.id).title, 'We made room to listen');
+    const body = snapshot.json().data;
+    assert.equal(body.members.length, 2);
+    assert.ok(body.members.find((member) => member.id === bob.user.id).joinedAt);
+    assert.equal(body.invitations[0].status, 'accepted');
+    assert.ok(body.invitations[0].acceptedAt);
+    assert.equal(body.moments.find((moment) => moment.id === firstMoment.id).title, 'We made room to listen');
   });
 
   await t.test('TC-00080: Shared moments let another journeyer add care', async () => {
