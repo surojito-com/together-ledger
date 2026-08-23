@@ -279,7 +279,7 @@ export class PlatformService {
     return { rawToken, csrfToken, expiresAt };
   }
 
-  async register({ email, username, password }) {
+  async register({ email, username, password }, accountOrigin) {
     const normalizedEmail = cleanEmail(email);
     const privateUsername = cleanUsername(username);
     const name = privateUsername;
@@ -303,7 +303,7 @@ export class PlatformService {
       if (error.code === '23505') throw new PlatformError(409, 'account_exists', 'That email or username is already in use.');
       throw error;
     }
-    result.verificationSent = await this.deliver('verification', () => this.mailer.sendVerification({ to: normalizedEmail, token: verificationToken }));
+    result.verificationSent = await this.deliver('verification', () => this.mailer.sendVerification({ to: normalizedEmail, token: verificationToken, accountOrigin }));
     return result;
   }
 
@@ -320,7 +320,7 @@ export class PlatformService {
     });
   }
 
-  async resendVerification(userId) {
+  async resendVerification(userId, accountOrigin) {
     const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
     if (!user.rowCount || user.rows[0].email_verified_at) return;
     const token = opaqueToken();
@@ -331,7 +331,7 @@ export class PlatformService {
         [randomUUID(), userId, sha256(token), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
       );
     });
-    return this.deliver('verification', () => this.mailer.sendVerification({ to: user.rows[0].email_normalized, token }));
+    return this.deliver('verification', () => this.mailer.sendVerification({ to: user.rows[0].email_normalized, token, accountOrigin }));
   }
 
   async login({ identifier, password }) {
@@ -364,7 +364,7 @@ export class PlatformService {
     if (rawToken) await this.pool.query('DELETE FROM sessions WHERE token_hash=$1', [sha256(rawToken)]);
   }
 
-  async requestRecovery(email) {
+  async requestRecovery(email, accountOrigin) {
     let normalizedEmail;
     try { normalizedEmail = normalizeEmail(email); } catch { return; }
     const user = await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [normalizedEmail]);
@@ -377,7 +377,7 @@ export class PlatformService {
         [randomUUID(), user.rows[0].id, 'password_recovery', sha256(token), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
       );
     });
-    await this.deliver('recovery', () => this.mailer.sendRecovery({ to: normalizedEmail, token }));
+    await this.deliver('recovery', () => this.mailer.sendRecovery({ to: normalizedEmail, token, accountOrigin }));
   }
 
   async confirmRecovery({ token, password }) {
@@ -476,7 +476,7 @@ export class PlatformService {
     });
   }
 
-  async createInvitation(userId, journeyId, email) {
+  async createInvitation(userId, journeyId, email, accountOrigin) {
     const emailNormalized = cleanEmail(email);
     const token = opaqueToken();
     await withTransaction(this.pool, async (client) => {
@@ -490,7 +490,7 @@ export class PlatformService {
         [randomUUID(), journeyId, userId, emailNormalized, sha256(token), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
       );
     });
-    const delivered = await this.deliver('invitation', () => this.mailer.sendInvitation({ to: emailNormalized, journeyId, token }));
+    const delivered = await this.deliver('invitation', () => this.mailer.sendInvitation({ to: emailNormalized, journeyId, token, accountOrigin }));
     if (!delivered) {
       await this.pool.query('UPDATE invitations SET revoked_at=$1 WHERE token_hash=$2 AND accepted_at IS NULL', [this.now(), sha256(token)]);
       throw new PlatformError(503, 'delivery_unavailable', 'The invitation could not be delivered. Try again later.');

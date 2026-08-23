@@ -54,6 +54,11 @@ export async function buildApp({ platform, config, logger = false }) {
     if (!allowedOrigins.has(request.headers.origin)) throw new PlatformError(403, 'invalid_origin', 'This request did not come from the Together Ledger app.');
   }
 
+  function accountOriginFor(request) {
+    requireOrigin(request);
+    return request.headers.origin;
+  }
+
   async function authenticate(request) {
     const session = await platform.session(request.cookies[SESSION_COOKIE]);
     if (!session) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
@@ -82,8 +87,7 @@ export async function buildApp({ platform, config, logger = false }) {
   app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(hostedIndexMarkup));
 
   app.post('/api/v1/auth/register', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
-    const result = await platform.register(request.body || {});
+    const result = await platform.register(request.body || {}, accountOriginFor(request));
     setSession(reply, result.session);
     return reply.code(201).send({ data: { user: result.user, csrfToken: result.session.csrfToken, verificationSent: result.verificationSent } });
   });
@@ -94,7 +98,7 @@ export async function buildApp({ platform, config, logger = false }) {
   });
 
   app.post('/api/v1/auth/resend-verification', { preHandler: protectMutation, config: { rateLimit: { max: 3, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    const delivered = await platform.resendVerification(request.auth.userId);
+    const delivered = await platform.resendVerification(request.auth.userId, accountOriginFor(request));
     return reply.code(202).send({ data: { accepted: true, delivered: delivered !== false } });
   });
 
@@ -114,8 +118,7 @@ export async function buildApp({ platform, config, logger = false }) {
   app.get('/api/v1/session', { preHandler: authenticate }, async (request) => ({ data: { user: request.auth.user, csrfToken: request.auth.csrfToken } }));
 
   app.post('/api/v1/recovery/request', { config: { rateLimit: { max: 5, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
-    await platform.requestRecovery(request.body?.email);
+    await platform.requestRecovery(request.body?.email, accountOriginFor(request));
     return reply.code(202).send({ data: { accepted: true } });
   });
 
@@ -143,7 +146,7 @@ export async function buildApp({ platform, config, logger = false }) {
   });
 
   app.post('/api/v1/journeys/:journeyId/invitations', { preHandler: protectMutation }, async (request, reply) => {
-    await platform.createInvitation(request.auth.userId, request.params.journeyId, request.body?.email);
+    await platform.createInvitation(request.auth.userId, request.params.journeyId, request.body?.email, accountOriginFor(request));
     return reply.code(202).send({ data: { invitationSent: true } });
   });
   app.post('/api/v1/invitations/:token/accept', { preHandler: protectMutation }, async (request) => ({ data: { journeyId: await platform.acceptInvitation(request.auth.userId, request.params.token) } }));

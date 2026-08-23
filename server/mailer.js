@@ -44,8 +44,8 @@ export class SmtpMailer {
     return this.transport.sendMail({ from, to, subject, text, html });
   }
 
-  sendInvitation({ to, token }) {
-    const invitationUrl = actionUrl(this.accountOrigin, 'invite', token);
+  sendInvitation({ to, token, accountOrigin = this.accountOrigin }) {
+    const invitationUrl = actionUrl(accountOrigin, 'invite', token);
     return this.send({
       from: this.invitationFrom,
       to,
@@ -55,8 +55,8 @@ export class SmtpMailer {
     });
   }
 
-  sendRecovery({ to, token }) {
-    const recoveryUrl = actionUrl(this.accountOrigin, 'recovery', token);
+  sendRecovery({ to, token, accountOrigin = this.accountOrigin }) {
+    const recoveryUrl = actionUrl(accountOrigin, 'recovery', token);
     return this.send({
       from: this.recoveryFrom,
       to,
@@ -65,8 +65,8 @@ export class SmtpMailer {
     });
   }
 
-  sendVerification({ to, token }) {
-    const verificationUrl = actionUrl(this.accountOrigin, 'verify', token);
+  sendVerification({ to, token, accountOrigin = this.accountOrigin }) {
+    const verificationUrl = actionUrl(accountOrigin, 'verify', token);
     return this.send({
       from: this.verificationFrom,
       to,
