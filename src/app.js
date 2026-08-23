@@ -125,8 +125,14 @@ function renderAccountState() {
   $('#sync-badge').classList.toggle('cloud', signedIn);
   $('#actor-control').hidden = isCloudJourney();
   const sharing = isCloudJourney();
+  const needsPrivateJourney = signedIn && !sharing;
   $('#invite-form').hidden = !sharing || activeTrip(state).members.length >= 2 || activeTrip(state).role !== 'owner';
-  $('#sharing-copy').textContent = sharing ? `${activeTrip(state).members.length} of 2 journey seats are active. Each journeyer signs in separately.` : 'Sign in and create a private journey to invite another journeyer.';
+  $('#sharing-create-journey-button').hidden = !needsPrivateJourney;
+  $('#sharing-copy').textContent = sharing
+    ? `${activeTrip(state).members.length} of 2 journey seats are active. Each journeyer signs in separately.`
+    : needsPrivateJourney
+      ? 'Your account is ready. Create a private journey to invite another journeyer.'
+      : 'Sign in and create a private journey to invite another journeyer.';
   $('#member-list').innerHTML = sharing ? activeTrip(state).members.map((name) => `<div class="member-chip"><strong>${escapeHtml(name)}</strong><span>${name === accountUser.displayName ? 'You' : 'Journeyer'}</span></div>`).join('') : '';
   $('#theme-copy').textContent = 'Your theme changes only your own view. Each journeyer chooses what feels right on their screen.';
 }
@@ -719,6 +725,10 @@ $('#toggle-moments-button').addEventListener('click', () => {
 });
 $('#settings-button').addEventListener('click', () => $('#settings-dialog').showModal());
 $$('[data-close-settings]').forEach((button) => button.addEventListener('click', () => $('#settings-dialog').close()));
+$('#sharing-create-journey-button').addEventListener('click', () => {
+  $('#settings-dialog').close();
+  openJourney();
+});
 $('#account-button').addEventListener('click', () => {
   renderAccountState();
   $('#account-dialog').showModal();

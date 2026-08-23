@@ -70,3 +70,23 @@ test('a selected practical-context currency is shown without inventing one', asy
 
   await expect(page.locator('#moment-timeline')).toContainText('€2.50 is held here as context, not a score.');
 });
+
+test('a verified account without a journey can begin one from Journey settings', async ({ page }) => {
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { user: { id: 'user-1', username: 'new-journeyer', displayName: 'new-journeyer', email: 'journeyer@example.test', emailVerified: true }, csrfToken: 'csrf-test' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { journeys: [] } }),
+  }));
+
+  await page.goto('/');
+  await skipOnboarding(page);
+  await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Journey settings' }).click();
+
+  await expect(page.locator('#sharing-copy')).toHaveText('Your account is ready. Create a private journey to invite another journeyer.');
+  await page.locator('#sharing-create-journey-button').click();
+  await expect(page.getByRole('heading', { name: 'Begin a shared journey' })).toBeVisible();
+});
