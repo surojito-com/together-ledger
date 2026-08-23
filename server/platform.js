@@ -105,6 +105,24 @@ function publicJourney(row) {
   };
 }
 
+function publicInvitation(row, now) {
+  const acceptedAt = dateTime(row.accepted_at);
+  const revokedAt = dateTime(row.revoked_at);
+  const expiresAt = dateTime(row.expires_at);
+  const status = acceptedAt ? 'accepted' : revokedAt ? 'revoked' : new Date(row.expires_at) <= now ? 'expired' : 'pending';
+  return {
+    id: row.id,
+    email: row.email_normalized,
+    invitedByUserId: row.invited_by_user_id,
+    invitedByDisplayName: row.invited_by_display_name || 'Journey member',
+    status,
+    sentAt: dateTime(row.created_at),
+    expiresAt,
+    acceptedAt,
+    revokedAt,
+  };
+}
+
 function publicExpense(row) {
   return {
     id: row.id,
@@ -670,8 +688,9 @@ export class PlatformService {
     try {
       if (this.config.NODE_ENV !== 'test') await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const journey = await this.requireMember(client, userId, journeyId);
-      const [members, expenses, moments, concerns, milestones, events] = await Promise.all([
-        client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1`, [journeyId]),
+      const [members, invitations, expenses, moments, concerns, milestones, events] = await Promise.all([
+        client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1 ORDER BY jm.joined_at,jm.user_id`, [journeyId]),
+        client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
         client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
         client.query(`SELECT m.*,creator.display_name AS created_by_name,editor.display_name AS updated_by_name
           FROM journey_moments m
@@ -692,7 +711,8 @@ export class PlatformService {
       });
       const snapshot = {
         journey: publicJourney(journey),
-        members: members.rows.map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, joinedAt: row.joined_at })),
+        members: members.rows.map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, joinedAt: dateTime(row.joined_at) })),
+        invitations: invitations.rows.map((row) => publicInvitation(row, this.now())),
         expenses: expenses.rows.map(publicExpense),
         moments: moments.rows.map(publicMoment),
         concerns: concerns.rows.map(publicConcern),

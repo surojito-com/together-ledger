@@ -76,3 +76,9 @@ test('operations use the production environment file for Compose substitutions',
   const operations = await readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8');
   assert.match(operations, /docker compose --env-file \/etc\/together-ledger\/production\.env -f compose\.production\.yaml up -d/);
 });
+
+test('public home is prepared for the protected account service', async () => {
+  const publicHome = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(publicHome, /<meta name="together-api-origin" content="https:\/\/api\.together-ledger\.com" \/>/);
+  assert.match(publicHome, /<meta name="together-accounts-enabled" content="true" \/>/);
+});

@@ -13,6 +13,7 @@ After a person creates or signs into a separate account, newly created private j
 - normalized email, display name, Argon2id password hash, verification state, and pseudonymized deletion state;
 - hashed session, verification, recovery, and invitation tokens with expirations;
 - journey membership, budget, expenses, milestones, explicit concerns, and server-authoritative events;
+- journey invitation history, including the destination email, sender identity, sent time, expiry, and accepted, pending, revoked, or expired state, visible only to authorized journey members;
 - bounded technical timestamps and optimistic record versions.
 
 Raw passwords and raw database tokens are never stored. Session cookies are HTTP-only, secure in production, same-site, and paired with an origin-bound CSRF value. The authenticated browser may retain a local snapshot cache; anyone with access to an unlocked signed-in device may see it.

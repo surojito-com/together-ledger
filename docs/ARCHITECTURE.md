@@ -34,11 +34,11 @@ Signing in never uploads an existing browser ledger. A signed-in person delibera
 
 Each journeyer has a separate email/password account and a unique private username. Registration does not ask for a name: the username is the initial account label and is not shown to the other journeyer by default. Names used together belong in the shared journey, where they can be chosen with context rather than demanded during sign-up. Usernames are normalized, validated in the application, and unique in PostgreSQL so web, mobile, AWS, and GCP clients all receive the same answer. A journey owner sends an email-bound, hashed, expiring invitation. Acceptance requires a signed-in account with that verified email. Database authorization is repeated inside every mutation transaction; journey IDs are never treated as authority.
 
-The application enforces a maximum of two active members per journey. Removing a member requires the owner. Sharing a login is unsupported because it destroys actor attribution.
+The application enforces a maximum of two active members per journey. Journey settings retain the server-authoritative creation time, membership join times, and invitation destination, sender, time, and lifecycle state for authorized members. Raw invitation tokens are never returned in this history. Removing a member requires the owner. Sharing a login is unsupported because it destroys actor attribution.
 
 ## Concurrency and synchronization
 
-Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
+Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, invitation history, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
 
 PR#0003 is online-first. Durable offline mutation queues and merge semantics are not claimed.
 
