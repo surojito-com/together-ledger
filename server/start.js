@@ -8,7 +8,14 @@ const config = loadConfig();
 const pool = createPool(config);
 await runMigrations(pool);
 const mailer = config.SMTP_URL
-  ? new SmtpMailer({ smtpUrl: config.SMTP_URL, from: config.MAIL_FROM, accountOrigin: config.ACCOUNT_ORIGIN })
+  ? new SmtpMailer({
+    smtpUrl: config.SMTP_URL,
+    from: config.MAIL_FROM,
+    invitationFrom: config.MAIL_FROM_INVITATION || config.MAIL_FROM,
+    verificationFrom: config.MAIL_FROM_VERIFICATION || config.MAIL_FROM,
+    recoveryFrom: config.MAIL_FROM_RECOVERY || config.MAIL_FROM,
+    accountOrigin: config.ACCOUNT_ORIGIN,
+  })
   : new ConsoleBlockedMailer();
 const platform = new PlatformService({
   pool,
