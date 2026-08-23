@@ -23,7 +23,7 @@ await new Promise((resolve, reject) => {
 
 try {
   const { port } = server.server.address();
-  const mailer = new SmtpMailer({ smtpUrl: `smtp://127.0.0.1:${port}`, from: 'Together Ledger <no-reply@example.test>', publicOrigin: 'https://together.example.test' });
+  const mailer = new SmtpMailer({ smtpUrl: `smtp://127.0.0.1:${port}`, from: 'Together Ledger <no-reply@example.test>', accountOrigin: 'https://together.example.test' });
   await mailer.sendVerification({ to: 'qa@example.test', token: 'qa-verify' });
   await mailer.sendInvitation({ to: 'qa@example.test', token: 'qa-invite' });
   await mailer.sendRecovery({ to: 'qa@example.test', token: 'qa-recovery' });
