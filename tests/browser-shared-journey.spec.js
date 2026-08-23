@@ -48,7 +48,7 @@ test('the browser-only starter offers a named add-your-own moment', async ({ pag
   await page.goto('/');
   await skipOnboarding(page);
 
-  await page.getByRole('button', { name: '+ Add your own moment' }).click();
+  await page.getByRole('button', { name: /Add your own moment/ }).click();
   await expect(page.locator('#moment-kind-label-field')).toBeVisible();
   await page.locator('#moment-form [name="kindLabel"]').fill('A small win');
   await page.locator('#moment-form [name="title"]').fill('We paused before replying');
