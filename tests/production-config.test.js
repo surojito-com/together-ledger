@@ -30,7 +30,7 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(environment, /CADDY_DOMAIN=api\.together-ledger\.com/);
   assert.match(environment, /PUBLIC_ORIGIN=https:\/\/together-ledger\.com/);
   assert.match(environment, /API_ORIGIN=https:\/\/api\.together-ledger\.com/);
-  assert.match(environment, /ACCOUNT_ORIGIN=https:\/\/api\.together-ledger\.com/);
+  assert.match(environment, /ACCOUNT_ORIGIN=https:\/\/together-ledger\.com/);
   assert.match(environment, /no-reply@together-ledger\.com/);
   assert.match(environment, /POSTGRES_PASSWORD=replace-with-64-hex-characters/);
   assert.match(environment, /replace-with-a-different-long-random-secret/);
