@@ -34,7 +34,7 @@ Payment rails remain isolated from this service. PR#0003 does not accept payment
 2. Sessions are opaque 256-bit random values. PostgreSQL stores only SHA-256 token hashes. Cookies are `HttpOnly`, `Secure` in production, `SameSite=Lax`, and scoped to `/`.
 3. Every state-changing request requires the session CSRF token and an allowed `Origin`.
 4. Authentication and recovery endpoints are rate limited. Recovery requests return the same response whether an account exists or not.
-5. Invitation and recovery tokens are random, single-use, expiration-bound, and stored only as hashes.
+5. Verification, invitation, and recovery tokens are random, single-use, expiration-bound, and stored only as hashes. Their email links may use only the configured public or API origin that already passed request-origin validation; arbitrary host and forwarding headers never choose a link destination.
 6. Authorization is checked inside the same transaction as every read or mutation. A journey ID alone grants nothing.
 7. A journey has a hard maximum of two people. A shared login is prohibited.
 8. Event sequence allocation is serialized per journey. The event HMAC includes the previous hash, canonical mutation data, actor ID, and timestamp.

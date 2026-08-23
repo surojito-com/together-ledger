@@ -18,6 +18,21 @@ test('SMTP messages contain only the intended single-use application links', asy
   assert.ok(messages.every((message) => message.from.includes('Together Ledger') && message.to === 'alex@example.test'));
 });
 
+test('each account email can stay with the allowed origin that requested it', async () => {
+  const messages = [];
+  const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };
+  const mailer = new SmtpMailer({ transport, from: 'Together Ledger <no-reply@example.test>', accountOrigin: 'https://fallback.example.test' });
+
+  await mailer.sendVerification({ to: 'alex@example.test', token: 'public_verify', accountOrigin: 'https://together.example.test' });
+  await mailer.sendInvitation({ to: 'alex@example.test', token: 'api_invite', accountOrigin: 'https://api.together.example.test' });
+  await mailer.sendRecovery({ to: 'alex@example.test', token: 'public_recovery', accountOrigin: 'https://together.example.test' });
+
+  assert.match(messages[0].text, /https:\/\/together\.example\.test\/\?verify=public_verify/);
+  assert.match(messages[1].text, /https:\/\/api\.together\.example\.test\/\?invite=api_invite/);
+  assert.match(messages[2].text, /https:\/\/together\.example\.test\/\?recovery=public_recovery/);
+  assert.ok(messages.every((message) => !message.text.includes('fallback.example.test')));
+});
+
 test('Email-0010 invitation provides a polished HTML message and accessible text alternative', async () => {
   const messages = [];
   const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };

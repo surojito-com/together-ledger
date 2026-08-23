@@ -52,13 +52,14 @@ async function register(app, mailer, { email, username = email.split('@')[0] }) 
   const body = response.json().data;
   const cookie = cookieFrom(response);
   const verification = mailer.messages.findLast((message) => message.type === 'verification' && message.to === email);
+  assert.equal(verification.accountOrigin, origin);
   const verified = await app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', headers: { origin }, payload: { token: verification.token } });
   assert.equal(verified.statusCode, 200, verified.body);
   return { cookie, csrf: body.csrfToken, user: body.user };
 }
 
 test('hosted API bridge allows the configured frontend and API origins only', async (t) => {
-  const { app, pool } = await testPlatform();
+  const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
   const allowed = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin } });
   assert.equal(allowed.statusCode, 204);
@@ -69,6 +70,19 @@ test('hosted API bridge allows the configured frontend and API origins only', as
   assert.equal(apiAllowed.headers['access-control-allow-origin'], apiOrigin);
   const denied = await app.inject({ method: 'OPTIONS', url: '/api/v1/session', headers: { origin: 'https://evil.example' } });
   assert.equal(denied.statusCode, 403);
+  const apiRegistration = await app.inject({
+    method: 'POST', url: '/api/v1/auth/register', headers: { origin: apiOrigin },
+    payload: { email: 'api-origin@example.test', username: 'api-origin', password: 'correct horse battery staple' },
+  });
+  assert.equal(apiRegistration.statusCode, 201, apiRegistration.body);
+  assert.equal(mailer.messages.findLast((message) => message.type === 'verification').accountOrigin, apiOrigin);
+  const messageCount = mailer.messages.length;
+  const rejectedRegistration = await app.inject({
+    method: 'POST', url: '/api/v1/auth/register', headers: { origin: 'https://evil.example' },
+    payload: { email: 'rejected-origin@example.test', username: 'rejected-origin', password: 'correct horse battery staple' },
+  });
+  assert.equal(rejectedRegistration.statusCode, 403);
+  assert.equal(mailer.messages.length, messageCount);
 });
 
 function authHeaders(client) {
@@ -137,6 +151,7 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     const response = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'tc-b@example.test' } });
     assert.equal(response.statusCode, 202, response.body);
     invitationToken = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').token;
+    assert.equal(mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').accountOrigin, origin);
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
     const invitation = snapshot.json().data.invitations[0];
     assert.equal(invitation.email, 'tc-b@example.test');
@@ -320,7 +335,9 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.equal(recoveryRequest.statusCode, 202);
   assert.equal(enumerationSafe.statusCode, 202);
   assert.equal(recoveryRequest.body, enumerationSafe.body);
-  const recoveryToken = mailer.messages.findLast((message) => message.type === 'recovery').token;
+  const recoveryMessage = mailer.messages.findLast((message) => message.type === 'recovery');
+  assert.equal(recoveryMessage.accountOrigin, origin);
+  const recoveryToken = recoveryMessage.token;
   const recovered = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', headers: { origin }, payload: { token: recoveryToken, password: 'a new correct horse battery staple' } });
   assert.equal(recovered.statusCode, 200, recovered.body);
   const replay = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', headers: { origin }, payload: { token: recoveryToken, password: 'another correct horse battery staple' } });
