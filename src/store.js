@@ -35,12 +35,51 @@ export function resetState() {
   return state;
 }
 
+function stateWithExportAliases(state) {
+  const aliases = new Map();
+  const remember = (value) => {
+    if (typeof value === 'string' && value && !aliases.has(value)) aliases.set(value, `journeyer-${aliases.size + 1}`);
+  };
+  const isAccountIdKey = (key) => key === 'userId' || key.endsWith('UserId');
+  const visitAccountReferences = (value) => {
+    if (Array.isArray(value)) return value.forEach(visitAccountReferences);
+    if (!value || typeof value !== 'object') return;
+    Object.entries(value).forEach(([key, child]) => {
+      if (isAccountIdKey(key)) remember(child);
+      visitAccountReferences(child);
+    });
+  };
+
+  state.trips.forEach((trip) => (trip.memberRecords || []).forEach((member) => remember(member.id)));
+  visitAccountReferences(state);
+  state.events.forEach((event) => { if (event.entityType === 'membership') remember(event.entityId); });
+
+  const exported = structuredClone(state);
+  const replaceAccountReferences = (value) => {
+    if (Array.isArray(value)) return value.forEach(replaceAccountReferences);
+    if (!value || typeof value !== 'object') return;
+    Object.entries(value).forEach(([key, child]) => {
+      if (isAccountIdKey(key) && aliases.has(child)) value[key] = aliases.get(child);
+      else replaceAccountReferences(child);
+    });
+  };
+  replaceAccountReferences(exported);
+  exported.trips.forEach((trip) => (trip.memberRecords || []).forEach((member) => {
+    if (aliases.has(member.id)) member.id = aliases.get(member.id);
+  }));
+  exported.events.forEach((event) => {
+    if (event.entityType === 'membership' && aliases.has(event.entityId)) event.entityId = aliases.get(event.entityId);
+  });
+  return exported;
+}
+
 export function exportState(state) {
   if (!isValidState(state)) throw new Error('The ledger data is not valid.');
   return JSON.stringify({
     product: 'Together Ledger',
     exportedAt: new Date().toISOString(),
-    data: state,
+    identityProtection: 'account-aliases-v1',
+    data: stateWithExportAliases(state),
   }, null, 2);
 }
 

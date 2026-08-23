@@ -47,6 +47,7 @@ Payment rails remain isolated from this service. PR#0003 does not accept payment
 
 - HMAC chaining is tamper-evident, not magical immutability. An attacker controlling both the database and application secrets can forge history. Secret rotation, restricted database roles, encrypted backups, restore drills, and external backup copies reduce this risk.
 - Email delivery proves control of an inbox, not a person’s legal identity.
+- Downloaded exports are plaintext private backups. Internal account IDs are replaced with per-export aliases, but journey content, display names, invitation metadata, and timestamps remain and require careful storage.
 - The static GitHub Pages origin remains browser-only; account requests cannot succeed until DNS is intentionally routed to the private service.
 - No clinical, relationship-health, fairness, or financial-outcome inference is made from event history.
 
