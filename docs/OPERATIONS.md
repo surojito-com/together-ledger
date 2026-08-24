@@ -33,7 +33,7 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 - TLS terminates at the cloud load balancer or proxy; `PUBLIC_ORIGIN` is the exact HTTPS origin.
 - `COOKIE_SECURE=true` and `TRUST_PROXY=true`.
 - `SESSION_SECRET` and `AUDIT_HMAC_KEY` are different random secrets held in AWS Secrets Manager and GCP Secret Manager, never environment files or Git.
-- `SMTP_URL` points to the owner's authenticated SMTP relay. AWS SES SMTP is suitable for the primary; the standby must have a separately tested relay path.
+- Production `SMTP_URL` uses the authenticated Resend SMTPS relay. A standby relay path must be configured and independently tested before it is relied on during recovery.
 - PostgreSQL accepts private-network traffic only. The application role owns application tables; humans use separate audited administrative roles.
 - Backups are encrypted, copied to the other cloud, retained according to the deletion policy, and restored quarterly into an isolated database.
 - Application logs exclude cookies, authorization headers, passwords, raw tokens, expense notes, account labels, and concern details.

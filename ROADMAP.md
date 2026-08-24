@@ -2,12 +2,13 @@
 
 ## Now — safe public starter
 
-- Local-first expense ledger
+- Local-first relationship-resilience journeys
 - Synthetic demo data
-- Unified expense form
-- Category and payer context
-- Daily spending drilldown
-- Conversation prompts
+- A timeline for memories, feelings, boundaries, acknowledgments, repair requests, and practical matters
+- Visibility cues and non-judgmental guided check-ins
+- Conversations to return to and mutually understood next actions
+- Optional money context without totals, balances, rankings, or relationship scoring
+- Lossless preservation of legacy trip and expense records as practical-context moments
 - JSON backup and restore
 - Automated tests and public-safety scan
 - Multiple local journeys and switching
@@ -23,7 +24,7 @@
 - Email verification, bounded sessions, recovery, logout, and deletion
 - Email-bound invitations and maximum-two-member enforcement
 - Private PostgreSQL journeys with version-conflict responses
-- Cloud-backed expenses, concerns, and action milestones
+- Cloud-backed shared moments, conversations to return to, action milestones, and preserved practical records
 - Server-authoritative, append-only, actor-attributed, HMAC-chained events
 - One portable container for an AWS primary and GCP cold standby
 - Threat model, API contract, and operations/restore gates
@@ -44,14 +45,14 @@ PR#0003 remains a candidate until production secrets, SMTP, PostgreSQL, backup r
 
 - iOS packaging and App Store release gate
 - Android packaging after the web/iOS launch exception
-- Five journeys free; each additional journey requires $0.99/year
-- Two journeyers included; a third-person concept remains priced at $0.49/journey but is intentionally not implemented while the product enforces the safer two-person model
+- Additional journeyers are planned, but the current private service still enforces its live membership limit
+- Public pricing remains undecided until the additional-journeyer experience, billing boundary, and launch evidence are implementation-ready
 - External payment processor only; accounts and journey data stay in the owner-controlled platform
 
 ## Not planned
 
 - Relationship scores
 - Hidden monitoring or notifications
-- Advertising or sale of expense data
+- Advertising or sale of account or journey data
 - Public leaderboards
 - Using payment contribution as a proxy for love, fairness, or commitment

@@ -42,4 +42,4 @@ Mutable resources carry an integer `version`. A client PATCH or DELETE supplies 
 
 ## Email adapter
 
-Automated tests use an in-memory outbox. Production must provide an authenticated SMTP URL; AWS SES SMTP is one compatible primary option. Raw verification, invitation, and recovery tokens may appear only in the mail adapter invocation and destination message; only their SHA-256 hashes are stored and application logs must never contain them.
+Automated tests use an in-memory outbox. The deployed provider is Resend SMTP, supplied through the provider-neutral Nodemailer SMTP adapter so another relay can be adopted only after independent testing. Raw verification, invitation, and recovery tokens may appear only in the mail adapter invocation and destination message; only their SHA-256 hashes are stored and application logs must never contain them.
