@@ -24,6 +24,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   await pool.query(await readFile(new URL('../server/migrations/003_private_usernames.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/004_shared_moments.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/005_make-shared-journeys-more-humane.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/006_expand-shared-moment-vocabulary.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -145,6 +146,17 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     const customMoment = response.json().data.moment;
     assert.equal(customMoment.kind, 'other');
     assert.equal(customMoment.kindLabel, 'A small win');
+  });
+
+  await t.test('TC-00032: Shared moments can hold everyday calls and learning', async () => {
+    for (const kind of ['learned-something', 'call-me', 'called-you']) {
+      const response = await app.inject({
+        method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+        payload: { kind, title: 'A small thing worth holding', detail: '', occurredOn: '2026-08-25', moneyCents: null },
+      });
+      assert.equal(response.statusCode, 201, response.body);
+      assert.equal(response.json().data.moment.kind, kind);
+    }
   });
 
   await t.test('TC-00040: Journey settings sends an invitation', async () => {

@@ -12,6 +12,9 @@ test('the first browser-only screen begins empty and explains what can be held',
   await expect(page.getByRole('heading', { name: 'What can live here?' })).toBeVisible();
   await expect(page.locator('#moment-timeline')).toContainText('There are no examples here—only possibilities:');
   await expect(page.locator('#moment-timeline')).toContainText('Repair request');
+  await expect(page.locator('#moment-timeline')).toContainText('Learned something');
+  await expect(page.locator('#moment-timeline')).toContainText('Call me');
+  await expect(page.locator('#moment-timeline')).toContainText('Called you');
   await expect(page.locator('.trip-bar')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Begin' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Return-to conversations' })).toBeHidden();
@@ -48,6 +51,19 @@ test('the first browser-only screen begins empty and explains what can be held',
 
   const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
   expect(accessibilityScan.violations).toEqual([]);
+});
+
+test('the browser-only starter holds the requested everyday moment kinds', async ({ page }) => {
+  await page.goto('/');
+  await skipOnboarding(page);
+
+  await page.getByRole('button', { name: 'Begin' }).click();
+  await page.locator('#moment-form [name="kind"]').selectOption('called-you');
+  await page.locator('#moment-form [name="title"]').fill('I called when I said I would');
+  await page.getByRole('button', { name: 'Hold this moment' }).click();
+
+  await expect(page.locator('#moment-timeline')).toContainText('Called you');
+  await expect(page.locator('#moment-timeline')).toContainText('I called when I said I would');
 });
 
 test('the browser-only starter offers a named add-your-own moment', async ({ page }) => {

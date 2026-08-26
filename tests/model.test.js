@@ -125,6 +125,13 @@ test('a browser-only journey can name a moment outside the preset list', () => {
   assert.throws(() => normalizeMoment({ ...moment, kindLabel: '' }, demoState().activeTripId), /short name/);
 });
 
+test('requested shared-journey moments are valid browser-only records', () => {
+  for (const kind of ['learned-something', 'call-me', 'called-you']) {
+    const moment = normalizeMoment({ kind, title: 'A small thing worth holding', detail: '', occurredOn: '2026-08-25', visibility: 'shared-now', money: '' }, demoState().activeTripId);
+    assert.equal(moment.kind, kind);
+  }
+});
+
 test('journey normalization requires two people and preserves trip boundaries', () => {
   const trip = normalizeTrip({
     name: 'Mountain Weekend',

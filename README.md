@@ -20,7 +20,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 ## What works today
 
 - A gentle **Our shared journey** timeline for moments, current check-ins, recent memories, and open threads.
-- Moment types for promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, practical matters, and a person-named **Add your own moment** choice.
+- Moment types for promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, things learned, calls requested or received, practical matters, and a person-named **Add your own moment** choice.
 - Per-moment visibility cues: **private**, **shared now**, or **share later**.
 - Optional practical money context inside a moment; no money totals, budgets, balances, cash-flow view, or spending dashboard.
 - Multiple browser-local journeys with creation and switching that never mixes records.

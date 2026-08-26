@@ -24,7 +24,7 @@ const forbidden = () => new PlatformError(403, 'forbidden', 'You do not have acc
 const CATEGORIES = new Set(['Flights', 'Hotel', 'Restaurants', 'Transportation', 'Activities', 'Shopping', 'Other']);
 const STATUSES = new Set(['paid', 'due']);
 const CONCERN_STATUSES = new Set(['open', 'resolved']);
-const MOMENT_KINDS = new Set(['promise', 'acknowledgment', 'trigger', 'missed-chance', 'heart-to-heart', 'memory', 'feeling', 'boundary', 'repair-request', 'practical-matter', 'other']);
+const MOMENT_KINDS = new Set(['promise', 'acknowledgment', 'trigger', 'missed-chance', 'heart-to-heart', 'memory', 'feeling', 'boundary', 'repair-request', 'learned-something', 'call-me', 'called-you', 'practical-matter', 'other']);
 const MONEY_CURRENCIES = new Set(['', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']);
 const START_DATE_STATUSES = new Set(['exact', 'unknown']);
 const END_DATE_STATUSES = new Set(['date', 'unsure', 'forever']);
