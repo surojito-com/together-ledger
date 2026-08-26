@@ -11,6 +11,9 @@ export const MOMENT_TYPES = [
   ['feeling', 'Feeling'],
   ['boundary', 'Boundary'],
   ['repair-request', 'Repair request'],
+  ['learned-something', 'Learned something'],
+  ['call-me', 'Call me'],
+  ['called-you', 'Called you'],
   ['practical-matter', 'Practical matter'],
   ['other', '+ Add your own moment'],
 ];

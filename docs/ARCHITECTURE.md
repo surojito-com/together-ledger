@@ -38,7 +38,7 @@ The application enforces a maximum of two active members per journey. Journey se
 
 ## Concurrency and synchronization
 
-Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, invitation history, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
+Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, invitation history, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, things learned, calls requested or received, practical matters, and an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
 
 PR#0003 is online-first. Durable offline mutation queues and merge semantics are not claimed.
 
