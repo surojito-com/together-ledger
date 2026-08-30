@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
@@ -37,6 +37,34 @@ for (const path of files(root)) {
   const content = readFileSync(path, 'utf8');
   for (const pattern of [...forbidden, ...credentialPatterns]) {
     if (pattern.test(content)) violations.push(`${relative(root, path)} matched ${pattern}`);
+  }
+}
+
+const homepage = readFileSync(join(root, 'index.html'), 'utf8');
+const requiredShareMetadata = [
+  'rel="canonical" href="https://together-ledger.com/"',
+  'property="og:title"',
+  'property="og:image" content="https://together-ledger.com/social/together-ledger-card.png"',
+  'property="og:image:width" content="1200"',
+  'property="og:image:height" content="630"',
+  'property="og:image:alt"',
+  'name="twitter:card" content="summary_large_image"',
+];
+for (const metadata of requiredShareMetadata) {
+  if (!homepage.includes(metadata)) violations.push(`index.html is missing ${metadata}`);
+}
+for (const asset of ['public/favicon.svg', 'public/apple-touch-icon.png', 'public/social/together-ledger-card.png']) {
+  if (!existsSync(join(root, asset))) violations.push(`${asset} does not exist`);
+}
+const pagesWorkflow = readFileSync(join(root, '.github/workflows/pages.yml'), 'utf8');
+if (!pagesWorkflow.includes('cp -R public/. _site/')) {
+  violations.push('Pages workflow does not publish the social and icon assets');
+}
+const shareCardPath = join(root, 'public/social/together-ledger-card.png');
+if (existsSync(shareCardPath)) {
+  const shareCard = readFileSync(shareCardPath);
+  if (shareCard.readUInt32BE(16) !== 1200 || shareCard.readUInt32BE(20) !== 630) {
+    violations.push('social card must be a 1200 by 630 PNG');
   }
 }
 
