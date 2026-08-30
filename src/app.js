@@ -31,7 +31,6 @@ let selectedCategory = null;
 let removeId = null;
 let removeSnapshot = null;
 let guidanceIndex = 0;
-let onboardingIndex = 0;
 let momentFilter = 'all';
 let momentsExpanded = false;
 
@@ -117,6 +116,7 @@ function renderAccountState() {
   $('#signed-out-account').hidden = signedIn || !accountsAvailable;
   $('#signed-in-account').hidden = !signedIn;
   $('#account-button').textContent = signedIn ? 'Account settings' : accountsAvailable ? 'Sign in' : 'Accounts soon';
+  $$('[data-open-account]').forEach((button) => { button.textContent = signedIn ? 'Account settings' : accountsAvailable ? 'Sign in' : 'Accounts soon'; });
   $('#account-dialog-copy').textContent = accountsAvailable ? 'Passwords are never shared between journeyers.' : 'The private account service is not live on this public page yet.';
   $('#account-name').textContent = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
@@ -167,10 +167,10 @@ function invitationStatusLabel(status) {
 }
 
 function initializeThemePicker() {
-  const selects = [$('#theme-select'), $('#settings-theme-select')].filter(Boolean);
+  const selects = $$('[data-theme-picker]');
   const themes = window.TOGETHER_THEMES || [];
   selects.forEach((select) => {
-    select.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.icon} ${theme.label}</option>`).join('');
+    select.innerHTML = themes.map((theme) => `<option value="${theme.id}">${theme.label}</option>`).join('');
     select.value = document.documentElement.dataset.theme || 'light';
     select.addEventListener('change', () => {
       const id = window.applyTogetherTheme(select.value);
@@ -178,6 +178,54 @@ function initializeThemePicker() {
       selects.forEach((item) => { item.value = id; });
       showToast(`${themes.find((theme) => theme.id === id)?.label || 'Theme'} applied.`);
     });
+  });
+}
+
+function initializeDialogBranding() {
+  $$('dialog').forEach((dialog) => {
+    const signature = document.createElement('div');
+    signature.className = 'dialog-signature';
+    signature.setAttribute('aria-hidden', 'true');
+    signature.innerHTML = '<span class="mini-mark"><i></i><i></i></span><span>Together Ledger</span>';
+    dialog.prepend(signature);
+  });
+}
+
+function setSurface(surface) {
+  const welcome = surface === 'welcome';
+  document.body.dataset.surface = welcome ? 'welcome' : 'ledger';
+  $$('[data-welcome-only]').forEach((element) => { element.hidden = !welcome; });
+  $$('[data-ledger-only]').forEach((element) => { element.hidden = welcome; });
+  const skipLink = $('.skip-link');
+  skipLink.href = welcome ? '#welcome-title' : '#moments-title';
+  skipLink.textContent = welcome ? 'Skip to the main story' : 'Skip to the shared ledger';
+  if (!welcome) $('#ledger-app').hidden = false;
+}
+
+function showWelcomeSurface() {
+  setSurface('welcome');
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+function showLedgerSurface({ persist = false, focus = false } = {}) {
+  if (persist && !state.preferences.onboardingComplete) {
+    state.preferences.onboardingComplete = true;
+    saveWorkingState();
+  }
+  setSurface('ledger');
+  $$('.welcome-menu').forEach((menu) => { menu.open = false; });
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  if (focus) $('#moments-title').focus?.({ preventScroll: true });
+}
+
+function beginLedger() {
+  showLedgerSurface({ persist: true });
+  window.requestAnimationFrame(() => {
+    if (accountUser && !isCloudJourney()) openJourney();
+    else {
+      $('#moment-dialog').addEventListener('close', () => $('#moments-title').focus({ preventScroll: true }), { once: true });
+      openMoment();
+    }
   });
 }
 
@@ -285,6 +333,9 @@ function openMoment(id = '', initialKind = '') {
   $('#moment-dialog-title').textContent = moment ? 'Edit this moment' : 'Hold a moment';
   $('#save-moment').textContent = moment ? 'Save moment' : 'Hold this moment';
   $('#moment-dialog-copy').textContent = shared ? 'This is a shared moment. Both journeyers can see it and return to it with care.' : 'Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.';
+  $('#moment-visibility-help').textContent = shared
+    ? 'Private sync: both authorized journeyers can see hosted moments. Person-specific hosted visibility is not available yet.'
+    : 'Browser only: Private and Share later are local cues, not separate-account privacy controls.';
   $('#moment-visibility-field').hidden = shared;
   $$('input[name="visibility"]', form).forEach((input) => { input.disabled = shared; });
   if (moment) {
@@ -560,35 +611,6 @@ async function removeConcern(id) {
   showToast('Concern deleted; tombstone retained in event history.');
 }
 
-const onboardingSteps = [
-  {
-    title: 'One shared journey, held in your own words.',
-    body: '<strong>Create or switch journeys without mixing moments, open threads, or practical context.</strong><p>Every journey keeps its own people, dates, and history.</p>',
-  },
-  {
-    title: 'Facts first. Meaning stays human.',
-    body: '<strong>Hold a moment, then use Guidance for a short conversation.</strong><p>Prompts are optional, answers are never recorded, and money is only optional context—not a relationship score.</p>',
-  },
-  {
-    title: 'Your browser is the current home.',
-    body: '<strong>Browser-only is the default; private sync is an explicit choice.</strong><p>Signing in never uploads this browser ledger. Signed-in journeys use separate accounts and disappear from view on sign-out.</p>',
-  },
-];
-
-function renderOnboarding() {
-  const step = onboardingSteps[onboardingIndex];
-  $('#onboarding-title').textContent = step.title;
-  $('#onboarding-step').innerHTML = `<span>${onboardingIndex + 1} / ${onboardingSteps.length}</span>${step.body}`;
-  $('#onboarding-back').disabled = onboardingIndex === 0;
-  $('#onboarding-next').textContent = onboardingIndex === onboardingSteps.length - 1 ? 'Open my journey' : 'Next';
-}
-
-function completeOnboarding() {
-  state.preferences.onboardingComplete = true;
-  saveWorkingState();
-  $('#onboarding-dialog').close();
-}
-
 function confirmRemove(id) {
   removeId = id;
   removeSnapshot = structuredClone(state.entries.find((entry) => entry.id === id));
@@ -608,6 +630,21 @@ function showToast(message) {
   toast.classList.add('show');
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function setButtonPending(button, pending, pendingLabel = 'Working…') {
+  if (!button) return;
+  if (pending) {
+    button.dataset.idleLabel = button.textContent;
+    button.textContent = pendingLabel;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+  } else {
+    button.textContent = button.dataset.idleLabel || button.textContent;
+    delete button.dataset.idleLabel;
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+  }
 }
 
 $$('[data-open-expense]').forEach((button) => button.addEventListener('click', () => openExpense()));
@@ -756,41 +793,48 @@ $('#sharing-create-journey-button').addEventListener('click', () => {
   $('#settings-dialog').close();
   openJourney();
 });
-$('#account-button').addEventListener('click', () => {
+function openAccountDialog() {
   renderAccountState();
   $('#account-dialog').showModal();
-});
+}
+
+$('#account-button').addEventListener('click', openAccountDialog);
+$$('[data-open-account]').forEach((button) => button.addEventListener('click', openAccountDialog));
+$$('[data-begin-ledger]').forEach((button) => button.addEventListener('click', beginLedger));
+$$('.welcome-menu a').forEach((link) => link.addEventListener('click', () => { link.closest('details').open = false; }));
 $$('[data-close-account]').forEach((button) => button.addEventListener('click', () => $('#account-dialog').close()));
 
 $('#login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button[type="submit"], button:not([type])');
-  button.disabled = true;
+  setButtonPending(button, true, 'Signing in…');
   try {
     accountUser = await api.login(Object.fromEntries(new FormData(event.currentTarget)));
     await refreshCloudState({ announce: true });
+    showLedgerSurface({ persist: true });
     renderAccountState();
     $('#account-dialog').close();
   } catch (error) {
     showToast(accountMessage(error));
   } finally {
-    button.disabled = false;
+    setButtonPending(button, false);
   }
 });
 
 $('#register-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector('button');
-  button.disabled = true;
+  setButtonPending(button, true, 'Creating account…');
   try {
     accountUser = await api.register(Object.fromEntries(new FormData(event.currentTarget)));
     await refreshCloudState();
+    showLedgerSurface({ persist: true });
     renderAccountState();
     showToast(api.lastVerificationSent ? 'Account created. Check your email to verify it.' : 'Account created, but email is delayed. Use resend verification shortly.');
   } catch (error) {
     showToast(accountMessage(error));
   } finally {
-    button.disabled = false;
+    setButtonPending(button, false);
   }
 });
 
@@ -839,6 +883,8 @@ $('#logout-button').addEventListener('click', async () => {
   state = loadState();
   $('#account-dialog').close();
   render();
+  if (state.preferences.onboardingComplete) showLedgerSurface();
+  else showWelcomeSurface();
   showToast('Signed out.');
 });
 
@@ -876,7 +922,7 @@ $('#invite-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-  button.disabled = true;
+  setButtonPending(button, true, 'Sending invitation…');
   try {
     await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(form)));
     form.reset();
@@ -884,7 +930,7 @@ $('#invite-form').addEventListener('submit', async (event) => {
   } catch (error) {
     showToast(accountMessage(error));
   } finally {
-    button.disabled = false;
+    setButtonPending(button, false);
   }
 });
 
@@ -1000,9 +1046,12 @@ $('#import-file').addEventListener('change', async (event) => {
   if (!file) return;
   try {
     state = importState(await file.text());
+    state.preferences.onboardingComplete = true;
+    saveWorkingState();
     selectedDay = null;
     selectedCategory = null;
     render();
+    showLedgerSurface();
     showToast('Ledger imported on this browser.');
   } catch (error) {
     showToast(error.message);
@@ -1017,29 +1066,15 @@ $('#reset-button').addEventListener('click', () => {
   selectedDay = null;
   selectedCategory = null;
   render();
+  showWelcomeSurface();
   showToast('This browser has a fresh shared space.');
 });
 
-$('#onboarding-back').addEventListener('click', () => {
-  onboardingIndex = Math.max(0, onboardingIndex - 1);
-  renderOnboarding();
-});
-$('#onboarding-next').addEventListener('click', () => {
-  if (onboardingIndex === onboardingSteps.length - 1) completeOnboarding();
-  else {
-    onboardingIndex += 1;
-    renderOnboarding();
-  }
-});
-$('#onboarding-skip').addEventListener('click', completeOnboarding);
-$('#skip-onboarding').addEventListener('click', completeOnboarding);
-
+initializeDialogBranding();
 initializeThemePicker();
 render();
-if (!state.preferences.onboardingComplete) {
-  renderOnboarding();
-  $('#onboarding-dialog').showModal();
-}
+if (state.preferences.onboardingComplete) showLedgerSurface();
+else showWelcomeSurface();
 
 async function initializeAccount() {
   const params = new URLSearchParams(window.location.search);
@@ -1049,7 +1084,6 @@ async function initializeAccount() {
       showToast('Email verified. You can now accept invitations.');
     }
     if (params.has('recovery')) {
-      if ($('#onboarding-dialog').open) $('#onboarding-dialog').close();
       $('#recovery-confirm-form').elements.token.value = params.get('recovery');
       $('#recovery-confirm-dialog').showModal();
       $('#recovery-confirm-form').elements.password.focus({ preventScroll: true });
@@ -1062,12 +1096,12 @@ async function initializeAccount() {
     }
     if (accountUser) {
       await refreshCloudState();
+      showLedgerSurface({ persist: true });
       if (params.has('invite')) {
         await api.mutate(`/invitations/${encodeURIComponent(params.get('invite'))}/accept`, 'POST', {});
         await refreshCloudState({ announce: true });
       }
     } else if (params.has('invite')) {
-      if ($('#onboarding-dialog').open) $('#onboarding-dialog').close();
       $('#account-dialog').showModal();
       showToast('Sign in with the invited email, then reopen the invitation link.');
     }

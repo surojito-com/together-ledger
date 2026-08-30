@@ -7,9 +7,17 @@ await import(join(root, 'src', 'themes.js'));
 const themes = globalThis.TOGETHER_THEMES || [];
 const css = await readFile(join(root, 'src', 'styles.css'), 'utf8');
 const requiredTokens = ['--bg', '--fg', '--muted', '--accent', '--border', '--meta-bg', '--on-accent'];
-const minimumContrast = 4.5;
 const problems = [];
 const contrastResults = [];
+const contrastContract = [
+  { name: 'primary text', foreground: '--fg', background: '--bg', minimum: 4.5 },
+  { name: 'muted text', foreground: '--muted', background: '--bg', minimum: 4.5 },
+  { name: 'links and text actions', foreground: '--accent', background: '--bg', minimum: 4.5 },
+  { name: 'primary action text', foreground: '--on-accent', background: '--accent', minimum: 4.5 },
+  { name: 'destructive action text', foreground: '--on-accent', background: '--accent', minimum: 4.5 },
+  { name: 'focus indicator', foreground: '--accent', background: '--bg', minimum: 3 },
+  { name: 'status badge text', foreground: '--on-accent', background: '--accent', minimum: 4.5 },
+];
 
 const painted = new Map();
 for (const match of css.matchAll(/:root\[data-theme=["']([^"']+)["']\]\s*\{([^}]*)\}/g)) {
@@ -53,12 +61,12 @@ for (const theme of themes) {
   if (values.get('--bg')?.toUpperCase() !== theme.color.toUpperCase()) {
     problems.push(`${theme.id} browser color ${theme.color} does not match CSS background ${values.get('--bg')}`);
   }
-  for (const [foreground, background] of [['--fg', '--bg'], ['--muted', '--bg'], ['--accent', '--bg'], ['--on-accent', '--accent']]) {
+  for (const { name, foreground, background, minimum } of contrastContract) {
     const ratio = contrast(values.get(foreground) || '', values.get(background) || '');
-    if (ratio === null) problems.push(`${theme.id} cannot contrast-check ${foreground} on ${background}`);
+    if (ratio === null) problems.push(`${theme.id} cannot contrast-check ${name}: ${foreground} on ${background}`);
     else {
       contrastResults.push(ratio);
-      if (ratio < minimumContrast) problems.push(`${theme.id} ${foreground} on ${background} is ${ratio.toFixed(2)}:1`);
+      if (ratio < minimum) problems.push(`${theme.id} ${name} is ${ratio.toFixed(2)}:1; requires ${minimum}:1`);
     }
   }
 }

@@ -14,13 +14,33 @@
     <script type="module" src="./src/app.js"></script>
   </head>
   <body>
+    <a class="skip-link" href="#welcome-title">Skip to the main story</a>
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Together Ledger home">
-        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
         <span><strong>Together Ledger</strong><small>A shared journey, held with care.</small></span>
       </a>
-      <div class="header-actions">
-        <label class="theme-control"><span>Theme</span><select id="theme-select" aria-label="Color theme"></select></label>
+      <nav class="welcome-nav" aria-label="Welcome navigation" data-welcome-only>
+        <a href="#how-it-works">How it works</a>
+        <a href="#possibilities">Possibilities</a>
+        <a href="#privacy">Privacy</a>
+        <label class="theme-control"><span>Theme</span><select id="theme-select" data-theme-picker aria-label="Color theme"></select></label>
+        <button class="button quiet" type="button" data-open-account>Sign in</button>
+        <button class="button primary" type="button" data-begin-ledger>Begin a ledger</button>
+      </nav>
+      <details class="welcome-menu" data-welcome-only>
+        <summary aria-label="Open welcome menu"><span aria-hidden="true"></span></summary>
+        <nav aria-label="Mobile welcome navigation">
+          <a href="#how-it-works">How it works</a>
+          <a href="#possibilities">Possibilities</a>
+          <a href="#privacy">Privacy</a>
+          <label class="theme-control"><span>Theme</span><select id="mobile-theme-select" data-theme-picker aria-label="Mobile color theme"></select></label>
+          <button class="button quiet" type="button" data-open-account>Sign in</button>
+          <button class="button primary" type="button" data-begin-ledger>Begin a ledger</button>
+        </nav>
+      </details>
+      <div class="header-actions" data-ledger-only>
+        <label class="theme-control"><span>Theme</span><select id="workspace-theme-select" data-theme-picker aria-label="Workspace color theme"></select></label>
         <input id="import-file" type="file" accept="application/json" hidden />
         <button class="button quiet" id="account-button">Sign in</button>
         <button class="button quiet" id="settings-button">Journey settings</button>
@@ -28,50 +48,116 @@
     </header>
 
     <main id="top">
-      <section class="trip-bar" aria-label="Your shared space">
-        <div class="trip-identity"><small>Your shared space</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
-        <div class="journey-actions">
-          <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
-          <button class="button quiet" id="new-journey-button">＋ New journey</button>
-          <button class="button primary" data-open-moment>＋ Hold a moment</button>
-        </div>
-      </section>
-
-      <section class="workspace">
-        <details class="today-card card guidance-card" id="guidance" aria-labelledby="conversation-title">
-          <summary>
-            <span><p class="eyebrow">A small place to begin</p><strong id="conversation-title">One question, if now is a good time.</strong><small>Nothing you say here is saved. Open only if this feels useful today.</small></span>
-            <span class="expando" aria-hidden="true">＋</span>
-          </summary>
-          <div class="guidance-content">
-            <div class="guided-prompt">
-              <span id="guidance-progress"></span>
-              <p id="guidance-prompt"></p>
-              <div class="guidance-actions"><button class="button quiet" id="guidance-skip">Next question</button><button class="button quiet" id="guidance-prev">Back</button><button class="button quiet" id="guidance-end">End for today</button><button class="button primary" id="guidance-done">Finish for today</button></div>
+      <section class="welcome" id="welcome" aria-labelledby="welcome-title" data-welcome-only>
+        <div class="welcome-hero">
+          <div class="welcome-copy">
+            <p class="welcome-eyebrow">A shared journey, held with care</p>
+            <h1 id="welcome-title">Keep what matters, <em>together.</em></h1>
+            <p class="welcome-intro">A private place for two people to hold the moments, plans, and memories they want to come back to—without the noise of a feed.</p>
+            <div class="welcome-actions">
+              <button class="button primary" type="button" data-begin-ledger>Begin your ledger <span aria-hidden="true">→</span></button>
+              <a class="button quiet" href="#how-it-works">See how it works</a>
             </div>
+            <p class="welcome-boundary"><span aria-hidden="true">▢</span><span><strong>Browser only until you choose otherwise.</strong> Beginning here creates no account and uploads nothing.</span></p>
           </div>
-        </details>
 
-        <section class="card moments-section" id="moments" aria-labelledby="moments-title">
-          <div class="section-heading"><div><p class="eyebrow" id="moments-eyebrow">Your shared ledger</p><h2 id="moments-title">What can live here?</h2><p id="moments-copy">Choose what feels true. Nothing is added until you decide.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
-          <div class="filters" id="moment-filters" role="group" aria-label="Filter moments by kind"></div>
-          <div class="moment-timeline" id="moment-timeline"></div>
+          <article class="ledger-preview" aria-label="Example shared ledger for fictional journeyers Maya and Theo">
+            <header><span class="mini-mark" aria-hidden="true"><i></i><i></i></span><strong>Our ledger</strong><span class="preview-people" aria-label="Maya and Theo"><i>M</i><i>T</i></span></header>
+            <div class="preview-body">
+              <p class="preview-chapter">Chapter 04</p>
+              <h2>The summer we chose slowly</h2>
+              <p>Three fictional moments, held between Maya and Theo</p>
+              <ol>
+                <li><time datetime="2026-05-14"><strong>14</strong> May</time><div><strong>A promise for the season</strong><span>Choose one unhurried day each week.</span><small>Shared intentionally</small></div></li>
+                <li><time datetime="2026-06-02"><strong>02</strong> Jun</time><div><strong>The road near Marlow</strong><span>We missed the turn and found the view we still talk about.</span><small>Shared intentionally</small></div></li>
+                <li><time datetime="2026-06-18"><strong>18</strong> Jun</time><div><strong>For next time</strong><span>Bring the old camera. Stay until the light changes.</span><small>Share later · local cue</small></div></li>
+              </ol>
+            </div>
+          </article>
+        </div>
+
+        <section class="welcome-statement" id="how-it-works" aria-labelledby="how-title">
+          <p class="welcome-eyebrow">Made for two</p>
+          <h2 id="how-title">Not another place to post. A place to <em>remember.</em></h2>
+          <p>You decide what belongs, how it is named, and when it is ready to be shared. The ledger begins empty because your story should not arrive prewritten.</p>
+          <div class="welcome-steps">
+            <article><span>01</span><h3>Hold one thing</h3><p>A memory, promise, feeling, boundary, practical detail, or your own kind of moment.</p></article>
+            <article><span>02</span><h3>Name its place</h3><p>Choose a local visibility cue and use words that feel true to the two people involved.</p></article>
+            <article><span>03</span><h3>Return with care</h3><p>Come back to recent moments and conversations without turning the relationship into a score.</p></article>
+          </div>
         </section>
 
-        <section class="card threads-section" id="threads" aria-labelledby="threads-title">
-          <div class="section-heading"><div><p class="eyebrow">What wants care</p><h2 id="threads-title">Return-to conversations</h2><p>A place to hold something you want to come back to together.</p></div><button class="button quiet" type="button" id="add-thread-button">＋ Start a conversation</button></div>
-          <div id="open-threads"></div>
+        <section class="welcome-possibilities" id="possibilities" aria-labelledby="possibilities-title">
+          <div><p class="welcome-eyebrow">Every ledger takes its own shape</p><h2 id="possibilities-title">Keep the ordinary things that become a life.</h2></div>
+          <div class="possibility-grid">
+            <article><span aria-hidden="true">○</span><h3>A moment worth keeping</h3><p>The call you made, the thing you learned, or the quiet apology after dinner.</p></article>
+            <article><span aria-hidden="true">◇</span><h3>A promise without a score</h3><p>Something you want to remember together, without totals, rankings, or a feed.</p></article>
+            <article><span aria-hidden="true">⌁</span><h3>A conversation to return to</h3><p>An open thread can rest here until both people have room to meet it again.</p></article>
+          </div>
         </section>
 
+        <section class="welcome-privacy" id="privacy" aria-labelledby="privacy-title">
+          <div><p class="welcome-eyebrow">Privacy before performance</p><h2 id="privacy-title">Know where your words live before you write them.</h2><p>Together Ledger names the boundary at the moment it matters. The browser-local space and a signed-in private journey are separate homes.</p></div>
+          <dl>
+            <div><dt>Browser only</dt><dd>Your first ledger stays on this device unless you export it. Beginning does not create an account.</dd></div>
+            <div><dt>Account ready</dt><dd>Signing in never uploads or merges the ledger already held in this browser.</dd></div>
+            <div><dt>Private sync</dt><dd>Authorized journeyers share the hosted journey. Person-specific hosted visibility is not yet claimed.</dd></div>
+          </dl>
+        </section>
+
+        <section class="welcome-closing" aria-labelledby="closing-title">
+          <p class="welcome-eyebrow">Begin without performing</p>
+          <h2 id="closing-title">Start with one thing worth keeping.</h2>
+          <p>No feed to fill. No relationship score to improve. Nothing is added until you decide.</p>
+          <button class="button primary" type="button" data-begin-ledger>Begin your ledger <span aria-hidden="true">→</span></button>
+        </section>
       </section>
+
+      <div id="ledger-app" data-ledger-only hidden>
+        <section class="trip-bar" aria-label="Your shared space">
+          <div class="trip-identity"><small>Your shared space</small><strong id="trip-name">Loading…</strong><span id="trip-period"></span><div class="trip-record-links"><button id="event-manager-button">See event history <span id="event-count"></span></button><button id="edit-journey-button">Edit journey</button><label id="actor-control">Acting as <select id="actor-select" aria-label="Choose the local actor for new events"></select></label><span class="sync-badge" id="sync-badge">Browser only</span></div></div>
+          <div class="journey-actions">
+            <label class="journey-picker"><span>Switch journey</span><select id="journey-select" aria-label="Switch journey"></select></label>
+            <button class="button quiet" id="new-journey-button">＋ New journey</button>
+            <button class="button primary" data-open-moment>＋ Hold a moment</button>
+          </div>
+        </section>
+
+        <section class="workspace">
+          <details class="today-card card guidance-card" id="guidance" aria-labelledby="conversation-title">
+            <summary>
+              <span><p class="eyebrow">A small place to begin</p><strong id="conversation-title">One question, if now is a good time.</strong><small>Nothing you say here is saved. Open only if this feels useful today.</small></span>
+              <span class="expando" aria-hidden="true">＋</span>
+            </summary>
+            <div class="guidance-content">
+              <div class="guided-prompt">
+                <span id="guidance-progress"></span>
+                <p id="guidance-prompt"></p>
+                <div class="guidance-actions"><button class="button quiet" id="guidance-skip">Next question</button><button class="button quiet" id="guidance-prev">Back</button><button class="button quiet" id="guidance-end">End for today</button><button class="button primary" id="guidance-done">Finish for today</button></div>
+              </div>
+            </div>
+          </details>
+
+          <section class="card moments-section" id="moments" aria-labelledby="moments-title">
+            <div class="section-heading"><div><p class="eyebrow" id="moments-eyebrow">Your shared ledger</p><h2 id="moments-title" tabindex="-1">What can live here?</h2><p id="moments-copy">Choose what feels true. Nothing is added until you decide.</p></div><div class="section-actions"><button class="button quiet" id="toggle-moments-button" type="button">See all moments</button><button class="button primary" data-open-moment>＋ Hold a moment</button></div></div>
+            <div class="filters" id="moment-filters" role="group" aria-label="Filter moments by kind"></div>
+            <div class="moment-timeline" id="moment-timeline"></div>
+          </section>
+
+          <section class="card threads-section" id="threads" aria-labelledby="threads-title">
+            <div class="section-heading"><div><p class="eyebrow">What wants care</p><h2 id="threads-title">Return-to conversations</h2><p>A place to hold something you want to come back to together.</p></div><button class="button quiet" type="button" id="add-thread-button">＋ Start a conversation</button></div>
+            <div id="open-threads"></div>
+          </section>
+        </section>
+      </div>
     </main>
 
     <footer>
-      <strong>Together Ledger</strong>
+      <div class="footer-brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i></span><strong>Together Ledger</strong></div>
       <p>Local-first and open source. Not financial advice, couples therapy, or a substitute for professional support.</p>
     </footer>
 
-    <nav class="mobile-action" aria-label="Quick action"><button data-open-moment>＋ Hold a moment</button></nav>
+    <nav class="mobile-action" aria-label="Quick action" data-ledger-only><button data-open-moment>＋ Hold a moment</button></nav>
 
     <dialog id="moment-dialog">
       <form id="moment-form" method="dialog">
@@ -83,7 +169,7 @@
           <label class="field"><span>When</span><input name="occurredOn" type="date" required /></label>
           <label class="field full"><span>A short name</span><input name="title" required maxlength="120" placeholder="e.g. A quiet apology after dinner" /></label>
           <label class="field full"><span>What would you like to hold? <small>Optional</small></span><textarea name="detail" maxlength="1200" rows="5" placeholder="Use your own words. Keep it simple and kind."></textarea></label>
-          <fieldset class="field full" id="moment-visibility-field"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div></fieldset>
+          <fieldset class="field full" id="moment-visibility-field" aria-describedby="moment-visibility-help"><legend>Visibility</legend><div class="radio-row"><label><input type="radio" name="visibility" value="private" /> Private</label><label><input type="radio" name="visibility" value="shared-now" checked /> Shared now</label><label><input type="radio" name="visibility" value="share-later" /> Share later</label></div><small id="moment-visibility-help">Browser only: Private and Share later are local cues, not separate-account privacy controls.</small></fieldset>
           <div class="field full money-fields"><span>Practical money context <small>Optional; never counted as a score</small></span><div><label><span class="sr-only">Amount</span><input name="money" type="number" min="0" max="1000000" step="0.01" placeholder="Amount (optional)" /></label><label><span class="sr-only">Currency</span><select name="moneyCurrency"><option value="">Currency (optional)</option><option value="USD">USD — US dollar</option><option value="EUR">EUR — Euro</option><option value="GBP">GBP — British pound</option><option value="CAD">CAD — Canadian dollar</option><option value="AUD">AUD — Australian dollar</option><option value="JPY">JPY — Japanese yen</option><option value="INR">INR — Indian rupee</option></select></label></div></div>
         </div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-moment>Cancel</button><button class="button primary" id="save-moment">Hold this moment</button></div>
@@ -147,9 +233,9 @@
           <button class="icon-button" type="button" data-close-settings aria-label="Close settings">×</button>
         </div>
         <div class="settings-grid">
-          <section id="sharing-settings" class="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><button class="button primary" type="button" id="sharing-create-journey-button" hidden>Create a journey</button><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" placeholder="journeyer@example.com" /></label><button class="button primary" type="submit">Send invitation</button></form><div id="journey-record" hidden><h4>Journey record</h4><div id="member-list"></div><div id="invitation-history" hidden><h4>Invitation history</h4><div id="invitation-list"></div></div></div></section>
-          <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" aria-label="Settings color theme"></select><small id="theme-copy">Your theme changes only your own view. Each journeyer chooses what feels right on their screen.</small></label></section>
-          <section><h3>Backup and restore</h3><p id="backup-privacy-copy">Exports include every local journey, moment, practical detail, and action milestone. Internal account IDs are replaced with aliases made for that file. The file still contains private journey content, so store it with care.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import backup</button></div></section>
+          <section id="sharing-settings" class="sharing-settings"><h3>Journey sharing</h3><p id="sharing-copy">Sign in with a separate account for private hosted sync and invitations.</p><form id="invite-form" class="inline-form" hidden><label class="field"><span>Invite journeyer by email</span><input name="email" type="email" required autocomplete="email" placeholder="journeyer@example.com" /><small>The recipient receives a short-lived, single-use invitation. If accepted, authorized journeyers can see the membership and invitation history without seeing the raw link token.</small></label><button class="button primary" type="submit">Send invitation</button></form><button class="button primary" type="button" id="sharing-create-journey-button" hidden>Create a journey</button><div id="journey-record" hidden><h4>Journey record</h4><div id="member-list"></div><div id="invitation-history" hidden><h4>Invitation history</h4><div id="invitation-list"></div></div></div></section>
+          <section><h3>Appearance</h3><label class="field"><span>Theme</span><select id="settings-theme-select" data-theme-picker aria-label="Settings color theme"></select><small id="theme-copy">Your theme changes only your own view. Each journeyer chooses what feels right on their screen.</small></label></section>
+          <section><h3>Backup and restore</h3><p id="backup-privacy-copy">Exports include every local journey, moment, practical detail, and action milestone. Internal account IDs are replaced with aliases made for that file. The file still contains private journey content, so store it with care.</p><p id="restore-boundary-copy">Import replaces this browser’s current ledger only after the whole file passes validation. Export first if you need the current ledger.</p><div class="settings-actions"><button class="button quiet" type="button" id="export-button">Export all journeys</button><button class="button quiet" type="button" id="import-button">Import and replace</button></div></section>
           <section><h3>Start fresh</h3><p>Reset clears this browser’s journeys and starts with an empty shared space. Export first if you need a backup.</p><button class="button danger" type="button" id="reset-button">Start fresh</button></section>
           <section><h3>Privacy boundary</h3><p>Browser-only journeys stay in this browser. Signed-in private journeys are loaded from the account service and removed from view on sign-out; signing in never uploads the browser ledger.</p></section>
         </div>
@@ -163,10 +249,11 @@
       </div>
       <section id="account-unavailable" class="account-panel account-notice" hidden><p class="eyebrow">Private accounts</p><h3>We are connecting this with care.</h3><p>This public page cannot create an account until the protected Together Ledger service is live. No name, email, or password has been sent from this screen.</p><p>Your browser-only journey remains on this device. We will invite you to create a separate private account when the service is ready.</p></section>
       <div id="signed-out-account" class="account-grid">
+        <p class="account-boundary">Signing in never uploads, merges, or removes the ledger already held in this browser. Hosted journeys use a separate account home.</p>
         <form id="login-form" class="account-panel"><h3>Sign in</h3><label class="field"><span>Email or username</span><input name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="current-password" required minlength="12" /></label><button class="button primary">Sign in</button><button class="text-button" type="button" id="recovery-button">I forgot my password</button></form>
         <form id="register-form" class="account-panel"><h3>Create account</h3><label class="field"><span>Choose a username</span><input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="30" pattern="[a-z][a-z0-9-]{2,29}" required /><small>3–30 lowercase letters, numbers, or single hyphens. It is for signing in and is not shown to your journeyer. You can choose the names used together when a journey calls for them.</small></label><label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required /></label><label class="field"><span>Password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><small>Use at least 12 characters. We send a verification link before invitations can be accepted.</small><button class="button primary">Create secure account</button></form>
       </div>
-      <div id="signed-in-account" class="account-panel" hidden><dl class="account-identity"><div><dt>Account name</dt><dd id="account-name"></dd></div><div><dt>Handle</dt><dd id="account-username"></dd></div><div><dt>Email address</dt><dd id="account-email"></dd></div><div><dt>Email status</dt><dd id="verification-status"></dd></div></dl><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes sessions. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
+      <div id="signed-in-account" class="account-panel" hidden><dl class="account-identity"><div><dt>Account name</dt><dd id="account-name"></dd></div><div><dt>Handle</dt><dd id="account-username"></dd></div><div><dt>Email address</dt><dd id="account-email"></dd></div><div><dt>Email status</dt><dd id="verification-status"></dd></div></dl><button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button><p id="account-sync-copy">Your account is ready for a private journey.</p><p>Signing out removes hosted journeys from this view without deleting them. Your separate browser-only ledger remains on this device.</p><div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div><hr /><h3>Delete account</h3><p>Deletion revokes every session. Sole-owner journeys are erased; shared journeys pass to the remaining journeyer instead of being silently removed from them.</p><form id="delete-account-form"><label class="field"><span>Current password</span><input name="password" type="password" autocomplete="current-password" required /></label><label class="field"><span>Type DELETE</span><input name="confirmation" required pattern="DELETE" /></label><button class="button danger">Permanently delete account</button></form></div>
     </dialog>
 
     <dialog id="recovery-request-dialog">
@@ -183,17 +270,6 @@
         <input name="token" type="hidden" />
         <div class="form-grid"><label class="field full"><span>New password</span><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><label class="field full"><span>Confirm new password</span><input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label></div>
         <div class="dialog-actions"><button class="button quiet" type="button" data-close-recovery-confirm>Cancel</button><button class="button primary">Change password</button></div>
-      </form>
-    </dialog>
-
-    <dialog id="onboarding-dialog">
-      <form method="dialog">
-        <div class="dialog-head">
-          <div><p class="eyebrow">Welcome to Together Ledger</p><h2 id="onboarding-title">One shared journey, held with care.</h2></div>
-          <button class="icon-button" type="button" id="skip-onboarding" aria-label="Skip introduction">×</button>
-        </div>
-        <div class="onboarding-step" id="onboarding-step" aria-live="polite"></div>
-        <div class="dialog-actions"><button class="button quiet" type="button" id="onboarding-back">Back</button><button class="button quiet" type="button" id="onboarding-skip">Skip</button><button class="button primary" type="button" id="onboarding-next">Next</button></div>
       </form>
     </dialog>
 
