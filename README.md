@@ -26,7 +26,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 - Multiple browser-local journeys with creation and switching that never mixes records.
 - Lossless migration of original trip and expense records into preserved practical-context moments.
 - Edit, remove, export, and import local journey records.
-- Skippable onboarding and a bounded, one-prompt-at-a-time check-in with no saved written answers.
+- A public welcome that explains the journey and its browser-only boundary before the first moment, plus a bounded one-prompt-at-a-time check-in with no saved written answers.
 - Per-journey action milestones that describe shared actions—not relationship quality.
 - Honest local settings for themes, full backup/restore, and demo reset.
 - A visible Event Manager under every journey for locally attributable moment, thread, milestone, and practical-detail changes, including deletion tombstones.

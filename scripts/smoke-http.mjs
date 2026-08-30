@@ -14,6 +14,10 @@ try {
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type'), /text\/html/);
   assert.match(html, /Together Ledger/);
+  assert.match(html, /id="welcome-title"/);
+  assert.match(html, /Keep what matters/);
+  assert.match(html, /class="ledger-preview"/);
+  assert.match(html, /data-begin-ledger/);
   assert.match(html, /data-open-moment/);
   assert.match(html, /id="moment-timeline"/);
   assert.match(html, /Our shared journey/);
@@ -21,10 +25,11 @@ try {
   assert.match(html, /src="\.\/src\/themes\.js"/);
   assert.match(html, /id="theme-select"/);
   assert.match(html, /id="journey-select"/);
-  assert.match(html, /id="onboarding-dialog"/);
   assert.match(html, /id="settings-dialog"/);
   assert.match(html, /id="event-manager-button"/);
   assert.match(html, /id="event-list"/);
+  assert.ok(html.indexOf('id="welcome-title"') < html.indexOf('id="ledger-app"'), 'the public welcome precedes the working ledger');
+  assert.ok(html.indexOf('id="how-it-works"') < html.indexOf('id="privacy"'), 'the welcome explains the experience before its privacy boundary');
   assert.ok(html.indexOf('id="guidance"') < html.indexOf('id="moments"'), 'the gentle check-in precedes the shared-journey timeline');
   assert.ok(html.indexOf('id="moments"') < html.indexOf('id="threads"'), 'recent moments precede open threads');
 

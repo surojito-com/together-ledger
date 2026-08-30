@@ -1,14 +1,29 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-async function skipOnboarding(page) {
-  if (await page.locator('#onboarding-dialog').getAttribute('open') !== null) await page.locator('#skip-onboarding').click();
+async function beginBrowserLedger(page, { closeMoment = false } = {}) {
+  await expect(page.getByRole('heading', { level: 1, name: 'Keep what matters, together.' })).toHaveCount(1);
+  await page.getByRole('button', { name: /Begin your ledger/ }).first().click();
+  await expect(page.locator('body')).toHaveAttribute('data-surface', 'ledger');
+  await expect(page.getByRole('heading', { name: 'Hold a moment' })).toBeVisible();
+  if (closeMoment) await page.getByRole('button', { name: 'Close', exact: true }).click();
 }
 
-test('the first browser-only screen begins empty and explains what can be held', async ({ page }) => {
+test('the public welcome earns the first browser-only moment without making a privacy claim', async ({ page }) => {
   await page.goto('/');
-  await skipOnboarding(page);
 
+  await expect(page.locator('h1')).toHaveCount(1);
+  await expect(page.getByRole('heading', { level: 1, name: 'Keep what matters, together.' })).toBeVisible();
+  await expect(page.locator('.ledger-preview')).toContainText('Three fictional moments, held between Maya and Theo');
+  await expect(page.locator('.ledger-preview')).toContainText('Shared intentionally');
+  await expect(page.locator('.welcome-boundary')).toContainText('Beginning here creates no account and uploads nothing.');
+  await page.getByRole('link', { name: 'See how it works' }).click();
+  await expect(page.getByRole('heading', { name: 'Not another place to post. A place to remember.' })).toBeVisible();
+
+  const welcomeScan = await new AxeBuilder({ page }).include('#welcome').analyze();
+  expect(welcomeScan.violations).toEqual([]);
+
+  await beginBrowserLedger(page);
   await expect(page.getByRole('heading', { name: 'What can live here?' })).toBeVisible();
   await expect(page.locator('#moment-timeline')).toContainText('There are no examples here—only possibilities:');
   await expect(page.locator('#moment-timeline')).toContainText('Repair request');
@@ -16,14 +31,12 @@ test('the first browser-only screen begins empty and explains what can be held',
   await expect(page.locator('#moment-timeline')).toContainText('Call me');
   await expect(page.locator('#moment-timeline')).toContainText('Called you');
   await expect(page.locator('.trip-bar')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Begin' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Return-to conversations' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'One question, if now is a good time.' })).toBeHidden();
   await expect(page.getByRole('button', { name: /See all \d+ moments/ })).toBeHidden();
   await expect(page.locator('body')).not.toContainText('Total trip cost');
   await expect(page.locator('body')).not.toContainText('Daily spending');
 
-  await page.getByRole('button', { name: 'Begin' }).click();
   await page.locator('#moment-form [name="kind"]').selectOption('heart-to-heart');
   await page.locator('#moment-form [name="occurredOn"]').fill('2026-08-17');
   await page.locator('#moment-form [name="title"]').fill('We made room to listen');
@@ -55,9 +68,7 @@ test('the first browser-only screen begins empty and explains what can be held',
 
 test('the browser-only starter holds the requested everyday moment kinds', async ({ page }) => {
   await page.goto('/');
-  await skipOnboarding(page);
-
-  await page.getByRole('button', { name: 'Begin' }).click();
+  await beginBrowserLedger(page);
   await page.locator('#moment-form [name="kind"]').selectOption('called-you');
   await page.locator('#moment-form [name="title"]').fill('I called when I said I would');
   await page.getByRole('button', { name: 'Hold this moment' }).click();
@@ -68,7 +79,7 @@ test('the browser-only starter holds the requested everyday moment kinds', async
 
 test('the browser-only starter offers a named add-your-own moment', async ({ page }) => {
   await page.goto('/');
-  await skipOnboarding(page);
+  await beginBrowserLedger(page, { closeMoment: true });
 
   await page.getByRole('button', { name: /Add your own moment/ }).click();
   await expect(page.locator('#moment-kind-label-field')).toBeVisible();
@@ -82,9 +93,7 @@ test('the browser-only starter offers a named add-your-own moment', async ({ pag
 
 test('a selected practical-context currency is shown without inventing one', async ({ page }) => {
   await page.goto('/');
-  await skipOnboarding(page);
-
-  await page.getByRole('button', { name: 'Begin' }).click();
+  await beginBrowserLedger(page);
   await page.locator('#moment-form [name="title"]').fill('A practical promise');
   await page.locator('#moment-form [name="money"]').fill('2.50');
   await page.locator('#moment-form [name="moneyCurrency"]').selectOption('EUR');
@@ -104,7 +113,6 @@ test('a verified account without a journey can begin one from Journey settings',
   }));
 
   await page.goto('/');
-  await skipOnboarding(page);
   await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
   await page.getByRole('button', { name: 'Journey settings' }).click();
 
@@ -138,16 +146,16 @@ test('Journey settings keeps creation, joining, and invitation history visible',
   }));
 
   await page.goto('/');
-  await skipOnboarding(page);
   await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#member-list')).toContainText('Created by journey-owner');
   await expect(page.locator('#invitation-list')).toContainText('Invitation sent to invited@example.test');
   await expect(page.locator('.invitation-status')).toHaveText('Pending');
+  await expect(page.locator('#invite-form')).toContainText('short-lived, single-use invitation');
+  await expect(page.locator('#invite-form')).toContainText('without seeing the raw link token');
 
   invitationAccepted = true;
   await page.reload();
-  await skipOnboarding(page);
   await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#member-list')).toContainText('journey-member joined the journey');
