@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#F3EFE6"/>
+  <rect width="18" height="630" fill="#8C3A3A"/>
+  <circle cx="88" cy="82" r="34" fill="#8C3A3A"/>
+  <path d="M68 86c8-15 16-15 24 0 5 8 9 8 12-1" fill="none" stroke="#F3EFE6" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="69" cy="86" r="3" fill="#F3EFE6"/>
+  <circle cx="104" cy="85" r="3" fill="#F3EFE6"/>
+
+  <text x="140" y="96" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="42" font-weight="700">Together Ledger</text>
+  <text x="68" y="210" fill="#8C3A3A" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="3">A SHARED JOURNEY, HELD WITH CARE</text>
+  <text x="68" y="290" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="52">
+    <tspan x="68" dy="0">A private place for two people</tspan>
+    <tspan x="68" dy="62">to hold what matters.</tspan>
+  </text>
+  <text x="70" y="495" fill="#6B645A" font-family="Arial, Helvetica, sans-serif" font-size="22">Moments, gentle check-ins, and conversations to return to.</text>
+  <text x="70" y="570" fill="#6B645A" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">together-ledger.com</text>
+
+  <g transform="translate(820 146)">
+    <rect x="34" y="34" width="286" height="288" rx="24" fill="#D8CFC0" opacity=".6" transform="rotate(5 177 178)"/>
+    <rect x="17" y="17" width="286" height="288" rx="24" fill="#E7DFD2" transform="rotate(-3 160 161)"/>
+    <rect width="286" height="288" rx="24" fill="#FFFDF8" stroke="#D8CFC0" stroke-width="2"/>
+    <circle cx="42" cy="52" r="8" fill="#8C3A3A"/>
+    <text x="64" y="60" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="24" font-weight="700">A small win</text>
+    <line x1="34" y1="91" x2="252" y2="91" stroke="#D8CFC0" stroke-width="2"/>
+    <circle cx="42" cy="139" r="8" fill="#8C3A3A" opacity=".72"/>
+    <text x="64" y="147" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="22">Something to</text>
+    <text x="64" y="176" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="22">return to</text>
+    <line x1="34" y1="207" x2="252" y2="207" stroke="#D8CFC0" stroke-width="2"/>
+    <circle cx="42" cy="251" r="8" fill="#8C3A3A" opacity=".45"/>
+    <text x="64" y="259" fill="#1E1B17" font-family="Georgia, Times New Roman, serif" font-size="22">A moment worth keeping</text>
+  </g>
+</svg>

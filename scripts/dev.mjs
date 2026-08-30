@@ -5,14 +5,20 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const port = Number(process.env.PORT) || 4173;
-const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml' };
 
 export function appServer(rootDirectory = root) {
   return createServer((request, response) => {
     const pathname = decodeURIComponent(new URL(request.url, `http://${request.headers.host}`).pathname);
     const relative = normalize(pathname).replace(/^[/\\]+/, '');
     let file = join(rootDirectory, relative || 'index.html');
-    if (!file.startsWith(rootDirectory) || !existsSync(file)) file = join(rootDirectory, 'index.html');
+    if (!file.startsWith(rootDirectory)) file = join(rootDirectory, 'index.html');
+    if (!existsSync(file)) {
+      const publicFile = join(rootDirectory, 'public', relative);
+      file = publicFile.startsWith(join(rootDirectory, 'public')) && existsSync(publicFile)
+        ? publicFile
+        : join(rootDirectory, 'index.html');
+    }
     if (statSync(file).isDirectory()) file = join(file, 'index.html');
     response.writeHead(200, { 'content-type': `${types[extname(file)] || 'application/octet-stream'}; charset=utf-8`, 'cache-control': 'no-store' });
     createReadStream(file).pipe(response);
