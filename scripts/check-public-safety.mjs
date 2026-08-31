@@ -56,6 +56,17 @@ for (const metadata of requiredShareMetadata) {
 for (const asset of ['public/favicon.svg', 'public/apple-touch-icon.png', 'public/social/together-ledger-card.png']) {
   if (!existsSync(join(root, asset))) violations.push(`${asset} does not exist`);
 }
+const favicon = readFileSync(join(root, 'public/favicon.svg'), 'utf8');
+if (!favicon.includes('data-mark="knot"') || !favicon.includes('x="6.5"') || !favicon.includes('x="22.5"')) {
+  violations.push('favicon.svg must use the locked Knot mark');
+}
+const touchIconPath = join(root, 'public/apple-touch-icon.png');
+if (existsSync(touchIconPath)) {
+  const touchIcon = readFileSync(touchIconPath);
+  if (touchIcon.readUInt32BE(16) !== 180 || touchIcon.readUInt32BE(20) !== 180) {
+    violations.push('Apple touch icon must be a 180 by 180 PNG');
+  }
+}
 const pagesWorkflow = readFileSync(join(root, '.github/workflows/pages.yml'), 'utf8');
 if (!pagesWorkflow.includes('cp -R public/. _site/')) {
   violations.push('Pages workflow does not publish the social and icon assets');
