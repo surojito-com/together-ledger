@@ -121,6 +121,55 @@ test('a verified account without a journey can begin one from Journey settings',
   await expect(page.getByRole('heading', { name: 'Begin a shared journey' })).toBeVisible();
 });
 
+test('a hosted journey can hold a private moment and deliberately share one later', async ({ page }) => {
+  const owner = { id: 'visibility-owner', username: 'visibility-owner', displayName: 'visibility-owner', email: 'owner@example.test', emailVerified: true };
+  const moments = [{
+    id: 'moment-later', journeyId: 'journey-visibility', kind: 'memory', kindLabel: '', occurredOn: '2026-08-30', title: 'Ready when I choose', detail: '', visibility: 'share-later', moneyCents: null, moneyCurrency: '', createdByUserId: owner.id, createdBy: owner.displayName, updatedBy: owner.displayName, shapedByBoth: false, version: 1, createdAt: '2026-08-30T12:00:00.000Z', updatedAt: '2026-08-30T12:00:00.000Z',
+  }];
+  const mutationBodies = [];
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: { journeys: [{ id: 'journey-visibility' }] } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/journey-visibility/snapshot', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: {
+      journey: { id: 'journey-visibility', name: 'A private shared journey', location: '', startDate: '', startDateStatus: 'unknown', endDate: '', endDateStatus: 'forever', budgetCents: 0, version: 1, role: 'owner', createdAt: '2026-08-30T11:00:00.000Z', updatedAt: '2026-08-30T12:00:00.000Z' },
+      members: [{ id: owner.id, displayName: owner.displayName, role: 'owner', joinedAt: '2026-08-30T11:00:00.000Z' }], invitations: [], expenses: [], moments, concerns: [], milestones: [],
+      events: [{ id: 'event-1', sequence: 1, actorUserId: owner.id, action: 'journey_created', entityType: 'journey', entityId: 'journey-visibility', summary: 'Created journey', before: null, after: null, previousHash: '', eventHash: '', createdAt: '2026-08-30T11:00:00.000Z' }], eventChainValid: true,
+    } }),
+  }));
+  await page.route(/\/api\/v1\/journeys\/journey-visibility\/moments(?:\/[^/]+)?$/, async (route) => {
+    const body = route.request().postDataJSON();
+    mutationBodies.push(body);
+    if (route.request().method() === 'POST') {
+      moments.push({ ...body, id: 'moment-private', journeyId: 'journey-visibility', createdByUserId: owner.id, createdBy: owner.displayName, updatedBy: owner.displayName, shapedByBoth: false, version: 1, createdAt: '2026-08-30T12:30:00.000Z', updatedAt: '2026-08-30T12:30:00.000Z' });
+      await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ data: { moment: moments.at(-1) } }) });
+      return;
+    }
+    const moment = moments.find((item) => item.id === 'moment-later');
+    Object.assign(moment, body, { version: moment.version + 1 });
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { moment } }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: /Hold a moment/ }).first().click();
+  await expect(page.locator('#moment-visibility-field')).toBeVisible();
+  await expect(page.locator('#moment-visibility-help')).toContainText('Private stays with you');
+  await page.locator('#moment-form [name="visibility"][value="private"]').check();
+  await page.locator('#moment-form [name="title"]').fill('Mine until I decide');
+  await page.getByRole('button', { name: 'Hold this moment' }).click();
+  expect(mutationBodies[0].visibility).toBe('private');
+  await expect(page.locator('.moment-card.private')).toContainText('Mine until I decide');
+
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('.moment-card.share-later').getByRole('button', { name: 'Share now' }).click();
+  await expect.poll(() => mutationBodies.at(-1)?.visibility).toBe('shared-now');
+  await expect(page.locator('.moment-card.shared-now')).toContainText('Ready when I choose');
+  await expect(page.getByRole('button', { name: 'Share now' })).toHaveCount(0);
+});
+
 test('Journey settings keeps creation, joining, and invitation history visible', async ({ page }) => {
   let invitationAccepted = false;
   const owner = { id: 'user-owner', username: 'journey-owner', displayName: 'journey-owner', email: 'owner@example.test', emailVerified: true };

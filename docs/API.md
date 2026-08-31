@@ -33,12 +33,15 @@ All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }
 |---|---|---|
 | POST/PATCH/DELETE | `/journeys/:journeyId/expenses[/expenseId]` | Create, version-check, edit, or tombstone an expense. |
 | POST/PATCH/DELETE | `/journeys/:journeyId/concerns[/concernId]` | Create, version-check, edit, or tombstone a concern. |
+| POST/PATCH/DELETE | `/journeys/:journeyId/moments[/momentId]` | Create or mutate a private, shared-now, or share-later moment with creator-aware authorization. |
 | PATCH | `/journeys/:journeyId/milestones/:key` | Set a bounded action milestone. |
 | GET | `/journeys/:journeyId/events?after=0` | Read the authoritative event stream. |
 
 ## Conflict contract
 
 Mutable resources carry an integer `version`. A client PATCH or DELETE supplies the version it last read. A mismatch returns `409 conflict`. The client refreshes the authoritative snapshot before a person retries; silent last-write-wins is prohibited.
+
+Moment visibility accepts `private`, `shared-now`, or `share-later`. Private and share-later records are returned and mutable only for their creator. Either creator-only state may become shared now; shared-now cannot return to a private state because access already granted cannot be revoked retroactively.
 
 ## Email adapter
 

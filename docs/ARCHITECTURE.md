@@ -38,7 +38,7 @@ The application enforces a maximum of two active members per journey. Journey se
 
 ## Concurrency and synchronization
 
-Journeys, expenses, shared moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot endpoint returns the current journey, members, invitation history, expenses, shared moments, concerns, milestones, and event stream. A shared moment is always visible to both authorized members. The preset list includes promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, things learned, calls requested or received, practical matters, and an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
+Journeys, expenses, moments, and concerns carry integer versions. Edits submit the version last read. A stale write receives `409 conflict`; the UI must refresh instead of silently overwriting another journeyer’s work. The snapshot returns shared-now moments plus private and share-later moments created by the requesting account. Every moment mutation repeats that same authorization inside the transaction, returning `404` instead of revealing a non-shared record to the other journeyer. Private and share-later moments may move between those two creator-only states or become shared now. A shared-now moment cannot return to a private state because prior access cannot be undone. The preset list includes promises, acknowledgments, triggers, missed chances, heart-to-heart talks, memories, feelings, boundaries, repair requests, things learned, calls requested or received, practical matters, and an intentional `other` record whose required short label is chosen by the journeyers and rendered as **Add your own moment** in the interface.
 
 PR#0003 is online-first. Durable offline mutation queues and merge semantics are not claimed.
 
@@ -46,13 +46,13 @@ PR#0003 is online-first. Durable offline mutation queues and merge semantics are
 
 The same PostgreSQL transaction that changes a journey record appends its event. Per-journey advisory locking produces one monotonic sequence. Every event includes the authenticated actor, action, entity, bounded before/after evidence, previous hash, and HMAC hash. PostgreSQL rejects event update and deletion; the only exception is a transaction-local flag used to purge a sole-owner journey during required account deletion.
 
-Expense event snapshots intentionally omit notes, payment-account labels, and references. Concern and shared-moment event snapshots record whether free-text context existed, not its text. This retains an undebatable change trail without duplicating the most sensitive free text indefinitely.
+Private and share-later moments stay outside the shared HMAC event chain. Their creator-only visibility changes are stored in a separate bounded record containing no moment text. Deliberately sharing one appends a privacy-bounded shared event. Expense event snapshots intentionally omit notes, payment-account labels, and references. Concern and shared-moment event snapshots record whether free-text context existed, not its text. This retains an undebatable change trail without duplicating the most sensitive free text indefinitely.
 
 HMAC chaining is tamper-evident, not absolute immutability. A party controlling the database and HMAC secret could forge a chain. Secret isolation, encrypted cross-cloud backups, restricted roles, restore drills, and external evidence are still required.
 
 ## Deletion behavior
 
-Deletion verifies the password and revokes sessions and account tokens. A sole-member journey is purged. For a shared journey, ownership passes to the remaining member, the departing membership is removed, and a privacy-bounded deletion event remains. The deleted user row is pseudonymized so historical actor identifiers do not become dangling personal email records.
+Deletion verifies the password and revokes sessions and account tokens. A sole-member journey is purged. For a shared journey, the departing account's non-shared moments and creator-only visibility records are deleted, ownership passes to the remaining member, the departing membership is removed, and a privacy-bounded deletion event remains. The deleted user row is pseudonymized so historical actor identifiers do not become dangling personal email records.
 
 ## Deployment
 

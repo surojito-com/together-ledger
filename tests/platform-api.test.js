@@ -25,6 +25,7 @@ async function testPlatform({ mailer = new MemoryMailer() } = {}) {
   await pool.query(await readFile(new URL('../server/migrations/004_shared_moments.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/005_make-shared-journeys-more-humane.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/006_expand-shared-moment-vocabulary.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/007_person_specific_moment_visibility.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -256,6 +257,95 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     assert.equal(bSnapshot.statusCode, 200, bSnapshot.body);
     assert.deepEqual(aSnapshot.json().data.moments.map((moment) => moment.title).sort(), bSnapshot.json().data.moments.map((moment) => moment.title).sort());
   });
+});
+
+test('hosted moments enforce private, shared-now, and share-later visibility between two accounts', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  const alice = await register(app, mailer, { email: 'visibility-a@example.test', username: 'visibility-a' });
+  const bob = await register(app, mailer, { email: 'visibility-b@example.test', username: 'visibility-b' });
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
+    payload: { name: 'Visibility proof', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  });
+  const journey = created.json().data.journey;
+  await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'visibility-b@example.test' } });
+  const invitationToken = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'visibility-b@example.test').token;
+  await app.inject({ method: 'POST', url: `/api/v1/invitations/${invitationToken}/accept`, headers: authHeaders(bob) });
+
+  async function createMoment(client, visibility, title) {
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(client),
+      payload: { kind: 'memory', title, detail: `${title} detail`, occurredOn: '2026-08-30', visibility, moneyCents: null, moneyCurrency: '' },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    return response.json().data.moment;
+  }
+
+  const alicePrivate = await createMoment(alice, 'private', 'Only Alice can name this');
+  let aliceLater = await createMoment(alice, 'share-later', 'Alice will share this later');
+  const aliceShared = await createMoment(alice, 'shared-now', 'Both can see this now');
+  const bobPrivate = await createMoment(bob, 'private', 'Only Bob can name this');
+
+  const aliceSnapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
+  const bobSnapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
+  assert.deepEqual(aliceSnapshot.json().data.moments.map((moment) => moment.id).sort(), [alicePrivate.id, aliceLater.id, aliceShared.id].sort());
+  assert.deepEqual(bobSnapshot.json().data.moments.map((moment) => moment.id).sort(), [aliceShared.id, bobPrivate.id].sort());
+  assert.equal(JSON.stringify(bobSnapshot.json().data.events).includes(alicePrivate.title), false);
+  assert.equal(JSON.stringify(bobSnapshot.json().data.events).includes(aliceLater.title), false);
+
+  const deniedEdit = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${alicePrivate.id}`, headers: authHeaders(bob),
+    payload: { ...alicePrivate, title: 'An unauthorized edit' },
+  });
+  assert.equal(deniedEdit.statusCode, 404, deniedEdit.body);
+  const deniedDelete = await app.inject({
+    method: 'DELETE', url: `/api/v1/journeys/${journey.id}/moments/${aliceLater.id}`, headers: authHeaders(bob),
+    payload: { version: aliceLater.version },
+  });
+  assert.equal(deniedDelete.statusCode, 404, deniedDelete.body);
+
+  const cannotUnshare = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${aliceShared.id}`, headers: authHeaders(alice),
+    payload: { ...aliceShared, visibility: 'private' },
+  });
+  assert.equal(cannotUnshare.statusCode, 400, cannotUnshare.body);
+  assert.equal(cannotUnshare.json().error.code, 'invalid_visibility_transition');
+
+  const heldPrivate = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${alicePrivate.id}`, headers: authHeaders(alice),
+    payload: { ...alicePrivate, visibility: 'share-later' },
+  });
+  assert.equal(heldPrivate.statusCode, 200, heldPrivate.body);
+  assert.equal(heldPrivate.json().data.moment.visibility, 'share-later');
+
+  const opened = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${aliceLater.id}`, headers: authHeaders(alice),
+    payload: { ...aliceLater, visibility: 'shared-now' },
+  });
+  assert.equal(opened.statusCode, 200, opened.body);
+  aliceLater = opened.json().data.moment;
+  const bobAfterShare = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: bob.cookie } });
+  assert.ok(bobAfterShare.json().data.moments.some((moment) => moment.id === aliceLater.id));
+  const sharedEvent = bobAfterShare.json().data.events.find((event) => event.action === 'moment_shared' && event.entityId === aliceLater.id);
+  assert.equal(sharedEvent.summary, 'Shared a held moment');
+  assert.deepEqual(sharedEvent.before, { visibility: 'share-later' });
+  assert.deepEqual(sharedEvent.after, { visibility: 'shared-now' });
+  assert.equal(JSON.stringify(sharedEvent).includes(aliceLater.title), false);
+
+  const privateAudit = await pool.query('SELECT action,before_visibility,after_visibility FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2 ORDER BY created_at,id', [journey.id, alice.user.id]);
+  assert.ok(privateAudit.rows.some((event) => event.action === 'moment_added' && event.after_visibility === 'private'));
+  assert.ok(privateAudit.rows.some((event) => event.action === 'visibility_changed' && event.before_visibility === 'share-later' && event.after_visibility === null));
+
+  const deletedBob = await app.inject({
+    method: 'DELETE', url: '/api/v1/account', headers: authHeaders(bob),
+    payload: { password: 'correct horse battery staple', confirmation: 'DELETE' },
+  });
+  assert.equal(deletedBob.statusCode, 204, deletedBob.body);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [bobPrivate.id])).rows[0].count, 0);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM private_moment_events WHERE owner_user_id=$1', [bob.user.id])).rows[0].count, 0);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [aliceShared.id])).rows[0].count, 1);
 });
 
 test('accounts share an authorized journey with conflicts, events, recovery, and deletion', async (t) => {

@@ -7,7 +7,7 @@ Relationship resilience is not the absence of tension. It is the ability to make
 Together Ledger supports that process in three steps:
 
 1. **Hold the moment.** Let people name a promise, memory, feeling, boundary, repair request, something learned, a call requested or received, or a practical matter in their own words.
-2. **Choose visibility with care.** A moment can be marked private, shared now, or share later; browser-only labels are local cues until private hosted authorization exists.
+2. **Choose visibility with care.** A hosted moment can remain private, be shared now, or wait until its creator deliberately shares it; browser-only labels remain local cues.
 3. **Invite conversation.** Offer optional, non-judgmental prompts without scoring people or measuring their relationship.
 
 ## Guardrails

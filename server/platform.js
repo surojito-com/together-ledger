@@ -25,6 +25,7 @@ const CATEGORIES = new Set(['Flights', 'Hotel', 'Restaurants', 'Transportation',
 const STATUSES = new Set(['paid', 'due']);
 const CONCERN_STATUSES = new Set(['open', 'resolved']);
 const MOMENT_KINDS = new Set(['promise', 'acknowledgment', 'trigger', 'missed-chance', 'heart-to-heart', 'memory', 'feeling', 'boundary', 'repair-request', 'learned-something', 'call-me', 'called-you', 'practical-matter', 'other']);
+const MOMENT_VISIBILITIES = new Set(['private', 'shared-now', 'share-later']);
 const MONEY_CURRENCIES = new Set(['', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR']);
 const START_DATE_STATUSES = new Set(['exact', 'unknown']);
 const END_DATE_STATUSES = new Set(['date', 'unsure', 'forever']);
@@ -174,6 +175,7 @@ function publicMoment(row) {
     visibility: row.visibility,
     moneyCents: row.money_cents,
     moneyCurrency: row.money_currency || '',
+    createdByUserId: row.created_by_user_id,
     createdBy: row.created_by_name || 'Journey member',
     updatedBy: row.updated_by_name || row.created_by_name || 'Journey member',
     shapedByBoth: Boolean(row.created_by_user_id && row.updated_by_user_id && row.created_by_user_id !== row.updated_by_user_id),
@@ -202,6 +204,11 @@ function cleanMoment(input, existing = null) {
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new PlatformError(400, 'invalid_input', 'Enter a valid optional money context.');
   const moneyCurrency = String(input.moneyCurrency ?? existing?.moneyCurrency ?? '').trim().toUpperCase();
   if (!MONEY_CURRENCIES.has(moneyCurrency)) throw new PlatformError(400, 'invalid_input', 'Choose a supported optional currency.');
+  const visibility = input.visibility ?? existing?.visibility ?? 'shared-now';
+  if (!MOMENT_VISIBILITIES.has(visibility)) throw new PlatformError(400, 'invalid_input', 'Choose who can see this moment.');
+  if (existing?.visibility === 'shared-now' && visibility !== 'shared-now') {
+    throw new PlatformError(400, 'invalid_visibility_transition', 'A moment already shared cannot become private again. Prior access cannot be undone.');
+  }
   return {
     kind,
     kindLabel,
@@ -210,6 +217,7 @@ function cleanMoment(input, existing = null) {
     detail: String(input.detail ?? existing?.detail ?? '').slice(0, 1200),
     moneyCents,
     moneyCurrency,
+    visibility,
   };
 }
 
@@ -422,6 +430,14 @@ export class PlatformService {
     return { id, ...event, eventHash };
   }
 
+  async appendPrivateMomentEvent(client, { journeyId, momentId, ownerUserId, action, beforeVisibility = null, afterVisibility = null }) {
+    await client.query(
+      `INSERT INTO private_moment_events (id,journey_id,moment_id,owner_user_id,action,before_visibility,after_visibility,created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [randomUUID(), journeyId, momentId, ownerUserId, action, beforeVisibility, afterVisibility, this.now()],
+    );
+  }
+
   async lockJourney(client, journeyId) {
     if (this.config.NODE_ENV !== 'test') await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [journeyId]);
   }
@@ -529,6 +545,8 @@ export class PlatformService {
       const member = await client.query(`SELECT jm.*,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1 AND jm.user_id=$2 FOR UPDATE`, [journeyId, memberUserId]);
       if (!member.rowCount) throw notFound();
       if (member.rows[0].role === 'owner') throw new PlatformError(400, 'invalid_member', 'The journey owner cannot be removed.');
+      await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [journeyId, memberUserId]);
+      await client.query("DELETE FROM journey_moments WHERE journey_id=$1 AND created_by_user_id=$2 AND visibility<>'shared-now'", [journeyId, memberUserId]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_removed', entityType: 'membership', entityId: memberUserId, summary: `Removed journey member: ${member.rows[0].display_name}`, before: { userId: memberUserId, role: member.rows[0].role }, after: null });
       await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, memberUserId]);
     });
@@ -590,12 +608,16 @@ export class PlatformService {
       const id = randomUUID();
       const next = cleanMoment(input);
       const created = await client.query(
-        `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,money_cents,money_currency,created_by_user_id,updated_by_user_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-        [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, next.moneyCurrency, userId, userId],
+        `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,visibility,money_cents,money_currency,created_by_user_id,updated_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.moneyCents, next.moneyCurrency, userId, userId],
       );
       const moment = publicMoment(created.rows[0]);
-      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
+      if (moment.visibility === 'shared-now') {
+        await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
+      } else {
+        await this.appendPrivateMomentEvent(client, { journeyId, momentId: id, ownerUserId: userId, action: 'moment_added', afterVisibility: moment.visibility });
+      }
       return moment;
     });
   }
@@ -604,22 +626,49 @@ export class PlatformService {
     return withTransaction(this.pool, async (client) => {
       await this.requireMember(client, userId, journeyId);
       await this.lockJourney(client, journeyId);
-      const found = await client.query('SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 FOR UPDATE', [momentId, journeyId]);
+      const found = await client.query("SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND (visibility='shared-now' OR created_by_user_id=$3) FOR UPDATE", [momentId, journeyId, userId]);
       if (!found.rowCount) throw notFound();
       const before = publicMoment(found.rows[0]);
       if (Number(input.version) !== before.version) throw new PlatformError(409, 'conflict', 'This moment changed on another device.');
       if (remove) {
+        if (before.visibility !== 'shared-now') {
+          await this.appendPrivateMomentEvent(client, { journeyId, momentId, ownerUserId: userId, action: 'moment_deleted', beforeVisibility: before.visibility });
+        }
         await client.query('DELETE FROM journey_moments WHERE id=$1', [momentId]);
-        await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_deleted', entityType: 'moment', entityId: momentId, summary: `Deleted moment: ${before.title}`, before: auditMoment(before), after: null });
+        if (before.visibility === 'shared-now') {
+          await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_deleted', entityType: 'moment', entityId: momentId, summary: `Deleted moment: ${before.title}`, before: auditMoment(before), after: null });
+        }
         return null;
       }
       const next = cleanMoment(input, before);
       const updated = await client.query(
-        `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,money_cents=$6,money_currency=$7,updated_by_user_id=$8,version=version+1,updated_at=$9 WHERE id=$10 RETURNING *`,
-        [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.moneyCents, next.moneyCurrency, userId, this.now(), momentId],
+        `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,visibility=$6,money_cents=$7,money_currency=$8,updated_by_user_id=$9,version=version+1,updated_at=$10 WHERE id=$11 RETURNING *`,
+        [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.moneyCents, next.moneyCurrency, userId, this.now(), momentId],
       );
       const after = publicMoment(updated.rows[0]);
-      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_updated', entityType: 'moment', entityId: momentId, summary: `Updated moment: ${after.title}`, before: auditMoment(before), after: auditMoment(after) });
+      if (before.visibility !== 'shared-now') {
+        await this.appendPrivateMomentEvent(client, {
+          journeyId,
+          momentId,
+          ownerUserId: userId,
+          action: before.visibility === after.visibility ? 'moment_updated' : 'visibility_changed',
+          beforeVisibility: before.visibility,
+          afterVisibility: after.visibility === 'shared-now' ? null : after.visibility,
+        });
+      }
+      if (after.visibility === 'shared-now') {
+        const newlyShared = before.visibility !== 'shared-now';
+        await this.appendEvent(client, {
+          journeyId,
+          actorUserId: userId,
+          action: newlyShared ? 'moment_shared' : 'moment_updated',
+          entityType: 'moment',
+          entityId: momentId,
+          summary: newlyShared ? 'Shared a held moment' : `Updated moment: ${after.title}`,
+          before: newlyShared ? { visibility: before.visibility } : auditMoment(before),
+          after: newlyShared ? { visibility: 'shared-now' } : auditMoment(after),
+        });
+      }
       return after;
     });
   }
@@ -696,7 +745,8 @@ export class PlatformService {
           FROM journey_moments m
           LEFT JOIN users creator ON creator.id=m.created_by_user_id
           LEFT JOIN users editor ON editor.id=m.updated_by_user_id
-          WHERE m.journey_id=$1 ORDER BY m.occurred_on,m.created_at,m.id`, [journeyId]),
+          WHERE m.journey_id=$1 AND (m.visibility='shared-now' OR m.created_by_user_id=$2)
+          ORDER BY m.occurred_on,m.created_at,m.id`, [journeyId, userId]),
         client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
         client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
         client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
@@ -743,6 +793,8 @@ export class PlatformService {
           await client.query('DELETE FROM journeys WHERE id=$1', [membership.journey_id]);
         } else {
           const successor = others.rows[0].user_id;
+          await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [membership.journey_id, userId]);
+          await client.query("DELETE FROM journey_moments WHERE journey_id=$1 AND created_by_user_id=$2 AND visibility<>'shared-now'", [membership.journey_id, userId]);
           const attributedExpenses = await client.query('SELECT * FROM expenses WHERE journey_id=$1 AND paid_by_user_id=$2 FOR UPDATE', [membership.journey_id, userId]);
           for (const row of attributedExpenses.rows) {
             const before = publicExpense(row);
