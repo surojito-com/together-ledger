@@ -123,7 +123,7 @@ function renderAccountState() {
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
   $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
-  $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. Shared moments, threads, and practical context are recorded by the account service.' : 'Your account is ready. Create a private journey when you are ready to invite another journeyer.';
+  $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. Moment visibility is enforced by the account service; shared threads and practical context remain visible to both journeyers.' : 'Your account is ready. Create a private journey when you are ready to invite another journeyer.';
   $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to your browser-only journey.' : 'Browser-only journeys stay on this device unless you download a backup.';
   $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : accountsAvailable ? 'Browser only' : 'Accounts soon';
   $('#sync-badge').classList.toggle('cloud', signedIn);
@@ -304,9 +304,11 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
     const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by both journeyers</span>' : ''}`;
-    return `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small><button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
+    const shareAction = isCloudJourney(trip) && moment.visibility === 'share-later' ? `<button data-share-moment="${escapeHtml(moment.id)}">Share now</button>` : '';
+    return `<article class="moment-card ${moment.visibility}"><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span></div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small>${shareAction}<button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
   }).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
+  $$('[data-share-moment]').forEach((button) => button.addEventListener('click', () => shareMoment(button.dataset.shareMoment)));
   $$('[data-open-custom-moment]').forEach((button) => button.addEventListener('click', () => {
     if (accountUser && !isCloudJourney(trip)) { openJourney(); return; }
     openMoment('', 'other');
@@ -325,19 +327,21 @@ function updateMomentKindField(form) {
 function openMoment(id = '', initialKind = '') {
   const form = $('#moment-form');
   const moment = state.moments.find((item) => item.id === id);
-  const shared = isCloudJourney();
+  const hosted = isCloudJourney();
   form.reset();
   form.elements.kind.innerHTML = MOMENT_TYPES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
   form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
   form.elements.visibility.value = 'shared-now';
   $('#moment-dialog-title').textContent = moment ? 'Edit this moment' : 'Hold a moment';
   $('#save-moment').textContent = moment ? 'Save moment' : 'Hold this moment';
-  $('#moment-dialog-copy').textContent = shared ? 'This is a shared moment. Both journeyers can see it and return to it with care.' : 'Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.';
-  $('#moment-visibility-help').textContent = shared
-    ? 'Private sync: both authorized journeyers can see hosted moments. Person-specific hosted visibility is not available yet.'
+  $('#moment-dialog-copy').textContent = hosted ? 'Choose whether this stays with you, is shared now, or waits until you are ready.' : 'Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.';
+  $('#moment-visibility-help').textContent = hosted
+    ? moment?.visibility === 'shared-now'
+      ? 'Already shared: both journeyers can see this moment. Prior access cannot be undone.'
+      : 'Private stays with you. Shared now opens it to both journeyers. Share later stays with you until you deliberately share it.'
     : 'Browser only: Private and Share later are local cues, not separate-account privacy controls.';
-  $('#moment-visibility-field').hidden = shared;
-  $$('input[name="visibility"]', form).forEach((input) => { input.disabled = shared; });
+  $('#moment-visibility-field').hidden = false;
+  $$('input[name="visibility"]', form).forEach((input) => { input.disabled = Boolean(hosted && moment?.visibility === 'shared-now' && input.value !== 'shared-now'); });
   if (moment) {
     form.elements.id.value = moment.id; form.elements.kind.value = moment.kind; form.elements.kindLabel.value = moment.kindLabel || ''; form.elements.title.value = moment.title; form.elements.detail.value = moment.detail; form.elements.occurredOn.value = moment.occurredOn; form.elements.visibility.value = moment.visibility; form.elements.money.value = moment.moneyCents == null ? '' : (moment.moneyCents / 100).toFixed(2); form.elements.moneyCurrency.value = moment.moneyCurrency || '';
   } else if (initialKind) {
@@ -346,6 +350,21 @@ function openMoment(id = '', initialKind = '') {
   form.elements.kind.onchange = () => updateMomentKindField(form);
   updateMomentKindField(form);
   $('#moment-dialog').showModal(); form.elements.title.focus({ preventScroll: true });
+}
+
+async function shareMoment(id) {
+  const moment = state.moments.find((item) => item.id === id);
+  const trip = activeTrip(state);
+  if (!moment || !isCloudJourney(trip) || moment.visibility !== 'share-later') return;
+  if (!window.confirm('Share this moment now? Both journeyers will be able to see it, and that access cannot be undone.')) return;
+  try {
+    const payload = { kind: moment.kind, kindLabel: moment.kindLabel || '', title: moment.title, detail: moment.detail, occurredOn: moment.occurredOn, visibility: 'shared-now', moneyCents: moment.moneyCents, moneyCurrency: moment.moneyCurrency || '', version: moment.version };
+    await api.mutate(`/journeys/${trip.id}/moments/${moment.id}`, 'PATCH', payload);
+    await refreshCloudState();
+    showToast('Moment shared with your journeyer.');
+  } catch (error) {
+    showToast(accountMessage(error));
+  }
 }
 
 function currentActor(trip = activeTrip(state)) {
@@ -762,12 +781,12 @@ $('#moment-form').addEventListener('submit', async (event) => {
     const trip = activeTrip(state);
     if (isCloudJourney(trip)) {
       const moneyCents = input.money === '' ? null : Math.round(Number(input.money) * 100);
-      const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, moneyCents, moneyCurrency: input.moneyCurrency || '', ...(before ? { version: before.version } : {}) };
+      const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, visibility: input.visibility, moneyCents, moneyCurrency: input.moneyCurrency || '', ...(before ? { version: before.version } : {}) };
       if (before) await api.mutate(`/journeys/${trip.id}/moments/${before.id}`, 'PATCH', payload);
       else await api.mutate(`/journeys/${trip.id}/moments`, 'POST', payload);
       $('#moment-dialog').close();
       await refreshCloudState();
-      showToast(before ? 'Shared moment updated.' : 'Shared moment held.');
+      showToast(before ? 'Moment updated.' : input.visibility === 'shared-now' ? 'Moment shared.' : 'Moment held with you.');
       return;
     }
     const actorName = currentActor();

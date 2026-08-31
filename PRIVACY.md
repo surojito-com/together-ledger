@@ -12,18 +12,18 @@ After a person creates or signs into a separate account, newly created private j
 
 - normalized email, display name, Argon2id password hash, verification state, and pseudonymized deletion state;
 - hashed session, verification, recovery, and invitation tokens with expirations;
-- journey membership and shared moments, including optional details and money context;
+- journey membership and moments, including their creator, visibility, optional details, and money context;
 - conversations to return to, action milestones, preserved expense records, and server-authoritative events;
 - journey invitation history, including the destination email, sender identity, sent time, expiry, and accepted, pending, revoked, or expired state, visible only to authorized journey members;
 - bounded technical timestamps and optimistic record versions.
 
 Raw passwords and raw database tokens are never stored. Session cookies are HTTP-only, secure in production, same-site, and paired with an origin-bound CSRF value. The authenticated browser may retain a local snapshot cache; anyone with access to an unlocked signed-in device may see it.
 
-Private-sync moments are visible to every authorized member of the journey. Browser-only `private` and `share later` labels are local visibility cues; they are not yet separate-account access controls.
+In private sync, a `private` or `share later` moment is returned only to the account that created it. A `share later` moment becomes visible to both authorized journeyers only after its creator deliberately changes it to `shared now`. A moment that has been shared cannot be made private again because prior access cannot be undone. Browser-only `private` and `share later` labels remain local visibility cues rather than separate-account access controls.
 
 ## Event privacy
 
-The Event Manager is shared journey data. It records bounded evidence of who acted, what kind of action occurred, and when it happened while minimizing repeated free text. Practical or preserved expense event evidence omits notes, payment-account labels, and references, and return-to event evidence does not duplicate the conversation context. Current authorized members can still read the underlying shared records.
+The Event Manager is shared journey data. Private and share-later moments do not enter that shared stream or reveal their existence to the other journeyer. Their creator-only visibility changes are recorded separately without moment text. When a moment is deliberately shared, the shared stream records the transition without copying its title or detail into the visibility event. Practical or preserved expense event evidence omits notes, payment-account labels, and references, and return-to event evidence does not duplicate the conversation context. Current authorized members can still read the underlying shared records.
 
 ## Email
 
@@ -38,7 +38,7 @@ Verification, invitation, and recovery messages are delivered through Resend usi
 
 ## Deletion
 
-Account deletion verifies the current password and revokes active sessions and tokens. Sole-owner journeys are deleted. A shared journey remains with the other journeyer, and ownership transfers if needed. The departing account is pseudonymized; a bounded event records that a member deleted their account without retaining their email.
+Account deletion verifies the current password and revokes active sessions and tokens. Sole-owner journeys are deleted. A shared journey remains with the other journeyer, and ownership transfers if needed. Private and share-later moments belonging to the departing account are deleted rather than exposed or stranded. The departing account is pseudonymized; a bounded event records that a member deleted their account without retaining their email.
 
 Encrypted backups may retain deleted data until their documented retention window expires. Backups are for disaster recovery, not live querying, and restored systems must reapply deletions according to the operations procedure.
 
