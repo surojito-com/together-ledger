@@ -37,6 +37,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/017_keep-one-removed-photo-per-moment.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/018_allow-ninety-nine-paid-journey-places.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/019_let-moments-carry-their-own-atmosphere.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/020_let-entitlements-hold-ninety-nine-places.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/021_let-unpaid-capacity-rest-without-losing-history.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -600,7 +602,7 @@ test('synthetic group mode reserves independent places without advertising its c
   }
   let snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
   assert.equal(snapshot.invitations.filter((invitation) => invitation.status === 'pending').length, 2);
-  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, mode: 'test-groups' });
+  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, mode: 'test-groups', unpaidCapacityMode: 'read-only', restingMemberIds: [] });
   assert.equal(Object.hasOwn(snapshot.capacity, 'limit'), false);
 
   for (const client of [second, third]) {
@@ -630,7 +632,7 @@ test('synthetic group mode reserves independent places without advertising its c
   assert.equal(full.statusCode, 409, full.body);
   assert.equal(full.json().error.code, 'journey_full');
   snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
-  assert.deepEqual(snapshot.capacity, { peopleHere: 3, openInvitations: 98, canInvite: false, mode: 'test-groups' });
+  assert.deepEqual(snapshot.capacity, { peopleHere: 3, openInvitations: 98, canInvite: false, mode: 'test-groups', unpaidCapacityMode: 'read-only', restingMemberIds: [] });
 });
 
 test('public service routes expose health and only the intended static app', async (t) => {
@@ -681,4 +683,70 @@ test('email outages preserve account recovery but revoke undelivered invitations
   assert.equal(invitation.json().error.code, 'delivery_unavailable');
   const stored = await pool.query('SELECT revoked_at FROM invitations WHERE journey_id=$1', [journeyId]);
   assert.ok(stored.rows[0].revoked_at);
+});
+
+test('unpaid capacity rests the journeyers beyond what is covered, and never the owner', async (t) => {
+  const { app, mailer, pool } = await testPlatform({ configOverrides: { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' } });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const owner = await register(app, mailer, { email: 'rest-owner@example.test', username: 'rest-owner' });
+  const second = await register(app, mailer, { email: 'rest-second@example.test', username: 'rest-second' });
+  const third = await register(app, mailer, { email: 'rest-third@example.test', username: 'rest-third' });
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
+    payload: { name: 'A journey that outgrew its payment', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
+  });
+  const journeyId = created.json().data.journey.id;
+
+  // Two journeyers joined while capacity was paid for. The payment has since lapsed, so the
+  // journey now holds three people against the two that are included.
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, second.user.id, 'member', '2026-09-08T10:00:00.000Z']);
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, third.user.id, 'member', '2026-09-09T10:00:00.000Z']);
+
+  const capacity = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
+  assert.equal(capacity.peopleHere, 3);
+  assert.equal(capacity.unpaidCapacityMode, 'read-only');
+  // One person beyond the included two, and by default it is the one who joined most recently.
+  assert.deepEqual(capacity.restingMemberIds, [third.user.id]);
+  assert.ok(!capacity.restingMemberIds.includes(owner.user.id), 'the owner holds the journey and never rests');
+
+  // Resting pauses changes, and says so without treating the person as forbidden.
+  const blocked = await app.inject({
+    method: 'POST', url: `/api/v1/journeys/${journeyId}/moments`, headers: authHeaders(third),
+    payload: { kind: 'memory', kindLabel: '', title: 'Something I wanted to add', detail: '', occurredOn: '2026-09-10', visibility: 'private', theme: '', moneyCents: null, moneyCurrency: '', locations: [] },
+  });
+  assert.equal(blocked.statusCode, 409, blocked.body);
+  assert.equal(blocked.json().error.code, 'capacity_resting');
+  assert.match(blocked.json().error.message, /Nothing has been removed/);
+
+  // Reading is untouched: resting is not removal, and history stays visible.
+  const stillReads = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: third.cookie } });
+  assert.equal(stillReads.statusCode, 200, stillReads.body);
+
+  // A journeyer who is covered is unaffected.
+  const allowed = await app.inject({
+    method: 'POST', url: `/api/v1/journeys/${journeyId}/moments`, headers: authHeaders(second),
+    payload: { kind: 'memory', kindLabel: '', title: 'Still able to hold this', detail: '', occurredOn: '2026-09-10', visibility: 'private', theme: '', moneyCents: null, moneyCurrency: '', locations: [] },
+  });
+  assert.equal(allowed.statusCode, 201, allowed.body);
+});
+
+test('the owner chooses who rests, overriding the order people joined in', async (t) => {
+  const { app, mailer, pool } = await testPlatform({ configOverrides: { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' } });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const owner = await register(app, mailer, { email: 'choose-owner@example.test', username: 'choose-owner' });
+  const second = await register(app, mailer, { email: 'choose-second@example.test', username: 'choose-second' });
+  const third = await register(app, mailer, { email: 'choose-third@example.test', username: 'choose-third' });
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
+    payload: { name: 'A journey with a choice to make', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
+  });
+  const journeyId = created.json().data.journey.id;
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, second.user.id, 'member', '2026-09-08T10:00:00.000Z']);
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, third.user.id, 'member', '2026-09-09T10:00:00.000Z']);
+
+  // The owner puts the earlier joiner first in the queue to rest. Joining order no longer decides.
+  await pool.query('UPDATE journey_members SET rest_order=1 WHERE journey_id=$1 AND user_id=$2', [journeyId, second.user.id]);
+
+  const capacity = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
+  assert.deepEqual(capacity.restingMemberIds, [second.user.id]);
 });

@@ -434,7 +434,9 @@ export class PlatformService {
     });
   }
 
-  async requireMember(client, userId, journeyId, { owner = false } = {}) {
+  // Reading is the exception, and it is passed explicitly: every other caller is a mutation,
+  // so a resting journeyer is refused by default rather than by remembering to ask.
+  async requireMember(client, userId, journeyId, { owner = false, reading = false } = {}) {
     const membership = await client.query(
       `SELECT jm.role,j.* FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id
        WHERE jm.journey_id=$1 AND jm.user_id=$2`,
@@ -442,6 +444,13 @@ export class PlatformService {
     );
     if (!membership.rowCount) throw forbidden();
     if (owner && membership.rows[0].role !== 'owner') throw forbidden();
+    if (!reading) {
+      const capacity = await this.capacityFor(client, journeyId);
+      if (capacity.restingMemberIds.includes(userId)) {
+        // Not forbidden: this is a bounded, recoverable state, and nothing of theirs is gone.
+        throw new PlatformError(409, 'capacity_resting', 'This journey\u2019s paid capacity is unpaid, so changes are resting. Nothing has been removed, and the journey owner can restore it.');
+      }
+    }
     return membership.rows[0];
   }
 
@@ -501,11 +510,30 @@ export class PlatformService {
     }
     const occupiedCapacity = peopleHere + openInvitations;
     const paymentAllowsInvitation = this.config.journeyCapacityMode !== 'billing' || entitlementState !== 'grace';
+
+    // When paid capacity lapses, nobody is removed. The journeyers beyond what is covered rest
+    // instead, and the owner — who holds the journey and the payment — never does.
+    const overflow = Math.max(0, peopleHere - availableCapacity);
+    const journey = await client.query('SELECT owner_user_id, unpaid_capacity_mode FROM journeys WHERE id=$1', [journeyId]);
+    let restingMemberIds = [];
+    if (overflow > 0 && journey.rows[0]) {
+      const resting = await client.query(
+        `SELECT user_id FROM journey_members
+         WHERE journey_id=$1 AND user_id<>$2
+         ORDER BY rest_order ASC NULLS LAST, joined_at DESC
+         LIMIT $3`,
+        [journeyId, journey.rows[0].owner_user_id, overflow],
+      );
+      restingMemberIds = resting.rows.map((row) => row.user_id);
+    }
+
     return {
       peopleHere,
       openInvitations,
       canInvite: paymentAllowsInvitation && occupiedCapacity < availableCapacity,
       mode: this.config.journeyCapacityMode,
+      unpaidCapacityMode: journey.rows[0]?.unpaid_capacity_mode || 'read-only',
+      restingMemberIds,
     };
   }
 
@@ -914,7 +942,7 @@ export class PlatformService {
     const client = await this.pool.connect();
     try {
       if (this.config.NODE_ENV !== 'test') await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const journey = await this.requireMember(client, userId, journeyId);
+      const journey = await this.requireMember(client, userId, journeyId, { reading: true });
       const [members, invitations, expenses, moments, images, concerns, milestones, events, capacity] = await Promise.all([
         client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1 ORDER BY jm.joined_at,jm.user_id`, [journeyId]),
         client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
