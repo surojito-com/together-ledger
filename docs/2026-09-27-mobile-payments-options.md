@@ -28,12 +28,14 @@ this page.
   through In-App Purchase. Paid capacity for another person in a journey is a digital feature.
 - **Apple (3.1.3(b), multiplatform services):** an app may honour something bought on the web
   only if the same thing is also available as an In-App Purchase inside the app.
-- **Apple, United States storefront:** since the 2025 *Epic v. Apple* enforcement order, US apps
-  may link out to a web purchase. The terms, including whether Apple may charge a commission, have
-  been in litigation. Check the current rule before relying on it.
+- **Apple, United States storefront:** the guidelines now exempt the US storefront from the ban on
+  "buttons, external links, or other calls to action" that point to other ways to buy (checked
+  27 September 2026). Whether Apple may charge a commission on linked purchases has been in
+  litigation. Check the current rule before relying on it.
 - **Google Play (Payments policy):** digital goods are sold through Play Billing. US-only
-  alternative-billing and link-out programs followed *Epic v. Google*. They have their own
-  enrolment and fees.
+  alternative-billing and external-link programs followed *Epic v. Google*, launching in December
+  2025. They have their own enrolment and fees. Secondary sources report that Google begins
+  charging those fees on 1 October 2026; confirm in Play Console Help.
 - **Both stores:** subscriptions can be cancelled only where they were bought. The web billing
   page already says so: "Apple App Store and future Google Play purchases remain with those stores."
 
