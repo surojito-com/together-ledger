@@ -1,6 +1,7 @@
-import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { renderPrivacyPage } from './render-privacy-page.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(root, '_site');
@@ -27,6 +28,8 @@ for (const relativePath of publicFiles) {
   cpSync(join(root, relativePath), join(output, relativePath));
 }
 cpSync(join(root, 'public'), output, { recursive: true });
+// Served at /privacy (html_handling resolves privacy.html) — the URL both stores ask for.
+writeFileSync(join(output, 'privacy.html'), renderPrivacyPage(readFileSync(join(root, 'PRIVACY.md'), 'utf8')));
 writeFileSync(join(output, 'release.json'), `${JSON.stringify({ revision: releaseRevision }, null, 2)}\n`);
 
-console.log(`Assembled ${publicFiles.length} app files, public assets, and release marker ${releaseRevision} in _site/.`);
+console.log(`Assembled ${publicFiles.length} app files, public assets, the privacy page, and release marker ${releaseRevision} in _site/.`);
