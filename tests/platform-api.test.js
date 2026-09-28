@@ -53,7 +53,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   });
   const platform = new PlatformService({ pool, config, mailer, now });
   const app = await buildApp({ platform, config, ...(billing ? { billing } : {}) });
-  return { app, mailer, pool };
+  return { app, mailer, pool, platform };
 }
 
 function cookieFrom(response) {
@@ -590,6 +590,20 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'ownership_transferred'));
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'member_deleted_account'));
   assert.equal(JSON.stringify(bobAfterDeletion.json().data.events).includes('Alice'), false);
+});
+
+test('a deletion can be applied again to a database restored from before it', async (t) => {
+  const { app, mailer, pool, platform } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const carol = await register(app, mailer, { email: 'carol@example.test', username: 'carol-restored' });
+  assert.equal(await platform.eraseAccount(carol.user.id), true);
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'carol@example.test', password: 'correct horse battery staple' } });
+  assert.equal(login.statusCode, 401, login.body);
+  const row = await pool.query('SELECT email_normalized,display_name,deleted_at FROM users WHERE id=$1', [carol.user.id]);
+  assert.equal(row.rows[0].email_normalized, `deleted-${carol.user.id}@invalid.local`);
+  assert.equal(row.rows[0].display_name, 'Deleted account');
+  assert.ok(row.rows[0].deleted_at);
+  assert.equal(await platform.eraseAccount(carol.user.id), false, 're-applying the same list twice is harmless');
 });
 
 test('synthetic group mode reserves independent places without advertising its ceiling', async (t) => {

@@ -1312,6 +1312,16 @@ export class PlatformService {
   async deleteAccount(userId, password) {
     const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
     if (!user.rowCount || !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    await this.eraseAccount(userId);
+  }
+
+  // Everything account deletion does once the password is confirmed. It stands apart so a database
+  // restored from backup can have the deletions made after that backup applied again before it
+  // serves anyone (server/reapply-account-deletions.js, docs/OPERATIONS.md). Returns false when the
+  // account was already deleted, so re-applying the same list twice is harmless.
+  async eraseAccount(userId) {
+    const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    if (!user.rowCount) return false;
     await withTransaction(this.pool, async (client) => {
       const memberships = await client.query('SELECT jm.*,j.owner_user_id FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.user_id=$1', [userId]);
       for (const membership of memberships.rows) {
@@ -1353,5 +1363,6 @@ export class PlatformService {
         [`deleted-${userId}@invalid.local`, `deleted-${userId.slice(0, 8)}`, 'Deleted account', 'deleted', this.now(), userId],
       );
     });
+    return true;
   }
 }

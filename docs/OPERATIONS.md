@@ -35,8 +35,8 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 - `SESSION_SECRET` and `AUDIT_HMAC_KEY` are different random secrets held in AWS Secrets Manager and GCP Secret Manager, never environment files or Git.
 - Production `SMTP_URL` uses the authenticated Resend SMTPS relay. A standby relay path must be configured and independently tested before it is relied on during recovery.
 - PostgreSQL accepts private-network traffic only. The application role owns application tables; humans use separate audited administrative roles.
-- Backups are encrypted, copied to the other cloud, retained according to the deletion policy, and restored quarterly into an isolated database.
-- Application logs exclude cookies, authorization headers, passwords, raw tokens, expense notes, account labels, and concern details.
+- Backups are encrypted, copied to the other cloud, kept for 30 days and then deleted (see "Backup retention" below), and restored quarterly into an isolated database.
+- Application logs exclude cookies, authorization headers, passwords, raw tokens, expense notes, account labels, and concern details. Not yet true of invitation links: the invitation token is part of the accept address, and request addresses are logged (issue #208).
 
 ## Production bundle (no cloud action yet)
 
@@ -83,6 +83,33 @@ The one-off service first makes and checksum-verifies the local encrypted dump, 
 
 The uploader's successful cloud response is deployment evidence, but a human GCP owner should still periodically check the private bucket and perform an isolated restore drill. Do not upload the private age identity.
 
+### Backup retention
+
+PRIVACY.md tells people that backups are kept for 30 days and then deleted. Two things make that true, and both must stay in place:
+
+- **On the AWS host,** `scripts/backup-postgres.sh` deletes local encrypted backups and their checksum files once they are 30 days old. It prunes only after a new backup has been written and checksummed, so a failing job never removes the last good copy.
+- **In the GCP bucket,** the uploader can only create objects; it cannot delete them, by design. Deletion is a bucket lifecycle rule that a GCP owner sets once: delete objects whose age is 30 days. For example:
+
+```sh
+printf '%s\n' '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > lifecycle.json
+gcloud storage buckets update gs://replace-with-private-bucket --lifecycle-file=lifecycle.json
+gcloud storage buckets describe gs://replace-with-private-bucket --format="default(lifecycle_config)"
+```
+
+Lifecycle deletion runs asynchronously and can take up to a day after an object qualifies, so a backup can outlast 30 days by about a day. If the bucket has object versioning or a retention lock, deleted backups are not actually gone; keep both off for this bucket, or the policy's promise is false. Check the rule is still present whenever the bucket is reviewed.
+
+### Re-applying deletions after a restore
+
+A backup taken before someone deleted their account still contains that account. A restored database must not serve anyone until those deletions are applied again.
+
+Each account deletion writes one application log line, `account deleted`, carrying the account's internal id (never its email). Before promoting a restored database:
+
+1. Note the UTC time the chosen backup was taken (it is in the file name).
+2. Collect the id of every account deleted after that time. If the previous database is still readable, `SELECT id FROM users WHERE deleted_at > '<backup time>'` lists them. Otherwise take the `deletedAccountId` values from `account deleted` log lines after that time.
+3. Reconcile billing first (`npm run reconcile:stripe`, see docs/STRIPE_RECONCILIATION.md), so restored billing rows match Stripe.
+4. Against the restored database, from the production image, with `DATABASE_URL` pointed at the restored database rather than the live one: `docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml run --rm -e DATABASE_URL=<restored database URL> app node server/reapply-account-deletions.js <id> [<id> ...]`. It takes the same steps as in-app deletion, skips accounts that are already deleted, and exits non-zero if any account could not be deleted (for example, a shared journey that still needs a new owner in the restored state). Resolve each one before promotion.
+5. Record in the restore log that deletions were re-applied, and how many, without the ids themselves.
+
 ## Release gate
 
 1. `npm ci` and `npm run check` pass from a clean checkout.
@@ -119,7 +146,7 @@ Use this procedure only after a deployed release. It does not replace the incide
 2. If the issue is limited to the app or proxy, keep PostgreSQL running and return the application image to the last reviewed digest in the root-owned environment file.
 3. Run `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d` from the reviewed checkout.
 4. Verify `/healthz` and `/readyz` privately first. Then test one synthetic account flow; never use a real user's account as a probe.
-5. If database integrity is in doubt, freeze writes and stop. Choose the newest validated encrypted logical backup, restore it only into an isolated database, verify HMAC event chains and synthetic checks, then make a separate promotion decision.
+5. If database integrity is in doubt, freeze writes and stop. Choose the newest validated encrypted logical backup, restore it only into an isolated database, verify HMAC event chains and synthetic checks, re-apply account deletions made since that backup (see "Re-applying deletions after a restore"), then make a separate promotion decision.
 6. Record the outcome in the product journey document without secrets, IP addresses, account identifiers, or user data.
 
 ## App Worker delivery and rollback
@@ -145,4 +172,4 @@ Choose the prior Worker version by its recorded reviewed-main message and use it
 
 ## Incident rule
 
-Never promote GCP merely because one health check fails. Confirm the AWS database state, freeze writes, select the newest valid cross-cloud backup, verify the HMAC event chains, restore, smoke test, then change DNS. Record every failover and restore in the product journey document without including secrets or user data.
+Never promote GCP merely because one health check fails. Confirm the AWS database state, freeze writes, select the newest valid cross-cloud backup, verify the HMAC event chains, restore, re-apply account deletions made since that backup, smoke test, then change DNS. Record every failover and restore in the product journey document without including secrets or user data.

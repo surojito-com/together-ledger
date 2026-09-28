@@ -217,6 +217,9 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
     await platform.deleteAccount(request.auth.userId, request.body?.password);
+    // The account id, never the email: this line is what lets a restore from backup re-apply the
+    // deletion (docs/OPERATIONS.md, "Re-applying deletions after a restore").
+    request.log.info({ deletedAccountId: request.auth.userId }, 'account deleted');
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.code(204).send();
   });

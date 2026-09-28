@@ -45,6 +45,8 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(backup, /production Compose file is missing/);
   assert.match(backup, /mkfifo/);
   assert.match(backup, /wait "\$dump_pid"/);
+  assert.match(backup, /-mtime \+29 -delete/, 'local backups are kept for thirty days, as PRIVACY.md says');
+  assert.ok(backup.indexOf('-delete') > backup.indexOf('sha256sum "$target"'), 'pruning runs only after a new backup is written');
   assert.match(backupRunner, /GCP_BACKUP_BUCKET/);
   assert.match(backupRunner, /GOOGLE_APPLICATION_CREDENTIALS/);
   assert.match(backupRunner, /GCP_BACKUP_SERVICE_ACCOUNT/);
