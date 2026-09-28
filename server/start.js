@@ -2,6 +2,7 @@ import { buildApp } from './app.js';
 import { createBillingService } from './billing.js';
 import { loadConfig } from './config.js';
 import { createPool, runMigrations } from './db.js';
+import { loggerOptions } from './log-options.js';
 import { ConsoleBlockedMailer, SmtpMailer } from './mailer.js';
 import { PlatformService } from './platform.js';
 
@@ -29,7 +30,7 @@ const app = await buildApp({
   platform,
   billing,
   config,
-  logger: { redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers.stripe-signature', 'req.body.password', 'req.body.token', 'req.body.refreshToken'] },
+  logger: loggerOptions,
 });
 
 async function shutdown(signal) {

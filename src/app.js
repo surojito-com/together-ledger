@@ -1784,7 +1784,7 @@ async function initializeAccount() {
       refreshBillingState().catch((error) => showStatus(accountMessage(error)));
       showLedgerSurface({ persist: true });
       if (params.has('invite')) {
-        await api.mutate(`/invitations/${encodeURIComponent(params.get('invite'))}/accept`, 'POST', {});
+        await api.acceptInvitation(params.get('invite'));
         await refreshCloudState({ announce: true });
       }
     } else if (params.has('invite')) {
