@@ -93,10 +93,11 @@ PRIVACY.md tells people that backups are kept for 30 days and then deleted. Two 
 ```sh
 printf '%s\n' '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > lifecycle.json
 gcloud storage buckets update gs://replace-with-private-bucket --lifecycle-file=lifecycle.json
-gcloud storage buckets describe gs://replace-with-private-bucket --format="default(lifecycle_config)"
+gcloud storage buckets update gs://replace-with-private-bucket --clear-soft-delete
+gcloud storage buckets describe gs://replace-with-private-bucket --format="default(lifecycle_config,soft_delete_policy,versioning,retention_policy)"
 ```
 
-Lifecycle deletion runs asynchronously and can take up to a day after an object qualifies, so a backup can outlast 30 days by about a day. If the bucket has object versioning or a retention lock, deleted backups are not actually gone; keep both off for this bucket, or the policy's promise is false. Check the rule is still present whenever the bucket is reviewed.
+Lifecycle deletion runs asynchronously and can take up to a day after an object qualifies, so a backup can outlast 30 days by about a day. Three bucket settings would keep deleted backups recoverable and make the policy's promise false, so all three stay off: object versioning, a retention policy or lock, and soft delete. Cloud Storage turns soft delete on by default with a 7-day window, so new buckets need it cleared explicitly. Check the rule is still present whenever the bucket is reviewed.
 
 ### Re-applying deletions after a restore
 
