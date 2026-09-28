@@ -34,6 +34,13 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+    # Request logs carry network addresses. PRIVACY.md says they rotate and older entries are
+    # overwritten; this is what makes that true, whatever the host's Docker defaults are.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2.10-alpine
