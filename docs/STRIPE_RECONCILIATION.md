@@ -16,7 +16,7 @@ Run manually:
 npm run reconcile:stripe
 ```
 
-For the future scheduler invocation:
+For the scheduler invocation:
 
 ```sh
 npm run reconcile:stripe -- --scheduled
@@ -26,9 +26,21 @@ Exit status `0` means the run completed with no known duplicate tagged Customers
 
 ## Schedule and ownership
 
-Before live billing, the primary platform operator should run reconciliation every six hours and once after any webhook outage or Stripe incident. Alert immediately on exit status `1` or `2`, a run older than eight hours, overlapping-run refusal, any failed webhook row, any duplicate tagged Customer, or repeated entitlement drift.
+The primary platform operator runs reconciliation every six hours and once after any webhook outage or Stripe incident, via the systemd timers in `ops/together-ledger-stripe-reconciliation*`. Install them on the production host with:
 
-The scheduler must inject protected environment values through the same secret path as the private service. Do not place credentials in a unit file, crontab, shell history, GitHub Action, or repository environment file. Scheduling is not active merely because this command exists.
+```sh
+sudo ./scripts/install-production-stripe-reconciliation-timers.sh
+```
+
+That installs two independent timers, each wired to alert through `together-ledger-alert@.service`:
+
+- `together-ledger-stripe-reconciliation.timer` runs the reconciliation itself every six hours (`ops/together-ledger-stripe-reconciliation.service`, wrapping `scripts/run-production-stripe-reconciliation.sh`). A non-zero exit — status `1` or `2` — triggers an alert.
+- `together-ledger-stripe-reconciliation-freshness.timer` checks every hour, independent of whether reconciliation itself is currently succeeding, that a run has completed successfully within the last eight hours (`scripts/check-stripe-reconciliation-freshness.mjs`, wrapped by `scripts/check-production-stripe-reconciliation-freshness.sh`). This is what catches the timer having stopped firing entirely, not just a run that failed.
+- Overlapping-run refusal is already an exit-status-`1` failure (the advisory lock), so it alerts through the same path with no separate wiring.
+
+The installer writes a placeholder `/etc/together-ledger/alert-webhook.env` (root-owned, mode 600) the first time it runs. Set `ALERT_WEBHOOK_URL` there to your team's actual on-call endpoint (a Slack incoming webhook, PagerDuty Events API URL, or any endpoint accepting a JSON POST) before relying on the alerts — `together-ledger-alert@.service` only sends the failed unit's name and a timestamp, never error text, credentials, or provider identifiers. Run one manual `npm run reconcile:stripe` pass and confirm it succeeds before enabling the timers.
+
+The scheduler must inject protected environment values (`TOGETHER_ENV_FILE`) through the same secret path as the private service. Do not place credentials in a unit file, crontab, shell history, GitHub Action, or repository environment file.
 
 ## What a run does
 

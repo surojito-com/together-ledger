@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Together Ledger Stripe reconciliation every six hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=together-ledger-stripe-reconciliation.service
+
+[Install]
+WantedBy=timers.target
