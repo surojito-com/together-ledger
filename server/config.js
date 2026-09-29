@@ -14,6 +14,8 @@ const ConfigSchema = z.object({
   AUDIT_HMAC_KEY: z.string().min(32).default('development-audit-secret-change-me-00001'),
   SESSION_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
   TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
+  ACCESS_TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
+  REFRESH_TOKEN_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   COOKIE_SECURE: z.enum(['true', 'false']).default('false'),
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
   SMTP_URL: z.string().default(''),

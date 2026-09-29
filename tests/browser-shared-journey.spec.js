@@ -42,16 +42,16 @@ test('the public welcome earns the first browser-only moment without making a pr
   await page.locator('#moment-form [name="title"]').fill('We made room to listen');
   await page.locator('#moment-form [name="detail"]').fill('We paused before trying to solve anything.');
   await page.locator('#moment-form [name="visibility"][value="share-later"]').check();
-  await expect(page.locator('#moment-theme-options input')).toHaveCount(7);
-  await page.getByLabel('Rosé Pine', { exact: true }).check();
-  await expect(page.locator('#moment-theme-preview')).toHaveAttribute('data-moment-theme', 'rose-pine');
+  await expect(page.locator('#moment-theme-options input')).toHaveCount(5);
+  await page.getByLabel('Flexoki', { exact: true }).check();
+  await expect(page.locator('#moment-theme-preview')).toHaveAttribute('data-moment-theme', 'flexoki');
   await page.locator('#moment-form [name="money"]').fill('19.95');
   await page.getByRole('button', { name: 'Hold this moment' }).click();
 
   await expect(page.locator('#moment-timeline')).toContainText('We made room to listen');
   await expect(page.locator('.trip-bar')).toBeVisible();
-  await expect(page.locator('#moment-timeline')).toContainText('share later');
-  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="rose-pine"]')).toContainText('Rosé Pine theme');
+  await expect(page.locator('#moment-timeline')).toContainText('Share later');
+  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]')).toContainText("Flexoki theme");
   await expect(page.locator('#moment-timeline')).toContainText('19.95 is held here as context, not a score.');
   await expect(page.locator('#moment-timeline')).toContainText('Practical money context');
   await expect(page.locator('#guidance')).toBeVisible();
@@ -62,15 +62,15 @@ test('the public welcome earns the first browser-only moment without making a pr
 
   await page.locator('#actor-select').selectOption('Your journeyer');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await expect(page.getByLabel('Rosé Pine', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Flexoki', { exact: true })).toBeChecked();
   await page.locator('#moment-form [name="detail"]').fill('We both returned to this moment with care.');
   await page.getByRole('button', { name: 'Save moment' }).click();
-  await expect(page.locator('.moment-collaboration-badge')).toHaveText('Shaped by both journeyers');
+  await expect(page.locator('.moment-collaboration-badge')).toHaveText('Shaped by more than one journeyer');
 
   const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
   expect(accessibilityScan.violations).toEqual([]);
   await page.reload();
-  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="rose-pine"]')).toContainText('We made room to listen');
+  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]')).toContainText('We made room to listen');
 });
 
 test('the browser-only starter holds the requested everyday moment kinds', async ({ page }) => {
@@ -185,8 +185,12 @@ test('a hosted journey can hold a private moment and deliberately share one late
   expect(mutationBodies[0].visibility).toBe('private');
   await expect(page.locator('.moment-card.private')).toContainText('Mine until I decide');
 
-  page.once('dialog', (dialog) => dialog.accept());
   await page.locator('.moment-card.share-later').getByRole('button', { name: 'Share now' }).click();
+  // The consequence is stated, and the confirming button names the act rather than saying OK.
+  await expect(page.locator('#consequence-dialog')).toBeVisible();
+  await expect(page.locator('#consequence-dialog-consequence')).toContainText('including anyone who joins later');
+  await expect(page.locator('#consequence-dialog-cancel')).toBeFocused();
+  await page.locator('#consequence-dialog').getByRole('button', { name: 'Share this moment' }).click();
   await expect.poll(() => mutationBodies.at(-1)?.visibility).toBe('shared-now');
   await expect(page.locator('.moment-card.shared-now')).toContainText('Ready when I choose');
   await expect(page.getByRole('button', { name: 'Share now' })).toHaveCount(0);
@@ -222,8 +226,9 @@ test('Journey settings keeps creation, joining, and invitation history visible',
   await expect(page.locator('#member-list')).toContainText('Created by journey-owner');
   await expect(page.locator('#invitation-list')).toContainText('Invitation sent to invited@example.test');
   await expect(page.locator('.invitation-status')).toHaveText('Pending');
-  await expect(page.locator('#invite-form')).toContainText('short-lived, single-use invitation');
-  await expect(page.locator('#invite-form')).toContainText('without seeing the raw link token');
+  await expect(page.locator('#invite-form')).toContainText('Everyone already in this journey has to agree');
+  await expect(page.locator('#invite-form')).toContainText('they learn nothing about the journey');
+  await expect(page.locator('#invitation-list')).toContainText('Time left to join');
 
   invitationAccepted = true;
   await page.reload();
@@ -261,7 +266,7 @@ test('Journey settings welcomes a group without exposing an internal ceiling', a
 
   await page.goto('/');
   await page.getByRole('button', { name: 'Journey settings' }).click();
-  await expect(page.locator('#sharing-copy')).toHaveText('3 people are here. There is room to add another person. Each person signs in separately.');
+  await expect(page.locator('#sharing-copy')).toHaveText('3 people are here. There is room to add another person, and everybody here has to agree to them. Each person signs in separately.');
   await expect(page.locator('#invite-form')).toBeVisible();
   await expect(page.locator('#member-list')).toContainText('third-person joined the journey');
   await expect(page.getByRole('button', { name: 'Make owner' })).toHaveCount(2);
@@ -269,7 +274,98 @@ test('Journey settings welcomes a group without exposing an internal ceiling', a
   await expect(page.locator('#sharing-settings')).not.toContainText(/99|seat|license/i);
   const accessibilityScan = await new AxeBuilder({ page }).include('#sharing-settings').analyze();
   expect(accessibilityScan.violations).toEqual([]);
-  page.once('dialog', (dialog) => dialog.accept());
+
+  // Membership is where someone acts on another person, so its controls carry the same
+  // target floor as the rest of the product rather than shrinking because they sit in a list.
+  const undersized = await page.evaluate(() => [...document.querySelectorAll('#sharing-settings button, #sharing-settings input, #sharing-settings select')]
+    .filter((element) => element.offsetParent !== null && element.getBoundingClientRect().height < 44)
+    .map((element) => element.textContent.trim() || element.id || element.type));
+  expect(undersized).toEqual([]);
+
   await page.locator('.journey-record-row').filter({ hasText: 'second-person' }).getByRole('button', { name: 'Make owner' }).click();
+  await page.locator('#consequence-dialog').getByRole('button', { name: 'Transfer ownership' }).click();
   await expect.poll(() => ownershipRequest).toEqual({ userId: 'group-two' });
+});
+
+test('A proposal names who was asked, what they decided, and when', async ({ page }) => {
+  let decisionRequest = null;
+  const owner = { id: 'consent-owner', username: 'consent-owner', displayName: 'consent-owner', email: 'owner@example.test', emailVerified: true };
+  const members = [
+    { id: owner.id, displayName: 'consent-owner', role: 'owner', joinedAt: '2026-09-07T14:00:00.000Z' },
+    { id: 'consent-two', displayName: 'second-person', role: 'member', joinedAt: '2026-09-07T15:00:00.000Z' },
+    { id: 'consent-three', displayName: 'third-person', role: 'member', joinedAt: '2026-09-07T16:00:00.000Z' },
+  ];
+  const proposals = [
+    {
+      id: 'proposal-open', email: 'newcomer@example.test', note: 'My sister, who has been asking after you both.',
+      proposedByUserId: 'consent-two', proposedByDisplayName: 'second-person', proposedByEmail: 'second@example.test',
+      status: 'open', proposedAt: '2026-09-08T09:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', closedAt: null,
+      agreedCount: 1, declinedCount: 0, pendingCount: 2, askedCount: 3, viewerDecision: null, viewerMayDecide: true,
+      decisions: [
+        { userId: 'consent-two', displayName: 'second-person', email: 'second@example.test', decision: 'agree', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-08T09:00:00.000Z' },
+        { userId: owner.id, displayName: 'consent-owner', email: 'owner@example.test', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
+        { userId: 'consent-three', displayName: 'third-person', email: 'third@example.test', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
+      ],
+    },
+    {
+      id: 'proposal-declined', email: 'earlier@example.test', note: '',
+      proposedByUserId: owner.id, proposedByDisplayName: 'consent-owner', proposedByEmail: 'owner@example.test',
+      status: 'declined', proposedAt: '2026-09-01T09:00:00.000Z', expiresAt: '2026-10-01T09:00:00.000Z', closedAt: '2026-09-02T11:30:00.000Z',
+      agreedCount: 1, declinedCount: 1, pendingCount: 1, askedCount: 3, viewerDecision: 'agree', viewerMayDecide: false,
+      decisions: [
+        { userId: owner.id, displayName: 'consent-owner', email: 'owner@example.test', decision: 'agree', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-01T09:00:00.000Z' },
+        { userId: 'consent-three', displayName: 'third-person', email: 'third@example.test', decision: 'decline', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-02T11:30:00.000Z' },
+        { userId: 'consent-two', displayName: 'second-person', email: 'second@example.test', decision: 'pending', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: null },
+      ],
+    },
+  ];
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: { journeys: [{ id: 'consent-journey' }] } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/consent-journey/snapshot', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: {
+      journey: { id: 'consent-journey', name: 'A journey held together', location: '', startDate: '', startDateStatus: 'unknown', endDate: '', endDateStatus: 'forever', budgetCents: 0, version: 1, role: 'owner', createdAt: '2026-09-07T14:00:00.000Z', updatedAt: '2026-09-08T09:00:00.000Z' },
+      members, invitations: [], inviteProposals: proposals, expenses: [], moments: [], concerns: [], milestones: [], events: [], eventChainValid: true,
+      capacity: { peopleHere: 3, openInvitations: 0, canInvite: true, mode: 'test-groups' },
+    } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/consent-journey/invite-proposals/proposal-open/decision', async (route) => {
+    decisionRequest = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { invitationSent: false } }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Journey settings' }).click();
+  const proposalList = page.locator('#invite-proposal-list');
+  await expect(proposalList).toContainText('newcomer@example.test');
+  await expect(proposalList).toContainText('Proposed by second-person');
+  await expect(proposalList).toContainText('My sister, who has been asking after you both.');
+  await expect(proposalList).toContainText('1 of 3 have agreed · 2 still to answer');
+  await expect(proposalList).toContainText('Time left to answer');
+
+  // The detail is folded away by default and holds the record, rather than the record being
+  // reduced to a count that nobody can check.
+  const record = proposalList.locator('details.proposal-detail').first();
+  await expect(record).not.toHaveAttribute('open', '');
+  await record.locator('summary').click();
+  await expect(record).toContainText('second-person');
+  await expect(record).toContainText('Asked');
+
+  // A decline is attributed and dated, which is the point: it is somebody's decision.
+  const declined = proposalList.locator('details.proposal-detail').nth(1);
+  await declined.locator('summary').click();
+  await expect(declined).toContainText('third-person');
+  await expect(declined).toContainText('declined');
+
+  // Agreeing is a consequence that is read before it is agreed to, like every other one here.
+  await page.getByRole('button', { name: 'Agree to add them' }).click();
+  await expect(page.locator('#consequence-dialog')).toContainText('every moment this journey has shared');
+  await page.locator('#consequence-dialog-accept').click();
+  await expect.poll(() => decisionRequest).toEqual({ decision: 'agree' });
+
+  const accessibilityScan = await new AxeBuilder({ page }).include('#sharing-settings').analyze();
+  expect(accessibilityScan.violations).toEqual([]);
 });

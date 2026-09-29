@@ -1,0 +1,30 @@
+name: Public availability
+
+# The release gate proves the right bundle shipped without touching the network, because bot
+# protection correctly refuses automated traffic. This asks the question the gate cannot: can
+# a visitor load the site, and is it serving what main says it should. It runs on a schedule,
+# where being refused costs nothing, and it never blocks a release.
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  look:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # main is the expected revision: production is deployed from it, so a difference is
+      # drift worth knowing about rather than a question of which commit to trust.
+      - name: Ask whether a visitor can load the site
+        run: >-
+          node scripts/check-public-availability.mjs
+          --base-url "https://app.together-ledger.com"
+          --revision "$(git rev-parse HEAD)"
+          --required-text "Keep what matters,"

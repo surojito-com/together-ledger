@@ -225,3 +225,21 @@ export function isValidState(value) {
   for (const tripId of tripIds) { const events = value.events.filter((event) => event.tripId === tripId).sort((a, b) => a.sequence - b.sequence); if (events.some((event, index) => event.sequence !== index + 1 || event.previousEventId !== (events[index - 1]?.id || ''))) return false; }
   return true;
 }
+
+// Time left, said in the units that are actually left. A month-long wait reads in days, a
+// short-lived invitation reads in minutes, and neither is padded with zeroes nobody needs.
+// Once it is gone it says so plainly rather than counting into the negative.
+export function remainingLabel(expiresAt, now = Date.now()) {
+  const deadline = new Date(expiresAt).getTime();
+  if (!expiresAt || Number.isNaN(deadline)) return 'No end time recorded';
+  const remaining = deadline - now;
+  if (remaining <= 0) return 'No time left';
+  const minutes = Math.floor(remaining / 60000);
+  if (minutes < 1) return 'Less than a minute left';
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const rest = minutes % 60;
+  if (days > 0) return `${days}d ${String(hours).padStart(2, '0')}h ${String(rest).padStart(2, '0')}m left`;
+  if (hours > 0) return `${hours}h ${String(rest).padStart(2, '0')}m left`;
+  return `${rest}m left`;
+}

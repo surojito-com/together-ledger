@@ -7,6 +7,10 @@ export class MemoryMailer {
     this.messages.push({ type: 'invitation', ...message });
   }
 
+  async sendInviteProposal(message) {
+    this.messages.push({ type: 'invite-proposal', ...message });
+  }
+
   async sendRecovery(message) {
     this.messages.push({ type: 'recovery', ...message });
   }
@@ -18,6 +22,10 @@ export class MemoryMailer {
 
 export class ConsoleBlockedMailer {
   async sendInvitation() {
+    throw new Error('Production invitation delivery is not configured.');
+  }
+
+  async sendInviteProposal() {
     throw new Error('Production invitation delivery is not configured.');
   }
 
@@ -52,6 +60,17 @@ export class SmtpMailer {
       subject: 'You have been invited to a Together Ledger journey',
       text: email0010Text(invitationUrl),
       html: email0010Invitation(invitationUrl),
+    });
+  }
+
+  // Carries no link that decides anything. The journey is where somebody agrees or declines, and
+  // this only says that a decision is waiting there for them.
+  sendInviteProposal({ to, proposedByDisplayName, email, accountOrigin = this.accountOrigin }) {
+    return this.send({
+      from: this.invitationFrom,
+      to,
+      subject: 'Someone has been proposed for your Together Ledger journey',
+      text: `${proposedByDisplayName} has proposed adding ${email} to your journey.\n\nNobody is added unless everybody already in the journey agrees, and nothing has been sent to them. Open your journey to agree or decline: ${accountOrigin}\n\nIf nobody answers, the proposal lapses after 30 days and nobody is added.`,
     });
   }
 

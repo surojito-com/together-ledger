@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { normalizeMomentTheme } from '../src/moment-themes.js';
 import {
   activeEntries,
   activeMoments,
@@ -15,6 +16,7 @@ import {
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  remainingLabel,
   summarize,
 } from '../src/model.js';
 
@@ -112,12 +114,12 @@ test('moments keep optional money as context and require an honest visibility ch
     detail: 'Could we try again with ten quiet minutes?',
     occurredOn: '2026-08-16',
     visibility: 'share-later',
-    theme: 'rose-pine',
+    theme: 'flexoki',
     money: '12.50',
   }, state.activeTripId);
   assert.equal(moment.moneyCents, 1250);
   assert.equal(moment.visibility, 'share-later');
-  assert.equal(moment.theme, 'rose-pine');
+  assert.equal(moment.theme, 'flexoki');
   assert.equal(normalizeMoment({ ...moment, theme: 'retired-theme' }, state.activeTripId, moment).theme, '');
   assert.throws(() => normalizeMoment({ ...moment, visibility: 'everyone' }, state.activeTripId), /who can see/);
 });
@@ -210,4 +212,29 @@ test('concerns have an explicit lifecycle separate from private check-in prompts
   assert.equal(resolved.id, concern.id);
   assert.equal(resolved.createdBy, 'Alex');
   assert.equal(resolved.updatedBy, 'Jordan');
+});
+
+test('a moment saved with a retired treatment keeps the nearest surviving one', () => {
+  // The stored-state validator requires normalize(theme) === theme, so this mapping has to
+  // be idempotent or every existing moment carrying a retired treatment would fail to load.
+  assert.equal(normalizeMomentTheme('rose-pine'), 'dark');
+  assert.equal(normalizeMomentTheme('tokyo-night-day'), 'light');
+  assert.equal(normalizeMomentTheme(normalizeMomentTheme('rose-pine')), 'dark');
+  assert.equal(normalizeMomentTheme('flexoki'), 'flexoki');
+  assert.equal(normalizeMomentTheme('a-theme-that-never-existed'), '');
+  assert.equal(normalizeMomentTheme(''), '');
+});
+
+test('a countdown says what is left in the units that are left, and stops at nothing', () => {
+  const now = Date.parse('2026-09-18T12:00:00.000Z');
+  assert.equal(remainingLabel('2026-10-18T12:00:00.000Z', now), '30d 00h 00m left');
+  assert.equal(remainingLabel('2026-09-24T16:12:00.000Z', now), '6d 04h 12m left');
+  // A short-lived invitation is measured in the units it actually has, not padded out with days.
+  assert.equal(remainingLabel('2026-09-18T12:29:00.000Z', now), '29m left');
+  assert.equal(remainingLabel('2026-09-18T16:12:00.000Z', now), '4h 12m left');
+  assert.equal(remainingLabel('2026-09-18T12:00:30.000Z', now), 'Less than a minute left');
+  // Time already gone is said plainly rather than counted downwards past zero.
+  assert.equal(remainingLabel('2026-09-18T11:59:00.000Z', now), 'No time left');
+  assert.equal(remainingLabel('', now), 'No end time recorded');
+  assert.equal(remainingLabel('not a date', now), 'No end time recorded');
 });

@@ -1,0 +1,5 @@
+# The release marker answers "which revision is live right now?", so a cached answer is a
+# wrong answer. The edge ignores query strings on this zone, which made the release probe's
+# ?revision= cache-buster inert and left it reading a stale marker for minutes after a deploy.
+/release.json
+  Cache-Control: no-store

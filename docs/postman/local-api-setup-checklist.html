@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="A short checklist for starting Together Ledger locally and testing it with Postman." />
+  <title>Start Together Ledger for Postman</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #f4efe7;
+      --card: #fffdf8;
+      --text: #27231f;
+      --muted: #6f675f;
+      --line: #ded5c9;
+      --accent: #2f6d5f;
+      --accent-soft: #deeee8;
+      --code: #202725;
+      --code-text: #f7faf8;
+      --shadow: 0 18px 50px rgb(63 51 39 / 10%);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--text);
+      font: 17px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      width: min(760px, calc(100% - 32px));
+      margin: 48px auto;
+    }
+
+    header { margin-bottom: 26px; }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 640px;
+      margin: 0;
+      font-family: ui-serif, Georgia, serif;
+      font-size: clamp(2.1rem, 7vw, 4rem);
+      font-weight: 650;
+      letter-spacing: -0.04em;
+      line-height: 1;
+    }
+
+    .intro {
+      max-width: 630px;
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.08rem;
+    }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+
+    .step:has(input:checked) { background: var(--accent-soft); }
+
+    input[type="checkbox"] {
+      width: 24px;
+      height: 24px;
+      margin: 2px 0 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      line-height: 1.35;
+    }
+
+    .step p { margin: 7px 0 0; color: var(--muted); }
+
+    .mini-steps {
+      margin: 12px 0 0;
+      padding-left: 22px;
+      color: var(--muted);
+    }
+
+    .mini-steps li + li { margin-top: 5px; }
+
+    a { color: var(--accent); font-weight: 700; }
+
+    .code-wrap {
+      position: relative;
+      margin-top: 14px;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 0;
+      padding: 18px 92px 18px 18px;
+      border-radius: 12px;
+      background: var(--code);
+      color: var(--code-text);
+      font: 0.88rem/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+
+    button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 7px 11px;
+      border: 1px solid rgb(255 255 255 / 25%);
+      border-radius: 8px;
+      background: rgb(255 255 255 / 12%);
+      color: white;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button:hover, button:focus-visible { background: rgb(255 255 255 / 22%); }
+
+    .status {
+      margin-top: 20px;
+      padding: 16px 18px;
+      border-left: 4px solid var(--accent);
+      border-radius: 4px 12px 12px 4px;
+      background: var(--card);
+    }
+
+    .status strong { color: var(--accent); }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #171a18;
+        --card: #202522;
+        --text: #f1eee8;
+        --muted: #bdb7ae;
+        --line: #3b433f;
+        --accent: #8ac9b5;
+        --accent-soft: #243b34;
+        --shadow: none;
+      }
+    }
+
+    @media (max-width: 520px) {
+      main { margin: 30px auto; }
+      .step { padding: 17px; }
+      pre { padding-right: 18px; padding-top: 52px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Together Ledger · Postman setup</p>
+      <h1>Eight small steps. Then you’re ready.</h1>
+      <p class="intro">Check each box as you go. Your progress stays saved in this browser.</p>
+    </header>
+
+    <ol class="steps">
+      <li class="step">
+        <input id="step-1" type="checkbox" />
+        <div>
+          <h2><label for="step-1">Install and open Docker Desktop</label></h2>
+          <p><strong>You do not need to create a Docker account.</strong> If you want one, choose <strong>Personal</strong>; it is free and you do not need to upgrade for this test.</p>
+          <ol class="mini-steps">
+            <li>Open the <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop download page</a>.</li>
+            <li>Choose <strong>Mac – Apple Silicon</strong> for an M-series Mac. Choose <strong>Mac – Intel</strong> only for an older Intel Mac.</li>
+            <li>Open the downloaded <code>.dmg</code> file and drag Docker into Applications.</li>
+            <li>Open Docker Desktop, use its recommended settings, and enter your Mac login password if asked.</li>
+            <li>Skip sign-in, or sign into the optional Personal account.</li>
+            <li>If Docker shows <strong>Resource Saver mode</strong>, click the Play button beside it.</li>
+            <li>Wait until Docker Desktop says <strong>Engine running</strong>, then check this box.</li>
+          </ol>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-2" type="checkbox" />
+        <div>
+          <h2><label for="step-2">Open the Terminal app</label></h2>
+          <p>On your Mac, press Command + Space, type <strong>Terminal</strong>, and open it.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-3" type="checkbox" />
+        <div>
+          <h2><label for="step-3">Paste these commands into Terminal</label></h2>
+          <p>Press Return after pasting. The first startup can take a few minutes.</p>
+          <div class="code-wrap">
+            <pre id="start-commands">cd /Users/neo/together-ledger
+cp -n .env.example .env
+docker compose up --build</pre>
+            <button type="button" data-copy="start-commands">Copy</button>
+          </div>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-4" type="checkbox" />
+        <div>
+          <h2><label for="step-4">Wait for the API to become ready</label></h2>
+          <p>Open the readiness check: <a href="http://127.0.0.1:4174/readyz"><code>http://127.0.0.1:4174/readyz</code></a>. Continue when it shows <code>{"status":"ready"}</code>.</p>
+          <p>Email links will appear in Mailpit: <a href="http://127.0.0.1:8025"><code>http://127.0.0.1:8025</code></a>.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-5" type="checkbox" />
+        <div>
+          <h2><label for="step-5">Use a valid body and press Send in Postman</label></h2>
+          <p>The username may contain lowercase letters, numbers, and single hyphens—no <code>@</code> or periods.</p>
+          <div class="code-wrap">
+            <pre id="request-body">{
+  "email": "test101@surojito.com",
+  "username": "test101-surojito",
+  "password": "a unique test passphrase here"
+}</pre>
+            <button type="button" data-copy="request-body">Copy</button>
+          </div>
+          <p>A successful registration shows <strong>201 Created</strong> and <code>"verificationSent": true</code>.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-6" type="checkbox" />
+        <div>
+          <h2><label for="step-6">Verify the email through Mailpit and Postman</label></h2>
+          <ol class="mini-steps">
+            <li>Open Mailpit: <a href="http://127.0.0.1:8025"><code>http://127.0.0.1:8025</code></a>.</li>
+            <li>Open the newest message titled <strong>Verify your Together Ledger email</strong>.</li>
+            <li>If you want to test verification in Postman, do not click the email button—the link works only once.</li>
+            <li>Copy the part of the link after <code>?verify=</code>.</li>
+            <li>Open <strong>TC-API-003 — Verify the email address</strong> in Postman and put that value in the token field.</li>
+            <li>Press Send. Success shows <strong>200 OK</strong>, passing tests, and <code>"emailVerified": true</code>.</li>
+          </ol>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-7" type="checkbox" />
+        <div>
+          <h2><label for="step-7">Open the local app and sign in</label></h2>
+          <p>Open Together Ledger locally: <a href="http://127.0.0.1:4174/"><code>http://127.0.0.1:4174/</code></a>.</p>
+          <p>Use the complete username or complete email address from registration, plus the exact same password. This local test account will not work on the public website or on port <code>4173</code>.</p>
+        </div>
+      </li>
+
+      <li class="step">
+        <input id="step-8" type="checkbox" />
+        <div>
+          <h2><label for="step-8">Detach Terminal safely</label></h2>
+          <p>While the live Docker text is showing, press the <strong>d</strong> key once for <strong>Detach</strong>. When the normal <code>%</code> prompt returns, you may close Terminal.</p>
+          <p>Terminal does not need to stay open. Docker Desktop must stay open and the Together Ledger containers must remain running for Postman and the local app to work.</p>
+          <p>After restarting your Mac or Docker Desktop, start Together Ledger again with:</p>
+          <div class="code-wrap">
+            <pre id="restart-commands">cd /Users/neo/together-ledger
+docker compose up -d</pre>
+            <button type="button" data-copy="restart-commands">Copy</button>
+          </div>
+          <p>When you intentionally want to stop Together Ledger, run:</p>
+          <div class="code-wrap">
+            <pre id="stop-commands">cd /Users/neo/together-ledger
+docker compose down</pre>
+            <button type="button" data-copy="stop-commands">Copy</button>
+          </div>
+        </div>
+      </li>
+    </ol>
+
+    <p class="status"><strong>Ready means:</strong> Docker Desktop says “Engine running,” <a href="http://127.0.0.1:4174/readyz">the readiness page</a> says <code>{"status":"ready"}</code>, and Postman no longer shows ECONNREFUSED.</p>
+  </main>
+
+  <script>
+    const storageKey = "together-ledger-postman-checklist";
+    const boxes = [...document.querySelectorAll('input[type="checkbox"]')];
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    boxes.forEach((box) => {
+      box.checked = saved.includes(box.id);
+      box.addEventListener("change", () => {
+        localStorage.setItem(storageKey, JSON.stringify(boxes.filter((item) => item.checked).map((item) => item.id)));
+      });
+    });
+
+    document.querySelectorAll("[data-copy]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const text = document.getElementById(button.dataset.copy).textContent;
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied";
+        setTimeout(() => { button.textContent = "Copy"; }, 1400);
+      });
+    });
+  </script>
+</body>
+</html>

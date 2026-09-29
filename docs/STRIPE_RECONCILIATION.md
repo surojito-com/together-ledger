@@ -64,4 +64,4 @@ Stripe may retry production webhook delivery for a limited period, and its Event
 - Create a failed webhook ledger row and a duplicate tagged Customer; the command must finish with aggregate attention and exit status `2`.
 - Verify no command output or application log contains a credential or private provider/account identifier.
 
-This runbook is independent of frontend hostname work. It does not change `PUBLIC_ORIGIN`, `APP_ORIGINS`, CORS, cookies, email-return origins, DNS, TLS, GitHub Pages, or the issue 48 domain-cutover sequence.
+This runbook is independent of frontend hostname work. It does not change `PUBLIC_ORIGIN`, `APP_ORIGINS`, CORS, cookies, email-return origins, DNS, TLS, the public app origin, or the issue 48 domain-cutover sequence.

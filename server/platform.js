@@ -34,6 +34,11 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const INCLUDED_JOURNEY_CAPACITY = 2;
 const MAX_JOURNEY_CAPACITY = 101;
 
+// A proposal to add someone waits a month. Long enough that a hard week does not decide it by
+// accident, bounded so that nobody is left indefinitely holding a question they did not ask for.
+const INVITE_PROPOSAL_DAYS = 30;
+const INVITE_DECISIONS = new Set(['agree', 'decline']);
+
 function cleanText(value, label, max) {
   const text = String(value || '').trim();
   if (!text || text.length > max) throw new PlatformError(400, 'invalid_input', `${label} is required and must be ${max} characters or fewer.`);
@@ -124,6 +129,41 @@ function publicInvitation(row, now) {
     expiresAt,
     acceptedAt,
     revokedAt,
+  };
+}
+
+// A decision is shown with the person who made it and the times on both sides of it: when they
+// were asked, and when they answered. A decline is somebody's decision, named and dated, rather
+// than an anonymous refusal. The journey screen can fold this away; it cannot hide it.
+function publicInviteProposal(row, consentRows, now, viewerUserId) {
+  const status = row.status === 'open' && new Date(row.expires_at) <= now ? 'lapsed' : row.status;
+  const decisions = consentRows.map((consent) => ({
+    userId: consent.user_id,
+    displayName: consent.display_name || 'Journey member',
+    email: consent.email_normalized || '',
+    decision: consent.decision || 'pending',
+    requestedAt: dateTime(consent.requested_at),
+    decidedAt: dateTime(consent.decided_at),
+  }));
+  const mine = decisions.find((entry) => entry.userId === viewerUserId);
+  return {
+    id: row.id,
+    email: row.email_normalized,
+    note: row.note || '',
+    proposedByUserId: row.proposed_by_user_id,
+    proposedByDisplayName: row.proposed_by_display_name || 'Journey member',
+    proposedByEmail: row.proposed_by_email || '',
+    status,
+    proposedAt: dateTime(row.created_at),
+    expiresAt: dateTime(row.expires_at),
+    closedAt: dateTime(row.closed_at),
+    agreedCount: decisions.filter((entry) => entry.decision === 'agree').length,
+    declinedCount: decisions.filter((entry) => entry.decision === 'decline').length,
+    pendingCount: decisions.filter((entry) => entry.decision === 'pending').length,
+    askedCount: decisions.length,
+    viewerDecision: mine?.decision === 'pending' ? null : mine?.decision || null,
+    viewerMayDecide: status === 'open' && mine?.decision === 'pending',
+    decisions,
   };
 }
 
@@ -319,7 +359,79 @@ export class PlatformService {
     return { rawToken, csrfToken, expiresAt };
   }
 
-  async register({ email, username, password }, accountOrigin) {
+  // A phone gets a pair rather than a cookie: a short-lived access token it attaches to every
+  // request, and a longer-lived refresh token it uses once to ask for the next pair. Both are
+  // stamped with a shared family so that signing out, or a refresh token turning up twice,
+  // retires everything issued along that line at once.
+  async issueTokenPair(client, userId, familyId = randomUUID()) {
+    const accessToken = opaqueToken();
+    const refreshToken = opaqueToken();
+    const issuedAt = this.now();
+    const expiresAt = new Date(issuedAt.getTime() + this.config.ACCESS_TOKEN_MINUTES * 60 * 1000);
+    const refreshExpiresAt = new Date(issuedAt.getTime() + this.config.REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);
+    await client.query(
+      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at) VALUES ($1,$2,$3,'access',$4,$5,$6)`,
+      [randomUUID(), userId, familyId, sha256(accessToken), expiresAt, issuedAt],
+    );
+    await client.query(
+      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at) VALUES ($1,$2,$3,'refresh',$4,$5,$6)`,
+      [randomUUID(), userId, familyId, sha256(refreshToken), refreshExpiresAt, issuedAt],
+    );
+    return {
+      token: accessToken,
+      tokenExpiresAt: expiresAt.toISOString(),
+      refreshToken,
+      refreshTokenExpiresAt: refreshExpiresAt.toISOString(),
+    };
+  }
+
+  async issueTokens(userId) {
+    return withTransaction(this.pool, (client) => this.issueTokenPair(client, userId));
+  }
+
+  // The bearer equivalent of session(). There is no CSRF token to hand back: a token is attached
+  // deliberately by the client, never automatically by a browser, so there is nothing for a
+  // hostile page to ride on.
+  async tokenHolder(rawToken) {
+    if (!rawToken) return null;
+    const found = await this.pool.query(
+      `SELECT t.id,t.user_id,t.family_id,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
+       FROM api_tokens t JOIN users u ON u.id=t.user_id
+       WHERE t.token_hash=$1 AND t.purpose='access' AND t.revoked_at IS NULL AND t.expires_at>$2 AND u.deleted_at IS NULL`,
+      [sha256(rawToken), this.now()],
+    );
+    if (!found.rowCount) return null;
+    const row = found.rows[0];
+    return { id: row.id, userId: row.user_id, tokenFamilyId: row.family_id, bearer: true, user: publicUser({ ...row, id: row.user_id }) };
+  }
+
+  // Refusal is decided after the transaction commits, never by throwing inside it: retiring the
+  // family is the whole point of noticing a spent token, and a rollback would undo exactly that.
+  async refreshTokens(rawRefreshToken) {
+    const rotated = rawRefreshToken ? await withTransaction(this.pool, async (client) => {
+      const found = await client.query(`SELECT * FROM api_tokens WHERE token_hash=$1 AND purpose='refresh' FOR UPDATE`, [sha256(rawRefreshToken)]);
+      if (!found.rowCount) return null;
+      const row = found.rows[0];
+      // A refresh token is spent the first time it is used. A second presentation means a copy is
+      // in circulation, so the whole family stops working rather than the presented row alone.
+      await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE family_id=$2 AND revoked_at IS NULL', [this.now(), row.family_id]);
+      if (row.revoked_at || new Date(row.expires_at) <= this.now()) return null;
+      const user = await client.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [row.user_id]);
+      if (!user.rowCount) return null;
+      return { user: publicUser(user.rows[0]), ...await this.issueTokenPair(client, row.user_id, row.family_id) };
+    }) : null;
+    if (!rotated) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
+    return rotated;
+  }
+
+  async revokeToken(rawToken) {
+    if (!rawToken) return;
+    const found = await this.pool.query('SELECT family_id FROM api_tokens WHERE token_hash=$1', [sha256(rawToken)]);
+    if (!found.rowCount) return;
+    await this.pool.query('UPDATE api_tokens SET revoked_at=$1 WHERE family_id=$2 AND revoked_at IS NULL', [this.now(), found.rows[0].family_id]);
+  }
+
+  async register({ email, username, password }, accountOrigin, { issueSession = true } = {}) {
     const normalizedEmail = cleanEmail(email);
     const privateUsername = cleanUsername(username);
     const name = privateUsername;
@@ -337,7 +449,7 @@ export class PlatformService {
           'INSERT INTO account_tokens (id,user_id,purpose,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5)',
           [randomUUID(), userId, 'email_verification', sha256(verificationToken), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
         );
-        return { user: publicUser(created.rows[0]), session: await this.createSession(client, userId) };
+        return { user: publicUser(created.rows[0]), session: issueSession ? await this.createSession(client, userId) : null };
       });
     } catch (error) {
       if (error.code === '23505') throw new PlatformError(409, 'account_exists', 'That email or username is already in use.');
@@ -374,14 +486,14 @@ export class PlatformService {
     return this.deliver('verification', () => this.mailer.sendVerification({ to: user.rows[0].email_normalized, token, accountOrigin }));
   }
 
-  async login({ identifier, password }) {
+  async login({ identifier, password }, { issueSession = true } = {}) {
     const normalizedIdentifier = cleanLoginIdentifier(identifier);
     const found = await this.pool.query('SELECT * FROM users WHERE (email_normalized=$1 OR username=$1) AND deleted_at IS NULL', [normalizedIdentifier]);
     const candidateHash = found.rows[0]?.password_hash || await this.dummyPasswordHash;
     const passwordMatches = await verifyPassword(candidateHash, password);
     const valid = Boolean(found.rowCount && passwordMatches);
     if (!valid) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
-    const session = await withTransaction(this.pool, (client) => this.createSession(client, found.rows[0].id));
+    const session = issueSession ? await withTransaction(this.pool, (client) => this.createSession(client, found.rows[0].id)) : null;
     return { user: publicUser(found.rows[0]), session };
   }
 
@@ -431,10 +543,56 @@ export class PlatformService {
       await client.query('UPDATE users SET password_hash=$1 WHERE id=$2', [passwordHash, found.rows[0].user_id]);
       await client.query('UPDATE account_tokens SET consumed_at=$1 WHERE id=$2', [this.now(), found.rows[0].id]);
       await client.query('DELETE FROM sessions WHERE user_id=$1', [found.rows[0].user_id]);
+      await client.query('DELETE FROM api_tokens WHERE user_id=$1', [found.rows[0].user_id]);
     });
   }
 
-  async requireMember(client, userId, journeyId, { owner = false } = {}) {
+  // Reading is the exception, and it is passed explicitly: every other caller is a mutation,
+  // so a resting journeyer is refused by default rather than by remembering to ask.
+  // The owner decides how a lapse behaves and, when more people are here than are covered,
+  // who rests. Left alone, the queue falls back to whoever joined most recently, so an owner
+  // who never touches this is never asked to rank anyone.
+  async setUnpaidCapacityRest(userId, journeyId, { mode, restOrder }) {
+    if (mode !== undefined && !['read-only', 'paused'].includes(mode)) {
+      throw new PlatformError(400, 'invalid_unpaid_capacity_mode', 'Unpaid capacity rests either read-only or fully paused.');
+    }
+    if (restOrder !== undefined && (!Array.isArray(restOrder) || restOrder.some((id) => typeof id !== 'string' || !id))) {
+      throw new PlatformError(400, 'invalid_rest_order', 'The resting order must be a list of journeyer ids.');
+    }
+    return withTransaction(this.pool, async (client) => {
+      const journey = await this.requireMember(client, userId, journeyId, { owner: true });
+      if (mode !== undefined) {
+        await client.query('UPDATE journeys SET unpaid_capacity_mode=$1,updated_at=$2 WHERE id=$3', [mode, this.now(), journeyId]);
+      }
+      if (restOrder !== undefined) {
+        const members = await client.query('SELECT user_id FROM journey_members WHERE journey_id=$1', [journeyId]);
+        const here = new Set(members.rows.map((row) => row.user_id));
+        if (restOrder.some((id) => !here.has(id))) {
+          throw new PlatformError(400, 'invalid_rest_order', 'The resting order names someone who is not in this journey.');
+        }
+        if (restOrder.includes(journey.owner_user_id)) {
+          throw new PlatformError(400, 'invalid_rest_order', 'The journey owner holds the payment and never rests.');
+        }
+        // Rewriting the whole queue keeps it unambiguous: a position left out is a person who
+        // falls back to joining order rather than one silently keeping an old place.
+        await client.query('UPDATE journey_members SET rest_order=NULL WHERE journey_id=$1', [journeyId]);
+        for (const [index, memberUserId] of restOrder.entries()) {
+          await client.query('UPDATE journey_members SET rest_order=$1 WHERE journey_id=$2 AND user_id=$3', [index + 1, journeyId, memberUserId]);
+        }
+      }
+      await this.appendEvent(client, {
+        journeyId,
+        actorUserId: userId,
+        action: 'unpaid_capacity_rest_updated',
+        entityType: 'journey',
+        entityId: journeyId,
+        summary: 'Updated how unpaid capacity rests',
+      });
+      return this.capacityFor(client, journeyId);
+    });
+  }
+
+  async requireMember(client, userId, journeyId, { owner = false, reading = false } = {}) {
     const membership = await client.query(
       `SELECT jm.role,j.* FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id
        WHERE jm.journey_id=$1 AND jm.user_id=$2`,
@@ -442,6 +600,13 @@ export class PlatformService {
     );
     if (!membership.rowCount) throw forbidden();
     if (owner && membership.rows[0].role !== 'owner') throw forbidden();
+    if (!reading) {
+      const capacity = await this.capacityFor(client, journeyId);
+      if (capacity.restingMemberIds.includes(userId)) {
+        // Not forbidden: this is a bounded, recoverable state, and nothing of theirs is gone.
+        throw new PlatformError(409, 'capacity_resting', 'This journey\u2019s paid capacity is unpaid, so changes are resting. Nothing has been removed, and the journey owner can restore it.');
+      }
+    }
     return membership.rows[0];
   }
 
@@ -501,11 +666,30 @@ export class PlatformService {
     }
     const occupiedCapacity = peopleHere + openInvitations;
     const paymentAllowsInvitation = this.config.journeyCapacityMode !== 'billing' || entitlementState !== 'grace';
+
+    // When paid capacity lapses, nobody is removed. The journeyers beyond what is covered rest
+    // instead, and the owner — who holds the journey and the payment — never does.
+    const overflow = Math.max(0, peopleHere - availableCapacity);
+    const journey = await client.query('SELECT owner_user_id, unpaid_capacity_mode FROM journeys WHERE id=$1', [journeyId]);
+    let restingMemberIds = [];
+    if (overflow > 0 && journey.rows[0]) {
+      const resting = await client.query(
+        `SELECT user_id FROM journey_members
+         WHERE journey_id=$1 AND user_id<>$2
+         ORDER BY rest_order ASC NULLS LAST, joined_at DESC
+         LIMIT $3`,
+        [journeyId, journey.rows[0].owner_user_id, overflow],
+      );
+      restingMemberIds = resting.rows.map((row) => row.user_id);
+    }
+
     return {
       peopleHere,
       openInvitations,
       canInvite: paymentAllowsInvitation && occupiedCapacity < availableCapacity,
       mode: this.config.journeyCapacityMode,
+      unpaidCapacityMode: journey.rows[0]?.unpaid_capacity_mode || 'read-only',
+      restingMemberIds,
     };
   }
 
@@ -559,11 +743,61 @@ export class PlatformService {
     });
   }
 
-  async createInvitation(userId, journeyId, email, accountOrigin) {
-    const emailNormalized = cleanEmail(email);
+  // Who must agree is worked out from who is here now, not from who was here when the proposal
+  // was made. Somebody who has left cannot hold a journey up, and somebody who arrived since is
+  // not quietly skipped. A journeyer with no row yet is waiting, never assumed to have agreed.
+  async requiredConsent(client, proposalId, journeyId, now) {
+    const [members, consents] = await Promise.all([
+      client.query('SELECT user_id FROM journey_members WHERE journey_id=$1', [journeyId]),
+      client.query('SELECT user_id,decision FROM journey_invite_consents WHERE proposal_id=$1', [proposalId]),
+    ]);
+    const decisions = new Map(consents.rows.map((row) => [row.user_id, row.decision]));
+    for (const member of members.rows) {
+      if (decisions.has(member.user_id)) continue;
+      await client.query('INSERT INTO journey_invite_consents (proposal_id,user_id,requested_at) VALUES ($1,$2,$3)', [proposalId, member.user_id, now]);
+    }
+    return { everyoneAgreed: members.rows.every((member) => decisions.get(member.user_id) === 'agree') };
+  }
+
+  async mintInvitationForProposal(client, proposal) {
     const token = opaqueToken();
+    const invitationId = randomUUID();
+    await client.query(
+      `INSERT INTO invitations (id,journey_id,invited_by_user_id,email_normalized,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [invitationId, proposal.journey_id, proposal.proposed_by_user_id, proposal.email_normalized, sha256(token), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
+    );
+    await client.query('UPDATE journey_invite_proposals SET status=$1,closed_at=$2,invitation_id=$3 WHERE id=$4', ['agreed', this.now(), invitationId, proposal.id]);
+    return token;
+  }
+
+  async deliverAgreedInvitation(email, journeyId, token, accountOrigin, proposalId) {
+    const delivered = await this.deliver('invitation', () => this.mailer.sendInvitation({ to: email, journeyId, token, accountOrigin }));
+    if (delivered) return;
+    // Nobody's agreement is spent because the mail did not go out. The place is released and the
+    // proposal goes back to waiting, so a retry sends the invitation rather than asking again.
+    await this.pool.query('UPDATE invitations SET revoked_at=$1,reservation_active=false WHERE token_hash=$2 AND accepted_at IS NULL', [this.now(), sha256(token)]);
+    await this.pool.query('UPDATE journey_invite_proposals SET status=$1,closed_at=NULL,invitation_id=NULL WHERE id=$2', ['open', proposalId]);
+    throw new PlatformError(503, 'delivery_unavailable', 'Everyone agreed, but the invitation could not be delivered. Try sending it again.');
+  }
+
+  // The decision belongs in the journey, so the mail only says one is waiting and carries no way
+  // to answer. A message that does not go out never fails the proposal.
+  async notifyProposalOpened(recipients, proposedByDisplayName, proposedEmail, accountOrigin) {
+    for (const recipient of recipients) {
+      await this.deliver('invite-proposal', () => this.mailer.sendInviteProposal({ to: recipient.email_normalized, proposedByDisplayName, email: proposedEmail, accountOrigin }));
+    }
+  }
+
+  async proposeInvitation(userId, journeyId, email, note, accountOrigin) {
+    const emailNormalized = cleanEmail(email);
+    const proposalNote = cleanOptionalText(note, 300);
+    let ready = null;
+    let proposalId = null;
+    let recipients = [];
+    let proposedByDisplayName = 'A journeyer';
     await withTransaction(this.pool, async (client) => {
-      await this.requireMember(client, userId, journeyId, { owner: true });
+      // Any journeyer may propose. Nobody may add.
+      await this.requireMember(client, userId, journeyId);
       await this.lockJourney(client, journeyId);
       await client.query(
         `UPDATE invitations SET reservation_active=false
@@ -571,6 +805,7 @@ export class PlatformService {
            AND (accepted_at IS NOT NULL OR revoked_at IS NOT NULL OR expires_at<=$2)`,
         [journeyId, this.now()],
       );
+      await client.query('UPDATE journey_invite_proposals SET status=$1,closed_at=$2 WHERE journey_id=$3 AND status=$4 AND expires_at<=$2', ['lapsed', this.now(), journeyId, 'open']);
       const existingMember = await client.query(
         `SELECT 1 FROM journey_members jm JOIN users u ON u.id=jm.user_id
          WHERE jm.journey_id=$1 AND u.email_normalized=$2`,
@@ -582,18 +817,111 @@ export class PlatformService {
         [journeyId, emailNormalized],
       );
       if (existingInvitation.rowCount) throw new PlatformError(409, 'invitation_exists', 'An invitation for that person is already waiting.');
+      // A journey may be deciding about several people at once, because a group grows by more than
+      // one. What it may not do is hold two open questions about the same person.
+      const openProposal = await client.query('SELECT 1 FROM journey_invite_proposals WHERE journey_id=$1 AND email_normalized=$2 AND status=$3 AND expires_at>$4', [journeyId, emailNormalized, 'open', this.now()]);
+      if (openProposal.rowCount) throw new PlatformError(409, 'proposal_exists', 'This journey is already deciding about that person.');
       const capacity = await this.capacityFor(client, journeyId);
       if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
-      await client.query(
-        `INSERT INTO invitations (id,journey_id,invited_by_user_id,email_normalized,token_hash,expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [randomUUID(), journeyId, userId, emailNormalized, sha256(token), new Date(this.now().getTime() + this.config.TOKEN_MINUTES * 60 * 1000)],
+      const now = this.now();
+      proposalId = randomUUID();
+      const created = await client.query(
+        `INSERT INTO journey_invite_proposals (id,journey_id,proposed_by_user_id,email_normalized,note,status,created_at,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [proposalId, journeyId, userId, emailNormalized, proposalNote, 'open', now, new Date(now.getTime() + INVITE_PROPOSAL_DAYS * 24 * 60 * 60 * 1000)],
       );
+      const members = await client.query(
+        `SELECT jm.user_id,u.email_normalized,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1`,
+        [journeyId],
+      );
+      for (const member of members.rows) {
+        // Proposing is agreeing: the person who asks has already given their answer.
+        const isProposer = member.user_id === userId;
+        if (isProposer) proposedByDisplayName = member.display_name;
+        await client.query(
+          'INSERT INTO journey_invite_consents (proposal_id,user_id,decision,requested_at,decided_at) VALUES ($1,$2,$3,$4,$5)',
+          [proposalId, member.user_id, isProposer ? 'agree' : null, now, isProposer ? now : null],
+        );
+      }
+      recipients = members.rows.filter((member) => member.user_id !== userId);
+      const consent = await this.requiredConsent(client, proposalId, journeyId, now);
+      if (consent.everyoneAgreed) ready = { token: await this.mintInvitationForProposal(client, created.rows[0]), email: emailNormalized };
     });
-    const delivered = await this.deliver('invitation', () => this.mailer.sendInvitation({ to: emailNormalized, journeyId, token, accountOrigin }));
-    if (!delivered) {
-      await this.pool.query('UPDATE invitations SET revoked_at=$1,reservation_active=false WHERE token_hash=$2 AND accepted_at IS NULL', [this.now(), sha256(token)]);
-      throw new PlatformError(503, 'delivery_unavailable', 'The invitation could not be delivered. Try again later.');
+    if (ready) {
+      await this.deliverAgreedInvitation(ready.email, journeyId, ready.token, accountOrigin, proposalId);
+      return { proposalId, invitationSent: true };
     }
+    await this.notifyProposalOpened(recipients, proposedByDisplayName, emailNormalized, accountOrigin);
+    return { proposalId, invitationSent: false };
+  }
+
+  async decideInviteProposal(userId, journeyId, proposalId, decision, accountOrigin) {
+    if (!INVITE_DECISIONS.has(decision)) throw new PlatformError(400, 'invalid_input', 'Choose whether you agree or decline.');
+    let ready = null;
+    await withTransaction(this.pool, async (client) => {
+      await this.requireMember(client, userId, journeyId);
+      await this.lockJourney(client, journeyId);
+      const found = await client.query('SELECT * FROM journey_invite_proposals WHERE id=$1 AND journey_id=$2 FOR UPDATE', [proposalId, journeyId]);
+      if (!found.rowCount) throw notFound();
+      const proposal = found.rows[0];
+      if (proposal.status !== 'open') throw new PlatformError(409, 'proposal_closed', 'This proposal has already been settled.');
+      const now = this.now();
+      if (new Date(proposal.expires_at) <= now) {
+        await client.query('UPDATE journey_invite_proposals SET status=$1,closed_at=$2 WHERE id=$3', ['lapsed', now, proposalId]);
+        throw new PlatformError(409, 'proposal_lapsed', 'This proposal ran out of time, and nobody was added.');
+      }
+      const existing = await client.query('SELECT decision FROM journey_invite_consents WHERE proposal_id=$1 AND user_id=$2 FOR UPDATE', [proposalId, userId]);
+      if (existing.rowCount && existing.rows[0].decision) throw new PlatformError(409, 'already_decided', 'You have already answered this proposal.');
+      if (existing.rowCount) {
+        await client.query('UPDATE journey_invite_consents SET decision=$1,decided_at=$2 WHERE proposal_id=$3 AND user_id=$4', [decision, now, proposalId, userId]);
+      } else {
+        await client.query('INSERT INTO journey_invite_consents (proposal_id,user_id,decision,requested_at,decided_at) VALUES ($1,$2,$3,$4,$5)', [proposalId, userId, decision, proposal.created_at, now]);
+      }
+      if (decision === 'decline') {
+        // One no settles it. Nobody else is asked to answer a question that is already answered.
+        await client.query('UPDATE journey_invite_proposals SET status=$1,closed_at=$2 WHERE id=$3', ['declined', now, proposalId]);
+        return;
+      }
+      const consent = await this.requiredConsent(client, proposalId, journeyId, now);
+      if (!consent.everyoneAgreed) return;
+      const capacity = await this.capacityFor(client, journeyId);
+      if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'Everyone agreed, but there is no open place in this journey now.');
+      ready = { token: await this.mintInvitationForProposal(client, proposal), email: proposal.email_normalized };
+    });
+    if (ready) await this.deliverAgreedInvitation(ready.email, journeyId, ready.token, accountOrigin, proposalId);
+    return { invitationSent: Boolean(ready) };
+  }
+
+  // Only reachable when everyone has agreed and the sending itself failed, so that a transient
+  // mail problem costs a retry rather than everybody's consent.
+  async sendAgreedProposal(userId, journeyId, proposalId, accountOrigin) {
+    let ready = null;
+    await withTransaction(this.pool, async (client) => {
+      await this.requireMember(client, userId, journeyId);
+      await this.lockJourney(client, journeyId);
+      const found = await client.query('SELECT * FROM journey_invite_proposals WHERE id=$1 AND journey_id=$2 FOR UPDATE', [proposalId, journeyId]);
+      if (!found.rowCount) throw notFound();
+      const proposal = found.rows[0];
+      if (proposal.status !== 'open') throw new PlatformError(409, 'proposal_closed', 'This proposal has already been settled.');
+      const consent = await this.requiredConsent(client, proposalId, journeyId, this.now());
+      if (!consent.everyoneAgreed) throw new PlatformError(409, 'consent_incomplete', 'Not everyone in this journey has agreed yet.');
+      const capacity = await this.capacityFor(client, journeyId);
+      if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
+      ready = { token: await this.mintInvitationForProposal(client, proposal), email: proposal.email_normalized };
+    });
+    await this.deliverAgreedInvitation(ready.email, journeyId, ready.token, accountOrigin, proposalId);
+  }
+
+  async withdrawInviteProposal(userId, journeyId, proposalId) {
+    return withTransaction(this.pool, async (client) => {
+      const membership = await this.requireMember(client, userId, journeyId);
+      await this.lockJourney(client, journeyId);
+      const found = await client.query('SELECT * FROM journey_invite_proposals WHERE id=$1 AND journey_id=$2 FOR UPDATE', [proposalId, journeyId]);
+      if (!found.rowCount) throw notFound();
+      if (found.rows[0].status !== 'open') throw new PlatformError(409, 'proposal_closed', 'This proposal has already been settled.');
+      if (found.rows[0].proposed_by_user_id !== userId && membership.role !== 'owner') throw forbidden();
+      await client.query('UPDATE journey_invite_proposals SET status=$1,closed_at=$2 WHERE id=$3', ['withdrawn', this.now(), proposalId]);
+    });
   }
 
   async acceptInvitation(userId, rawToken) {
@@ -914,22 +1242,40 @@ export class PlatformService {
     const client = await this.pool.connect();
     try {
       if (this.config.NODE_ENV !== 'test') await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const journey = await this.requireMember(client, userId, journeyId);
-      const [members, invitations, expenses, moments, images, concerns, milestones, events, capacity] = await Promise.all([
+      const journey = await this.requireMember(client, userId, journeyId, { reading: true });
+
+      // Capacity has to be known before the rest is read, because a fully paused journeyer is
+      // shown their own moments and nothing of the shared journey. Their own writing is never
+      // hidden from them: resting withholds the shared record, not a person's own words.
+      const capacity = await this.capacityFor(client, journeyId);
+      const paused = capacity.unpaidCapacityMode === 'paused' && capacity.restingMemberIds.includes(userId);
+      const visibleMoments = paused
+        ? 'm.created_by_user_id=$2'
+        : "(m.visibility='shared-now' OR m.created_by_user_id=$2)";
+      const none = { rows: [] };
+
+      const [members, invitations, proposals, proposalConsents, expenses, moments, images, concerns, milestones, events] = await Promise.all([
         client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1 ORDER BY jm.joined_at,jm.user_id`, [journeyId]),
-        client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
-        client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
+        paused ? none : client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
+        paused ? none : client.query(`SELECT p.*,u.display_name AS proposed_by_display_name,u.email_normalized AS proposed_by_email
+          FROM journey_invite_proposals p JOIN users u ON u.id=p.proposed_by_user_id
+          WHERE p.journey_id=$1 ORDER BY p.created_at DESC,p.id`, [journeyId]),
+        paused ? none : client.query(`SELECT c.*,u.display_name,u.email_normalized
+          FROM journey_invite_consents c
+          JOIN journey_invite_proposals p ON p.id=c.proposal_id
+          JOIN users u ON u.id=c.user_id
+          WHERE p.journey_id=$1 ORDER BY c.requested_at,c.user_id`, [journeyId]),
+        paused ? none : client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
         client.query(`SELECT m.*,creator.display_name AS created_by_name,editor.display_name AS updated_by_name
           FROM journey_moments m
           LEFT JOIN users creator ON creator.id=m.created_by_user_id
           LEFT JOIN users editor ON editor.id=m.updated_by_user_id
-          WHERE m.journey_id=$1 AND (m.visibility='shared-now' OR m.created_by_user_id=$2)
+          WHERE m.journey_id=$1 AND ${visibleMoments}
           ORDER BY m.occurred_on,m.created_at,m.id`, [journeyId, userId]),
-        client.query(`SELECT mi.id,mi.moment_id,mi.original_filename,mi.content_type,mi.created_at,mi.deleted_at FROM moment_images mi JOIN journey_moments m ON m.id=mi.moment_id WHERE mi.journey_id=$1 AND (m.visibility='shared-now' OR m.created_by_user_id=$2) ORDER BY mi.created_at,mi.id`, [journeyId, userId]),
-        client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
-        client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
-        client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
-        this.capacityFor(client, journeyId),
+        client.query(`SELECT mi.id,mi.moment_id,mi.original_filename,mi.content_type,mi.created_at,mi.deleted_at FROM moment_images mi JOIN journey_moments m ON m.id=mi.moment_id WHERE mi.journey_id=$1 AND ${visibleMoments} ORDER BY mi.created_at,mi.id`, [journeyId, userId]),
+        paused ? none : client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
+        paused ? none : client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
+        paused ? none : client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
       ]);
       const publicEvents = events.rows.map(publicEvent);
       let previousHash = '0'.repeat(64);
@@ -943,6 +1289,7 @@ export class PlatformService {
         journey: publicJourney(journey),
         members: members.rows.map((row) => ({ id: row.id, displayName: row.display_name, role: row.role, joinedAt: dateTime(row.joined_at) })),
         invitations: invitations.rows.map((row) => publicInvitation(row, this.now())),
+        inviteProposals: proposals.rows.map((row) => publicInviteProposal(row, proposalConsents.rows.filter((consent) => consent.proposal_id === row.id), this.now(), userId)),
         expenses: expenses.rows.map(publicExpense),
         moments: moments.rows.map(publicMoment),
         images: images.rows.map(publicMomentImage),
@@ -997,6 +1344,7 @@ export class PlatformService {
         }
       }
       await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM account_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM invitations WHERE invited_by_user_id=$1', [userId]);
       await client.query('UPDATE invitations SET revoked_at=$1 WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL', [this.now(), user.rows[0].email_normalized]);

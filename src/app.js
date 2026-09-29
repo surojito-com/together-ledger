@@ -16,11 +16,108 @@ import {
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  remainingLabel,
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
 import { ApiError, TogetherApi } from './api.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from './moment-themes.js';
+
+// Visibility is carried by shape as well as colour and word: an empty ring holds nothing
+// out, a half ring is meant for later, a full ring is out. The order reads even in
+// monochrome, in forced colours, and for anyone who cannot separate the three hues.
+const VISIBILITY_CUES = Object.freeze({
+  private: { glyph: '○', label: 'Private' },
+  'share-later': { glyph: '◐', label: 'Share later' },
+  'shared-now': { glyph: '●', label: 'Shared now' },
+});
+
+function visibilityCue(visibility) {
+  return VISIBILITY_CUES[visibility] || { glyph: '○', label: String(visibility || '').replaceAll('-', ' ') };
+}
+
+// A consequence is read before it is agreed to. The confirming button names the act rather
+// than saying OK, and focus opens on the way out, so the irreversible choice is never the one
+// a stray Return key reaches first.
+function confirmConsequence({ title, consequence, confirmLabel, keepLabel = 'Keep things as they are', destructive = false }) {
+  const dialog = document.querySelector('#consequence-dialog');
+  if (!dialog?.showModal) return Promise.resolve(false);
+  dialog.querySelector('#consequence-dialog-title').textContent = title;
+  dialog.querySelector('#consequence-dialog-consequence').textContent = consequence;
+  const cancel = dialog.querySelector('#consequence-dialog-cancel');
+  const accept = dialog.querySelector('#consequence-dialog-accept');
+  cancel.textContent = keepLabel;
+  accept.textContent = confirmLabel;
+  accept.className = destructive ? 'button danger' : 'button primary';
+  return new Promise((resolve) => {
+    dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+    dialog.showModal();
+    cancel.focus();
+  });
+}
+
+// A confirmation may pass; a problem must not. Anything a person needs to read twice, act on,
+// or copy down stays on the page until they dismiss it, rather than fading after 2.6 seconds.
+// Tone is carried by a shape as well as a colour, so the two kinds are told apart without it.
+const STATUS_TONES = Object.freeze({
+  caution: { glyph: '▲', className: 'caution' },
+  problem: { glyph: '■', className: 'problem' },
+});
+let statusBannerSource = '';
+const statusHomeParent = document.querySelector('#status-banner')?.parentNode || null;
+const statusHomeNext = document.querySelector('#status-banner')?.nextSibling || null;
+
+// The status region sits above the work so nothing is covered. A modal dialog is the one place
+// that stops being true: it draws over the page and dims it, so a problem raised inside a dialog
+// was being written behind the dialog reporting it — a wrong password said nothing a person could
+// see. There is still one region; it moves to wherever the work currently is.
+function modalOnTop() {
+  const open = Array.from(document.querySelectorAll('dialog[open]'));
+  for (let index = open.length - 1; index >= 0; index -= 1) {
+    try {
+      if (open[index].matches(':modal')) return open[index];
+    } catch {
+      return open[index];
+    }
+  }
+  return null;
+}
+
+function placeStatus(banner) {
+  const modal = modalOnTop();
+  const target = modal || statusHomeParent;
+  if (!target || banner.parentNode === target) return;
+  if (modal) modal.prepend(banner);
+  else statusHomeParent.insertBefore(banner, statusHomeNext);
+}
+
+function showStatus(message, { tone = 'problem', source = 'action' } = {}) {
+  const banner = document.querySelector('#status-banner');
+  if (!banner) return;
+  placeStatus(banner);
+  const shape = STATUS_TONES[tone] || STATUS_TONES.problem;
+  banner.querySelector('.status-banner-glyph').textContent = shape.glyph;
+  banner.querySelector('#status-banner-message').textContent = message;
+  banner.className = `status-banner ${shape.className}`;
+  banner.hidden = false;
+  statusBannerSource = source;
+  // A dialog holds whatever scroll position it already had, so a region placed at its top can
+  // still sit above the fold. Being in the right box is not the same as being seen.
+  if (banner.parentNode !== statusHomeParent) banner.scrollIntoView({ block: 'nearest' });
+}
+
+function clearStatus(source) {
+  const banner = document.querySelector('#status-banner');
+  // Reconnecting clears the offline notice, but never a problem the person has not read.
+  if (!banner || (source && statusBannerSource !== source)) return;
+  banner.hidden = true;
+  statusBannerSource = '';
+}
+
+// An empty surface still says what it is and why it is empty, rather than trailing off.
+function emptyState(title, body, { compact = false } = {}) {
+  return `<div class="empty${compact ? ' compact' : ''}"><strong>${title}</strong><p>${body}</p></div>`;
+}
 
 let state = loadState();
 const api = new TogetherApi();
@@ -71,7 +168,7 @@ function snapshotToState(snapshots) {
     const createdByDisplayName = membersById[createdByUserId] || (creationEvent ? 'Former journeyer' : fallbackCreator?.displayName || 'Journey member');
     const milestones = { reviewedPicture: false, chosePrompt: false, agreedNextAction: false };
     snapshot.milestones.forEach((item) => { milestones[item.key] = item.completed; });
-    trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, invitationRecords: snapshot.invitations || [], capacity: snapshot.capacity, createdByUserId, createdByDisplayName, createdAt: creationEvent?.createdAt || snapshot.journey.createdAt, milestones, archivedAt: '' });
+    trips.push({ ...snapshot.journey, members: snapshot.members.map((member) => member.displayName), memberRecords: snapshot.members, invitationRecords: snapshot.invitations || [], inviteProposalRecords: snapshot.inviteProposals || [], capacity: snapshot.capacity, createdByUserId, createdByDisplayName, createdAt: creationEvent?.createdAt || snapshot.journey.createdAt, milestones, archivedAt: '' });
     entries.push(...snapshot.expenses.map((expense) => ({ ...expense, tripId: expense.journeyId, paidBy: expense.payerLabel })));
     const imagesByMoment = Object.groupBy((snapshot.images || []).filter((image) => !image.deletedAt), (image) => image.momentId);
     const removedImagesByMoment = Object.groupBy((snapshot.images || []).filter((image) => image.deletedAt), (image) => image.momentId);
@@ -129,17 +226,30 @@ function renderBillingState() {
   const periodEnd = billingState.subscription?.currentPeriodEnd || entitlement?.expiresAt;
   const until = periodEnd ? ` through ${dateTimeLabel(periodEnd)}` : '';
   const paidCapacity = billingState.subscription?.paidCapacity || entitlement?.quantity || 0;
-  $('#billing-status').textContent = billingState.subscription?.cancelAtPeriodEnd
-    ? `Cancellation is set for renewal${until}. Existing people, shared history, and valid invitation reservations remain.`
+  // Tone as well as words: settled and waiting look different, and neither is a failure, so
+  // neither takes the destructive role. A glyph carries the distinction without the colour.
+  const capacity = billingState.subscription?.cancelAtPeriodEnd
+    ? { tone: 'waiting', message: `Cancellation is set for renewal${until}. Existing people, shared history, and valid invitation reservations remain.` }
     : !entitlement
-    ? `The first two people in ${billingState.journey.name} are included. Add another person for $1 USD each month.`
+    ? { tone: '', message: `The first two people in ${billingState.journey.name} are included. Add another person for $1 USD each month.` }
     : entitlement.state === 'active'
-      ? `${paidCapacity} additional ${paidCapacity === 1 ? 'person is' : 'people are'} covered for this journey${until}.`
+      ? { tone: 'settled', message: `${paidCapacity} additional ${paidCapacity === 1 ? 'person is' : 'people are'} covered for this journey${until}.` }
       : entitlement.state === 'grace'
-        ? `This journey's paid capacity needs payment attention${until}. No person or shared history is removed automatically.`
+        ? { tone: 'waiting', message: `This journey's paid capacity needs payment attention${until}. No person or shared history is removed automatically.` }
         : entitlement.state === 'pending'
-          ? 'This journey is waiting for payment confirmation.'
-          : 'This journey does not currently have paid additional-person capacity.';
+          ? { tone: 'waiting', message: 'This journey is waiting for payment confirmation.' }
+          : { tone: '', message: 'This journey does not currently have paid additional-person capacity.' };
+  const status = $('#billing-status');
+  status.className = `billing-status ${capacity.tone}`.trim();
+  status.replaceChildren();
+  if (capacity.tone) {
+    const glyph = document.createElement('span');
+    glyph.className = 'billing-status-glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = capacity.tone === 'settled' ? '\u25CF' : '\u25B2';
+    status.append(glyph);
+  }
+  status.append(document.createTextNode(capacity.message));
 
   const offers = $('#billing-offers');
   const hasCurrentSubscription = billingState.subscription
@@ -235,10 +345,11 @@ function renderAccountState() {
   const sharing = isCloudJourney();
   const needsPrivateJourney = signedIn && !sharing;
   const canInvite = activeTrip(state)?.capacity?.canInvite ?? activeTrip(state)?.members.length < 2;
-  $('#invite-form').hidden = !sharing || !canInvite || activeTrip(state).role !== 'owner';
+  // Any journeyer may ask; the asking is not the adding, so this is no longer the owner's form.
+  $('#invite-form').hidden = !sharing || !canInvite;
   $('#sharing-create-journey-button').hidden = !needsPrivateJourney;
   $('#sharing-copy').textContent = sharing
-    ? `${activeTrip(state).members.length} ${activeTrip(state).members.length === 1 ? 'person is' : 'people are'} here. ${canInvite ? 'There is room to add another person.' : 'There is no open place right now.'} Each person signs in separately.`
+    ? `${activeTrip(state).members.length} ${activeTrip(state).members.length === 1 ? 'person is' : 'people are'} here. ${canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.'} Each person signs in separately.`
     : needsPrivateJourney
       ? 'Your account is ready. Create a private journey to invite another journeyer.'
       : 'Sign in and create a private journey to invite another journeyer.';
@@ -256,12 +367,25 @@ function renderAccountState() {
       const timing = createdJourney ? 'Created' : 'Joined';
       const role = member.role === 'owner' ? 'Owner' : createdJourney ? 'Creator' : 'Journeyer';
       return `<div class="journey-record-row"><div><strong>${description}</strong><small>${timing} <time datetime="${escapeHtml(timestamp)}">${escapeHtml(dateTimeLabel(timestamp))}</time></small>${memberActions(member)}</div><span class="journey-role">${role}${member.id === accountUser.id ? ' · You' : ''}</span></div>`;
-    }).join('');
+    }).join('') || emptyState('No one is listed yet', 'The people in this journey appear here once the account service answers.', { compact: true });
+    const proposals = trip.inviteProposalRecords || [];
+    $('#invite-proposals').hidden = !proposals.length;
+    $('#invite-proposal-list').innerHTML = proposals.map((proposal) => inviteProposalRow(proposal, trip)).join('');
+    renderUnpaidCapacityRest(trip, members);
     const invitations = trip.invitationRecords || [];
     $('#invitation-history').hidden = !invitations.length;
-    $('#invitation-list').innerHTML = invitations.map((invitation) => `<div class="journey-record-row"><div><strong>Invitation sent to ${escapeHtml(invitation.email)}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt)}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small></div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`).join('');
+    $('#invitation-list').innerHTML = invitations.map((invitation) => {
+      // Two different waits, and they are not the same length: the journeyers have a month to
+      // answer, and the person invited has only as long as a single-use link safely lasts.
+      const joining = invitation.status === 'pending'
+        ? `<small class="countdown" data-expires-at="${escapeHtml(invitation.expiresAt || '')}" data-countdown-prefix="Time left to join">Time left to join: ${escapeHtml(remainingLabel(invitation.expiresAt))}</small>`
+        : '';
+      return `<div class="journey-record-row"><div><strong>Invitation sent to ${escapeHtml(invitation.email)}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt)}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small>${joining}</div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`;
+    }).join('');
   } else {
     $('#member-list').innerHTML = '';
+    $('#invite-proposals').hidden = true;
+    $('#invite-proposal-list').innerHTML = '';
     $('#invitation-history').hidden = true;
     $('#invitation-list').innerHTML = '';
   }
@@ -272,6 +396,104 @@ function dateTimeLabel(value) {
   const date = new Date(value);
   if (!value || Number.isNaN(date.getTime())) return 'Time not recorded';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+// The times on both sides of a decision are kept in the record: when somebody was asked, and
+// when they answered. A journey can fold this away to read the summary, and cannot lose it.
+function inviteProposalRow(proposal, trip) {
+  const waiting = proposal.status === 'open'
+    ? `${proposal.agreedCount} of ${proposal.askedCount} have agreed · ${proposal.pendingCount} still to answer`
+    : `${proposal.agreedCount} of ${proposal.askedCount} agreed`;
+  // Whoever asked can stop asking, and so can the owner. Withdrawing settles the question
+  // without recording a refusal against anybody who simply had not answered yet.
+  const mayWithdraw = proposal.status === 'open' && (proposal.proposedByUserId === accountUser?.id || trip?.role === 'owner');
+  // Agreeing and declining carry the same weight on purpose. A solid primary on one of them is
+  // the product having an opinion about how somebody should answer a question about another
+  // person's access to everything this journey has shared. It does not get one.
+  const buttons = [
+    proposal.viewerMayDecide ? `<button class="button quiet" type="button" data-agree-proposal="${escapeHtml(proposal.id)}">Agree to add them</button>` : '',
+    proposal.viewerMayDecide ? `<button class="button quiet" type="button" data-decline-proposal="${escapeHtml(proposal.id)}">Decline</button>` : '',
+    mayWithdraw ? `<button class="button quiet" type="button" data-withdraw-proposal="${escapeHtml(proposal.id)}">Withdraw</button>` : '',
+  ].filter(Boolean).join('');
+  const actions = buttons ? `<div class="settings-actions">${buttons}</div>` : '';
+  const note = proposal.note ? `<small>${escapeHtml(proposal.note)}</small>` : '';
+  const countdown = proposal.status === 'open'
+    ? `<small class="countdown" data-expires-at="${escapeHtml(proposal.expiresAt || '')}" data-countdown-prefix="Time left to answer">Time left to answer: ${escapeHtml(remainingLabel(proposal.expiresAt))}</small>`
+    : '';
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(proposal.email)}</strong><small>Proposed by ${escapeHtml(proposal.proposedByDisplayName)} · <time datetime="${escapeHtml(proposal.proposedAt || '')}">${escapeHtml(dateTimeLabel(proposal.proposedAt))}</time></small>${note}<small>${escapeHtml(waiting)}</small>${countdown}${actions}<details class="proposal-detail"><summary>Who was asked, and when</summary>${proposal.decisions.map(proposalDecisionRow).join('')}</details></div><span class="invitation-status ${escapeHtml(proposal.status)}">${escapeHtml(proposalStatusLabel(proposal.status))}</span></div>`;
+}
+
+function proposalDecisionRow(entry) {
+  const answered = entry.decision === 'pending'
+    ? 'has not answered yet'
+    : `${entry.decision === 'agree' ? 'agreed' : 'declined'} ${dateTimeLabel(entry.decidedAt)}`;
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(entry.displayName)}</strong><small>${escapeHtml(entry.email)}</small><small>Asked <time datetime="${escapeHtml(entry.requestedAt || '')}">${escapeHtml(dateTimeLabel(entry.requestedAt))}</time> · ${escapeHtml(answered)}</small></div><span class="invitation-status ${escapeHtml(entry.decision)}">${escapeHtml(proposalDecisionLabel(entry.decision))}</span></div>`;
+}
+
+// The countdowns are redrawn in place rather than by re-rendering the journey, so that a fold
+// somebody opened to read the record does not close under them while they are reading it.
+function refreshCountdowns() {
+  document.querySelectorAll('.countdown[data-expires-at]').forEach((element) => {
+    element.textContent = `${element.dataset.countdownPrefix}: ${remainingLabel(element.dataset.expiresAt)}`;
+  });
+}
+
+function proposalStatusLabel(status) {
+  return ({ open: 'Waiting on everyone', agreed: 'Agreed', declined: 'Declined', withdrawn: 'Withdrawn', lapsed: 'Lapsed' })[status] || 'Recorded';
+}
+
+function proposalDecisionLabel(decision) {
+  return ({ agree: 'Agreed', decline: 'Declined', pending: 'Waiting' })[decision] || 'Recorded';
+}
+
+// Only the owner sees this: they hold the journey and the payment, and the decision is theirs.
+// It is written as a consequence rather than a setting, because what it chooses is what happens
+// to another person's access when a payment lapses.
+function renderUnpaidCapacityRest(trip, members) {
+  const section = $('#unpaid-capacity-rest');
+  if (!section) return;
+  const capacity = trip.capacity;
+  const owning = trip.role === 'owner' && capacity && capacity.mode === 'billing';
+  section.hidden = !owning;
+  if (!owning) return;
+
+  const mode = capacity.unpaidCapacityMode || 'read-only';
+  $$('input[name="unpaidCapacityMode"]', section).forEach((input) => { input.checked = input.value === mode; });
+  $('#unpaid-capacity-mode-copy').textContent = mode === 'paused'
+    ? 'Resting journeyers keep every moment they wrote themselves. The shared journey waits until payment is restored.'
+    : 'Resting journeyers keep reading the whole journey and cannot add to it until payment is restored.';
+
+  const others = members.filter((member) => member.id !== trip.createdByUserId && member.role !== 'owner');
+  const resting = new Set(capacity.restingMemberIds || []);
+  $('#rest-queue').innerHTML = others.length
+    ? `<p class="rest-queue-copy">Who rests first, if there is not room for everyone.</p>${others.map((member, index) => `<div class="journey-record-row"><div><strong>${escapeHtml(member.displayName)}</strong>${resting.has(member.id) ? '<small>Resting now</small>' : ''}</div><div class="journey-member-actions"><button class="button quiet" type="button" data-rest-earlier="${escapeHtml(member.id)}"${index === 0 ? ' disabled' : ''}>Rest earlier</button><button class="button quiet" type="button" data-rest-later="${escapeHtml(member.id)}"${index === others.length - 1 ? ' disabled' : ''}>Rest later</button></div></div>`).join('')}`
+    : emptyState('No one else is here yet', 'When another journeyer joins, you can choose who rests first.', { compact: true });
+
+  const order = others.map((member) => member.id);
+  $$('[data-rest-earlier]', section).forEach((button) => button.addEventListener('click', () => moveRestOrder(trip, order, button.dataset.restEarlier, -1)));
+  $$('[data-rest-later]', section).forEach((button) => button.addEventListener('click', () => moveRestOrder(trip, order, button.dataset.restLater, 1)));
+  $$('input[name="unpaidCapacityMode"]', section).forEach((input) => {
+    input.addEventListener('change', () => saveUnpaidCapacityRest(trip, { mode: input.value }));
+  });
+}
+
+function moveRestOrder(trip, order, memberUserId, direction) {
+  const from = order.indexOf(memberUserId);
+  const to = from + direction;
+  if (from < 0 || to < 0 || to >= order.length) return;
+  const next = [...order];
+  [next[from], next[to]] = [next[to], next[from]];
+  saveUnpaidCapacityRest(trip, { restOrder: next });
+}
+
+async function saveUnpaidCapacityRest(trip, payload) {
+  try {
+    await api.mutate(`/journeys/${trip.id}/unpaid-capacity`, 'PATCH', payload);
+    await refreshCloudState();
+    showToast('Saved how unpaid capacity rests.');
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
 }
 
 function invitationStatusLabel(status) {
@@ -420,15 +642,15 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
   const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
-    const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by both journeyers</span>' : ''}`;
+    const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by more than one journeyer</span>' : ''}`;
     const shareAction = isCloudJourney(trip) && moment.visibility === 'share-later' ? `<button data-share-moment="${escapeHtml(moment.id)}">Share now</button>` : '';
     const attachments = moment.images?.length ? `<div class="moment-attachments">${moment.images.map((image) => `<button type="button" class="moment-image-attachment" data-open-moment-image="${escapeHtml(image.id)}" aria-label="Open photo ${escapeHtml(image.filename || 'Image')}"><img data-moment-image-preview="${escapeHtml(image.id)}" alt="Photo held with ${escapeHtml(moment.title)}" /><span class="moment-image-attachment-copy"><span>Photo</span><strong>${escapeHtml(image.filename || 'Image')}</strong><small>Open larger</small></span></button>`).join('')}</div>` : '';
     const removed = moment.removedImages?.length ? `<details class="moment-removed-photos"><summary>Removed photo</summary>${moment.removedImages.map((image) => `<button type="button" class="moment-image-attachment" data-open-moment-image="${escapeHtml(image.id)}" aria-label="Open removed photo ${escapeHtml(image.filename || 'Image')}"><span class="moment-image-attachment-copy"><span>Removed photo</span><strong>${escapeHtml(image.filename || 'Image')}</strong><small>Open larger</small></span></button>`).join('')}</details>` : '';
     const locations = Array.isArray(moment.locations) ? moment.locations : [];
     const locationContext = locations.length ? `<div class="location-context">${escapeHtml(locations.map((location) => location.label).join(' · '))}</div>` : '';
     const themeName = normalizeMomentTheme(moment.theme) ? `<span class="moment-theme-chip">${escapeHtml(momentThemeLabel(moment.theme))} theme</span>` : '';
-    return `<article class="moment-card ${moment.visibility}"${momentThemeAttribute(moment.theme)}><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}">${escapeHtml(moment.visibility.replaceAll('-', ' '))}</span>${themeName}</div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${locationContext}${attachments}${removed}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small>${shareAction}<button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
-  }).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : '<p class="empty">No moments in this view yet. A small truth is enough to begin.</p>';
+    return `<article class="moment-card ${moment.visibility}"${momentThemeAttribute(moment.theme)}><div class="moment-meta"><span class="moment-kind">${escapeHtml(momentLabel(moment.kind, moment.kindLabel))}</span><span>${dateLabel(moment.occurredOn)}</span><span class="visibility-chip ${moment.visibility}"><span class="visibility-glyph" aria-hidden="true">${visibilityCue(moment.visibility).glyph}</span>${escapeHtml(visibilityCue(moment.visibility).label)}</span>${themeName}</div><strong>${escapeHtml(moment.title)}</strong>${moment.detail ? `<p>${escapeHtml(moment.detail)}</p>` : ''}${locationContext}${attachments}${removed}${moment.moneyCents != null ? `<details class="money-context"><summary>Practical money context</summary><p>${money(moment.moneyCents, moment.moneyCurrency)} is held here as context, not a score.</p></details>` : ''}<div class="moment-actions"><small class="moment-author">${attribution}</small>${shareAction}<button data-edit-moment="${escapeHtml(moment.id)}">Edit</button></div></article>`;
+  }).join('') : isEmptyStart ? `<div class="log-types"><p>There are no examples here—only possibilities:</p><div>${MOMENT_TYPES.filter(([value]) => value !== 'other').map(([, label]) => `<span>${escapeHtml(label)}</span>`).join('')}<button type="button" data-open-custom-moment>＋ Add your own moment</button></div></div>` : emptyState('No moments in this view', 'A small truth is enough to begin, or choose another filter to see more.');
   $$('[data-edit-moment]').forEach((button) => button.addEventListener('click', () => openMoment(button.dataset.editMoment)));
   $$('[data-open-moment-image]').forEach((button) => button.addEventListener('click', () => openMomentImage(button.dataset.openMomentImage)));
   $$('[data-share-moment]').forEach((button) => button.addEventListener('click', () => shareMoment(button.dataset.shareMoment)));
@@ -436,7 +658,7 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
     if (accountUser && !isCloudJourney(trip)) { openJourney(); return; }
     openMoment('', 'other');
   }));
-  $('#open-threads').innerHTML = threads.length ? threads.map((thread) => `<article class="thread-row"><div><span class="status-chip open">open</span><strong>${escapeHtml(thread.title)}</strong>${thread.detail ? `<p>${escapeHtml(thread.detail)}</p>` : ''}</div><button data-edit-thread="${escapeHtml(thread.id)}">Open</button></article>`).join('') : '<p class="empty compact">No open threads. That can be a good place to rest.</p>';
+  $('#open-threads').innerHTML = threads.length ? threads.map((thread) => `<article class="thread-row"><div><span class="status-chip open">open</span><strong>${escapeHtml(thread.title)}</strong>${thread.detail ? `<p>${escapeHtml(thread.detail)}</p>` : ''}</div><button data-edit-thread="${escapeHtml(thread.id)}">Open</button></article>`).join('') : emptyState('No open threads', 'That can be a good place to rest.', { compact: true });
   $$('[data-edit-thread]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editThread)));
   hydrateMomentImagePreviews(trip);
 }
@@ -544,8 +766,8 @@ function openMoment(id = '', initialKind = '') {
   $('#moment-dialog-copy').textContent = hosted ? 'Choose whether this stays with you, is shared now, or waits until you are ready.' : 'Choose visibility with care. In browser-only mode, it is a local cue, not separate-account privacy.';
   $('#moment-visibility-help').textContent = hosted
     ? moment?.visibility === 'shared-now'
-      ? 'Already shared: both journeyers can see this moment. Prior access cannot be undone.'
-      : 'Private stays with you. Shared now opens it to both journeyers. Share later stays with you until you deliberately share it.'
+      ? 'Already shared: everyone in this journey can see this moment, including anyone who joins later. Prior access cannot be undone.'
+      : 'Private stays with you. Shared now opens it to everyone in this journey, including anyone who joins later. Share later stays with you until you deliberately share it.'
     : 'Browser only: Private and Share later are local cues, not separate-account privacy controls.';
   $('#moment-visibility-field').hidden = false;
   $('#moment-image-field').hidden = !hosted;
@@ -587,14 +809,14 @@ async function shareMoment(id) {
   const moment = state.moments.find((item) => item.id === id);
   const trip = activeTrip(state);
   if (!moment || !isCloudJourney(trip) || moment.visibility !== 'share-later') return;
-  if (!window.confirm('Share this moment now? Both journeyers will be able to see it, and that access cannot be undone.')) return;
+  if (!await confirmConsequence({ title: 'Share this moment now?', consequence: 'Everyone in this journey will be able to see it, including anyone who joins later. That access cannot be undone.', confirmLabel: 'Share this moment' })) return;
   try {
     const payload = { kind: moment.kind, kindLabel: moment.kindLabel || '', title: moment.title, detail: moment.detail, occurredOn: moment.occurredOn, visibility: 'shared-now', theme: normalizeMomentTheme(moment.theme), moneyCents: moment.moneyCents, moneyCurrency: moment.moneyCurrency || '', locations: moment.locations || [], version: moment.version };
     await api.mutate(`/journeys/${trip.id}/moments/${moment.id}`, 'PATCH', payload);
     await refreshCloudState();
     showToast('Moment shared with your journeyer.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   }
 }
 
@@ -815,11 +1037,11 @@ function renderEventManager() {
   const events = state.events.filter((event) => event.tripId === trip.id).sort((a, b) => b.sequence - a.sequence);
   $('#event-dialog-title').textContent = `${trip.name} history`;
   $('#event-manager-copy').textContent = isCloudJourney(trip) ? 'Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones.' : 'Browser-local preview. Production attribution requires separate signed-in accounts.';
-  $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : '<p class="empty compact">No return-to conversations have been recorded for this journey.</p>';
+  $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : emptyState('Nothing to return to yet', 'Conversations you want to come back to together will appear here.', { compact: true });
   $('#event-list').innerHTML = events.length ? events.map((event) => {
     const changes = meaningfulChanges(event.before, event.after);
     return `<details class="event-row"><summary><span><strong>#${event.sequence} · ${escapeHtml(event.summary)}</strong><small>${escapeHtml(event.actorName)} · ${new Date(event.occurredAt).toLocaleString()}</small></span><span aria-hidden="true">＋</span></summary>${changes.length ? `<dl>${changes.map(({ key, before, after }) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(valueLabel(key, before))} → ${escapeHtml(valueLabel(key, after))}</dd></div>`).join('')}</dl>` : '<p>No field-level value change was stored for this event.</p>'}<small>Event ID ${escapeHtml(event.id)} · Previous ${escapeHtml(event.previousEventId || 'none')} · ${escapeHtml(event.source)}${event.eventHash ? ` · Hash ${escapeHtml(event.eventHash.slice(0, 12))}…` : ''}</small></details>`;
-  }).join('') : '<p class="empty compact">No events have been recorded since Event Manager began. Earlier browser activity cannot be reconstructed.</p>';
+  }).join('') : emptyState('No recorded changes yet', 'Changes appear here as they happen. Activity from before the Event Manager began cannot be reconstructed.', { compact: true });
   $$('[data-edit-concern]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editConcern)));
   $$('[data-remove-concern]').forEach((button) => button.addEventListener('click', () => removeConcern(button.dataset.removeConcern)));
 }
@@ -842,7 +1064,8 @@ function openConcern(id = '') {
 
 async function removeConcern(id) {
   const concern = state.concerns.find((item) => item.id === id);
-  if (!concern || !window.confirm(`Delete the concern “${concern.title}”? The event history will retain a deletion tombstone.`)) return;
+  if (!concern) return;
+  if (!await confirmConsequence({ title: 'Delete this conversation to return to?', consequence: `“${concern.title}” will be removed. The event history keeps a deletion tombstone, so the change stays attributable.`, confirmLabel: 'Delete conversation', destructive: true })) return;
   if (isCloudJourney()) {
     try {
       await api.mutate(`/journeys/${activeTrip(state).id}/concerns/${id}`, 'DELETE', { version: concern.version });
@@ -850,7 +1073,7 @@ async function removeConcern(id) {
       renderEventManager();
       showToast('Concern deleted; the event tombstone remains.');
     } catch (error) {
-      showToast(accountMessage(error));
+      showStatus(accountMessage(error));
     }
     return;
   }
@@ -944,7 +1167,7 @@ $('#journey-select').addEventListener('change', (event) => {
   selectedCategory = null;
   guidanceIndex = 0;
   persistAndRender('Journey switched.');
-  refreshBillingState().catch((error) => showToast(accountMessage(error)));
+  refreshBillingState().catch((error) => showStatus(accountMessage(error)));
 });
 
 $('#new-journey-button').addEventListener('click', () => openJourney());
@@ -1042,7 +1265,7 @@ $('#remove-moment-image-button').addEventListener('click', async (event) => {
   const momentId = button.dataset.momentId;
   const imageId = button.dataset.imageId;
   if (!trip || !momentId || !imageId || !isCloudJourney(trip)) return;
-  if (!window.confirm('Remove this photo from the moment? This cannot be undone. Removing it does not cancel a paid image add-on.')) return;
+  if (!await confirmConsequence({ title: 'Remove this photo?', consequence: 'This cannot be undone. Removing the photo does not cancel a paid image add-on.', confirmLabel: 'Remove photo', destructive: true })) return;
   button.disabled = true;
   const originalLabel = button.textContent;
   button.textContent = 'Removing photo…';
@@ -1104,7 +1327,7 @@ $('#buy-image-slot-button').addEventListener('click', async (event) => {
     const session = await api.createImageCheckout(trip.id, momentId);
     window.location.assign(session.url);
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   }
 });
 $('#buy-location-slot-button').addEventListener('click', async (event) => {
@@ -1117,7 +1340,7 @@ $('#buy-location-slot-button').addEventListener('click', async (event) => {
     if (checkout.protocol !== 'https:' || checkout.hostname !== 'checkout.stripe.com') throw new Error('Unexpected checkout destination.');
     window.location.assign(checkout.href);
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   }
 });
 $('#settings-button').addEventListener('click', () => $('#settings-dialog').showModal());
@@ -1129,7 +1352,7 @@ $('#sharing-create-journey-button').addEventListener('click', () => {
 function openAccountDialog() {
   renderAccountState();
   $('#account-dialog').showModal();
-  if (accountUser) refreshBillingState().catch((error) => showToast(accountMessage(error)));
+  if (accountUser) refreshBillingState().catch((error) => showStatus(accountMessage(error)));
 }
 
 $('#account-button').addEventListener('click', openAccountDialog);
@@ -1145,12 +1368,12 @@ $('#login-form').addEventListener('submit', async (event) => {
   try {
     accountUser = await api.login(Object.fromEntries(new FormData(event.currentTarget)));
     await refreshCloudState({ announce: true });
-    refreshBillingState().catch((error) => showToast(accountMessage(error)));
+    refreshBillingState().catch((error) => showStatus(accountMessage(error)));
     showLedgerSurface({ persist: true });
     renderAccountState();
     $('#account-dialog').close();
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   } finally {
     setButtonPending(button, false);
   }
@@ -1163,12 +1386,12 @@ $('#register-form').addEventListener('submit', async (event) => {
   try {
     accountUser = await api.register(Object.fromEntries(new FormData(event.currentTarget)));
     await refreshCloudState();
-    refreshBillingState().catch((error) => showToast(accountMessage(error)));
+    refreshBillingState().catch((error) => showStatus(accountMessage(error)));
     showLedgerSurface({ persist: true });
     renderAccountState();
     showToast(api.lastVerificationSent ? 'Account created. Check your email to verify it.' : 'Account created, but email is delayed. Use resend verification shortly.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   } finally {
     setButtonPending(button, false);
   }
@@ -1183,23 +1406,33 @@ $('#recovery-button').addEventListener('click', () => {
 $$('[data-close-recovery-request]').forEach((button) => button.addEventListener('click', () => $('#recovery-request-dialog').close()));
 $('#recovery-request-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+  // Recovery sends mail, so it is the slowest thing in the dialog and the one reached by
+  // someone already locked out. It should say it is working, as every other form does.
+  const button = event.currentTarget.querySelector('button[type="submit"], button:not([type])');
+  setButtonPending(button, true, 'Sending…');
   try {
     await api.request('/recovery/request', { method: 'POST', body: Object.fromEntries(new FormData(event.currentTarget)) });
     $('#recovery-request-dialog').close();
     showToast('If that account exists, a recovery link is on its way.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
+  } finally {
+    setButtonPending(button, false);
   }
 });
 $$('[data-close-recovery-confirm]').forEach((button) => button.addEventListener('click', () => $('#recovery-confirm-dialog').close()));
 $('#recovery-confirm-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = Object.fromEntries(new FormData(event.currentTarget));
+  // A mismatch has to be fixed by retyping, which takes longer than a toast lasts. It stays.
   if (input.password !== input.confirmPassword) {
-    showToast('The new passwords do not match.');
+    showStatus('The new passwords do not match.');
     return;
   }
+  const button = event.currentTarget.querySelector('button[type="submit"], button:not([type])');
+  setButtonPending(button, true, 'Changing…');
   try {
+    clearStatus();
     await api.request('/recovery/confirm', { method: 'POST', body: { token: input.token, password: input.password } });
     accountUser = null;
     billingState = null;
@@ -1209,12 +1442,14 @@ $('#recovery-confirm-form').addEventListener('submit', async (event) => {
     render();
     showToast('Password changed. Sign in again on every device.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
+  } finally {
+    setButtonPending(button, false);
   }
 });
 
 $('#logout-button').addEventListener('click', async () => {
-  try { await api.logout(); } catch (error) { showToast(accountMessage(error)); return; }
+  try { await api.logout(); } catch (error) { showStatus(accountMessage(error)); return; }
   accountUser = null;
   billingState = null;
   cloudJourneyIds = new Set();
@@ -1229,8 +1464,8 @@ $('#logout-button').addEventListener('click', async () => {
 $('#refresh-sync-button').addEventListener('click', async () => {
   try {
     await refreshCloudState({ announce: true });
-    refreshBillingState().catch((error) => showToast(accountMessage(error)));
-  } catch (error) { showToast(accountMessage(error)); }
+    refreshBillingState().catch((error) => showStatus(accountMessage(error)));
+  } catch (error) { showStatus(accountMessage(error)); }
 });
 
 $('#billing-capacity-range').addEventListener('input', syncCapacityFromRange);
@@ -1253,7 +1488,7 @@ $('#billing-offers').addEventListener('click', async (event) => {
     if (checkout.protocol !== 'https:' || checkout.hostname !== 'checkout.stripe.com') throw new Error('Unexpected checkout destination.');
     window.location.assign(checkout.href);
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
     setButtonPending(button, false);
   }
 });
@@ -1269,7 +1504,7 @@ $('#billing-portal-button').addEventListener('click', async (event) => {
     if (portal.protocol !== 'https:' || portal.hostname !== 'billing.stripe.com') throw new Error('Unexpected billing destination.');
     window.location.assign(portal.href);
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
     setButtonPending(button, false);
   }
 });
@@ -1279,14 +1514,14 @@ $('#resend-verification-button').addEventListener('click', async () => {
     const result = await api.mutate('/auth/resend-verification', 'POST', {});
     showToast(result.delivered ? 'A new verification link is on its way.' : 'Email delivery is still unavailable. Please try again later.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   }
 });
 
 $('#delete-account-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = Object.fromEntries(new FormData(event.currentTarget));
-  if (!window.confirm('Permanently delete this account according to the journey ownership rules shown here?')) return;
+  if (!await confirmConsequence({ title: 'Permanently delete this account?', consequence: 'This follows the journey ownership rules shown here and cannot be undone.', confirmLabel: 'Permanently delete account', destructive: true })) return;
   try {
     await api.mutate('/account', 'DELETE', input);
     accountUser = null;
@@ -1297,7 +1532,7 @@ $('#delete-account-form').addEventListener('submit', async (event) => {
     render();
     showToast('Account deleted and sessions revoked.');
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   }
 });
 
@@ -1305,13 +1540,18 @@ $('#invite-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-  setButtonPending(button, true, 'Sending invitation…');
+  setButtonPending(button, true, 'Proposing…');
   try {
-    await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(form)));
+    const result = await api.mutate(`/journeys/${activeTrip(state).id}/invitations`, 'POST', Object.fromEntries(new FormData(form)));
     form.reset();
-    showToast('Invitation sent. The journeyer must use their own verified account.');
+    // A journey of one has nobody to ask, so the invitation goes out there and then. Everywhere
+    // else this has only asked a question, and saying "sent" would not be true.
+    showToast(result?.invitationSent
+      ? 'Invitation sent. The journeyer must use their own verified account.'
+      : 'Proposed. Nothing is sent to them until every journeyer agrees.');
+    await refreshCloudState();
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   } finally {
     setButtonPending(button, false);
   }
@@ -1325,17 +1565,57 @@ $('#member-list').addEventListener('click', async (event) => {
   const memberName = button.dataset.memberName || 'this person';
   try {
     if (transferButton) {
-      if (!window.confirm(`Make ${memberName} the journey owner? You will remain here as a journeyer.`)) return;
+      if (!await confirmConsequence({ title: `Make ${memberName} the journey owner?`, consequence: 'You will remain here as a journeyer. Ownership moves to them.', confirmLabel: 'Transfer ownership' })) return;
       await api.mutate(`/journeys/${activeTrip(state).id}/ownership`, 'POST', { userId: button.dataset.transferOwner });
       showToast(`${memberName} is now the journey owner.`);
     } else {
-      if (!window.confirm(`Remove ${memberName} from this journey? Their private moments will be removed, while already shared history remains.`)) return;
+      if (!await confirmConsequence({ title: `Remove ${memberName} from this journey?`, consequence: 'Their private moments will be removed. Already shared history remains.', confirmLabel: 'Remove journeyer', destructive: true })) return;
       await api.mutate(`/journeys/${activeTrip(state).id}/members/${button.dataset.removeMember}`, 'DELETE', {});
       showToast(`${memberName} was removed from this journey.`);
     }
     await refreshCloudState();
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
+  }
+});
+
+$('#invite-proposal-list')?.addEventListener('click', async (event) => {
+  const agreeButton = event.target.closest('[data-agree-proposal]');
+  const declineButton = event.target.closest('[data-decline-proposal]');
+  const withdrawButton = event.target.closest('[data-withdraw-proposal]');
+  const button = agreeButton || declineButton || withdrawButton;
+  if (!button) return;
+  const proposalId = agreeButton ? button.dataset.agreeProposal : declineButton ? button.dataset.declineProposal : button.dataset.withdrawProposal;
+  const proposal = (activeTrip(state).inviteProposalRecords || []).find((entry) => entry.id === proposalId);
+  if (!proposal) return;
+  if (withdrawButton) {
+    if (!await confirmConsequence({
+      title: `Withdraw the proposal to add ${proposal.email}?`,
+      consequence: 'The question is taken back, and nothing is sent to them. Nobody is recorded as having refused, and this person can be proposed again later.',
+      confirmLabel: 'Withdraw the proposal',
+    })) return;
+    try {
+      await api.mutate(`/journeys/${activeTrip(state).id}/invite-proposals/${proposalId}`, 'DELETE', {});
+      showToast('Withdrawn. Nothing was sent, and nobody was added.');
+      await refreshCloudState();
+    } catch (error) {
+      showStatus(accountMessage(error));
+    }
+    return;
+  }
+  const agreeing = Boolean(agreeButton);
+  const consequence = agreeing
+    ? { title: `Agree to add ${proposal.email}?`, consequence: 'Once every journeyer has agreed and they join, they can read every moment this journey has shared, including moments shared long before they arrived. Moments you kept private stay private.', confirmLabel: 'Agree to add them' }
+    : { title: `Decline adding ${proposal.email}?`, consequence: 'This settles it for everybody straight away, and nothing is ever sent to them. Your name and the time are kept with the decision, where the other journeyers can see them.', confirmLabel: 'Decline', destructive: true };
+  if (!await confirmConsequence(consequence)) return;
+  try {
+    const result = await api.mutate(`/journeys/${activeTrip(state).id}/invite-proposals/${proposalId}/decision`, 'POST', { decision: agreeing ? 'agree' : 'decline' });
+    if (result?.invitationSent) showToast('Everyone agreed. The invitation is on its way to them.');
+    else if (agreeing) showToast('Your agreement is recorded. Nothing is sent until everyone has answered.');
+    else showToast('Recorded. Nobody was added, and nothing was sent to them.');
+    await refreshCloudState();
+  } catch (error) {
+    showStatus(accountMessage(error));
   }
 });
 
@@ -1388,7 +1668,7 @@ $('#confirm-dialog').addEventListener('close', async () => {
         await refreshCloudState();
         showToast('Expense deleted; the event tombstone remains.');
       } catch (error) {
-        showToast(accountMessage(error));
+        showStatus(accountMessage(error));
       }
       removeId = null;
       removeSnapshot = null;
@@ -1465,8 +1745,8 @@ $('#import-file').addEventListener('change', async (event) => {
   }
 });
 
-$('#reset-button').addEventListener('click', () => {
-  if (!window.confirm('Clear this browser’s ledger and begin with an empty shared space? Export first if you need a backup.')) return;
+$('#reset-button').addEventListener('click', async () => {
+  if (!await confirmConsequence({ title: 'Clear this browser’s ledger?', consequence: 'This browser begins again with an empty shared space. Export first if you need a backup.', confirmLabel: 'Clear ledger', destructive: true })) return;
   state = resetState();
   selectedDay = null;
   selectedCategory = null;
@@ -1501,10 +1781,10 @@ async function initializeAccount() {
     }
     if (accountUser) {
       await refreshCloudState();
-      refreshBillingState().catch((error) => showToast(accountMessage(error)));
+      refreshBillingState().catch((error) => showStatus(accountMessage(error)));
       showLedgerSurface({ persist: true });
       if (params.has('invite')) {
-        await api.mutate(`/invitations/${encodeURIComponent(params.get('invite'))}/accept`, 'POST', {});
+        await api.acceptInvitation(params.get('invite'));
         await refreshCloudState({ announce: true });
       }
     } else if (params.has('invite')) {
@@ -1519,7 +1799,7 @@ async function initializeAccount() {
       showToast('Billing settings closed. Stripe updates may take a moment to appear.');
     }
   } catch (error) {
-    showToast(accountMessage(error));
+    showStatus(accountMessage(error));
   } finally {
     if ([...params.keys()].some((key) => ['verify', 'recovery', 'invite', 'billing', 'session_id'].includes(key))) {
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
@@ -1529,3 +1809,29 @@ async function initializeAccount() {
 }
 
 initializeAccount();
+
+document.querySelector('#status-banner-dismiss')?.addEventListener('click', () => clearStatus());
+
+// A problem belonging to a dialog leaves with it, and the region goes back above the work so
+// the next page-level problem is not stranded inside something that is closed.
+document.querySelectorAll('dialog').forEach((dialog) => dialog.addEventListener('close', () => {
+  const banner = document.querySelector('#status-banner');
+  if (!banner || !dialog.contains(banner)) return;
+  banner.hidden = true;
+  statusBannerSource = '';
+  statusHomeParent?.insertBefore(banner, statusHomeNext);
+}));
+
+// Being offline is a condition, not a failure. It is stated plainly, and it clears itself
+// when the connection returns rather than leaving a stale warning on the page.
+function reportConnection() {
+  if (navigator.onLine) clearStatus('connection');
+  else showStatus('You are offline. This journey is still here, and anything needing the account service will wait until you reconnect.', { tone: 'caution', source: 'connection' });
+}
+window.addEventListener('online', reportConnection);
+window.addEventListener('offline', reportConnection);
+if (!navigator.onLine) reportConnection();
+
+// A minute is the smallest unit either countdown shows, so it is also how often they are redrawn.
+// Nothing is fetched to do it: the deadline is already on the page, and only the reading changes.
+window.setInterval(refreshCountdowns, 60000);

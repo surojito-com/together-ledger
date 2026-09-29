@@ -1,0 +1,608 @@
+{
+  "info": {
+    "_postman_id": "9d9317e1-c621-4c94-93ed-29438fce48f7",
+    "name": "Together Ledger — First-party platform API",
+    "description": "Importable coverage for every method/path case documented in docs/API.md, plus the documented stale-version conflict contract.\n\nStart the API, set baseUrl and origin, and run requests in the order that matches the account state you want to exercise. Successful registration and login requests capture the session cookie, CSRF token, and user ID. Resource creation and mutation requests capture IDs and current versions.\n\nverificationToken, invitationToken, and recoveryToken must be copied from the corresponding email message. This is intentional: raw tokens are never returned by the API. memberUserId must identify a non-owner journey member before the removal case is run.\n\nLogout, recovery confirmation, member removal, record deletion, and account deletion change or revoke state. Account deletion is intentionally placed in the final folder.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const origin = pm.collectionVariables.get('origin');",
+          "const sessionCookie = pm.collectionVariables.get('currentSessionCookie');",
+          "const csrfToken = pm.collectionVariables.get('currentCsrfToken');",
+          "if (origin) pm.request.headers.upsert({ key: 'Origin', value: origin });",
+          "if (sessionCookie) pm.request.headers.upsert({ key: 'Cookie', value: sessionCookie });",
+          "if (csrfToken && ['POST', 'PATCH', 'DELETE'].includes(pm.request.method)) {",
+          "  pm.request.headers.upsert({ key: 'x-together-csrf', value: csrfToken });",
+          "}",
+          "pm.request.headers.upsert({ key: 'Accept', value: 'application/json' });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('Response follows the documented envelope contract', function () {",
+          "  if (pm.response.code === 204) {",
+          "    pm.expect(pm.response.text()).to.equal('');",
+          "    return;",
+          "  }",
+          "  const body = pm.response.json();",
+          "  if (pm.response.code >= 200 && pm.response.code < 300) {",
+          "    pm.expect(body).to.have.property('data');",
+          "    pm.expect(body).not.to.have.property('error');",
+          "  } else {",
+          "    pm.expect(body).to.have.nested.property('error.code').that.is.a('string');",
+          "    pm.expect(body).to.have.nested.property('error.message').that.is.a('string');",
+          "  }",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:4174", "type": "string" },
+    { "key": "origin", "value": "http://127.0.0.1:4174", "type": "string" },
+    { "key": "email", "value": "postman-owner@example.test", "type": "string" },
+    { "key": "username", "value": "postman-owner", "type": "string" },
+    { "key": "password", "value": "correct horse battery staple", "type": "string" },
+    { "key": "newPassword", "value": "a new correct horse battery staple", "type": "string" },
+    { "key": "loginIdentifier", "value": "postman-owner", "type": "string" },
+    { "key": "verificationToken", "value": "paste-token-from-verification-email", "type": "string" },
+    { "key": "recoveryToken", "value": "paste-token-from-recovery-email", "type": "string" },
+    { "key": "invitedEmail", "value": "postman-member@example.test", "type": "string" },
+    { "key": "invitationToken", "value": "paste-token-from-invitation-email", "type": "string" },
+    { "key": "currentSessionCookie", "value": "", "type": "string" },
+    { "key": "currentCsrfToken", "value": "", "type": "string" },
+    { "key": "currentUserId", "value": "", "type": "string" },
+    { "key": "memberUserId", "value": "paste-non-owner-user-id", "type": "string" },
+    { "key": "journeyId", "value": "", "type": "string" },
+    { "key": "journeyVersion", "value": "1", "type": "string" },
+    { "key": "expenseId", "value": "", "type": "string" },
+    { "key": "expenseVersion", "value": "1", "type": "string" },
+    { "key": "staleExpenseVersion", "value": "1", "type": "string" },
+    { "key": "concernId", "value": "", "type": "string" },
+    { "key": "concernVersion", "value": "1", "type": "string" },
+    { "key": "milestoneKey", "value": "agreedNextAction", "type": "string" },
+    { "key": "afterSequence", "value": "0", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Authentication and account lifecycle",
+      "description": "Email-token requests need values copied from the development outbox or delivered message. Login and registration replace the current Postman authentication variables.",
+      "item": [
+        {
+          "name": "TC-API-001 — Register an account",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "description": "Creates a unique private account and an opaque server session. A verification message is sent separately."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Account is created', () => pm.response.to.have.status(201));",
+                "if (pm.response.code === 201) {",
+                "  const data = pm.response.json().data;",
+                "  pm.expect(data.user.username).to.eql(pm.collectionVariables.get('username'));",
+                "  pm.expect(data.csrfToken).to.be.a('string').and.not.empty;",
+                "  pm.collectionVariables.set('currentCsrfToken', data.csrfToken);",
+                "  pm.collectionVariables.set('currentUserId', data.user.id);",
+                "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                "  const match = setCookie.match(/(?:^|[,;]\\s*)(tl_session=[^;]+)/);",
+                "  if (match) pm.collectionVariables.set('currentSessionCookie', match[1]);",
+                "}"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-002 — Resend email verification",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/auth/resend-verification",
+            "description": "Revokes an older unused verification token and sends a replacement. Copy the replacement token into verificationToken."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Replacement verification is accepted', () => pm.response.to.have.status(202));",
+                "if (pm.response.code === 202) pm.expect(pm.response.json().data.accepted).to.eql(true);"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-003 — Verify the email address",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{verificationToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/verify-email",
+            "description": "Consumes the single-use token copied from the latest verification message."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Email is verified', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) pm.expect(pm.response.json().data.user.emailVerified).to.eql(true);"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-004 — Log in and rotate the session",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"{{loginIdentifier}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "description": "Accepts either the private username or email address and captures the rotated session. Change loginIdentifier when switching accounts."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Credentials create a session', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) {",
+                "  const data = pm.response.json().data;",
+                "  pm.collectionVariables.set('currentCsrfToken', data.csrfToken);",
+                "  pm.collectionVariables.set('currentUserId', data.user.id);",
+                "  const setCookie = pm.response.headers.get('Set-Cookie') || '';",
+                "  const match = setCookie.match(/(?:^|[,;]\\s*)(tl_session=[^;]+)/);",
+                "  if (match) pm.collectionVariables.set('currentSessionCookie', match[1]);",
+                "}"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-005 — Read the current session",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/session",
+            "description": "Returns the current account and refreshes the collection's CSRF variable."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Authenticated session is returned', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) {",
+                "  const data = pm.response.json().data;",
+                "  pm.collectionVariables.set('currentCsrfToken', data.csrfToken);",
+                "  pm.collectionVariables.set('currentUserId', data.user.id);",
+                "}"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-006 — Request password recovery",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/recovery/request",
+            "description": "Always returns the same accepted response, including for an unknown address, to avoid account enumeration. Copy the delivered token into recoveryToken."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Recovery request is enumeration-safe', () => pm.response.to.have.status(202));",
+                "if (pm.response.code === 202) pm.expect(pm.response.json()).to.eql({ data: { accepted: true } });"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-007 — Confirm password recovery",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{recoveryToken}}\",\n  \"password\": \"{{newPassword}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/recovery/confirm",
+            "description": "Consumes the single-use recovery token, changes the password, and revokes every session for the account."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Password is replaced', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) {",
+                "  pm.expect(pm.response.json().data.passwordChanged).to.eql(true);",
+                "  pm.collectionVariables.set('password', pm.collectionVariables.get('newPassword'));",
+                "  pm.collectionVariables.unset('currentSessionCookie');",
+                "  pm.collectionVariables.unset('currentCsrfToken');",
+                "}"
+              ]
+            }
+          }]
+        },
+        {
+          "name": "TC-API-008 — Log out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/auth/logout",
+            "description": "Revokes the current session. Log in again before continuing with authenticated cases."
+          },
+          "event": [{
+            "listen": "test",
+            "script": {
+              "type": "text/javascript",
+              "exec": [
+                "pm.test('Current session is revoked', () => pm.response.to.have.status(204));",
+                "if (pm.response.code === 204) {",
+                "  pm.collectionVariables.unset('currentSessionCookie');",
+                "  pm.collectionVariables.unset('currentCsrfToken');",
+              "}"
+              ]
+            }
+          }]
+        }
+      ]
+    },
+    {
+      "name": "Journeys, members, and sync",
+      "description": "Create a journey first. Invitation acceptance must be run while logged in as a verified account whose email matches invitedEmail. Member removal must be run after logging back in as the owner.",
+      "item": [
+        {
+          "name": "TC-API-009 — List authorized journeys",
+          "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/v1/journeys", "description": "Lists only journeys authorized for the current account." },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Authorized journeys are listed', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) pm.expect(pm.response.json().data.journeys).to.be.an('array');"
+          ] } }]
+        },
+        {
+          "name": "TC-API-010 — Create a journey",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"A place to return to\",\n  \"location\": \"Maine\",\n  \"startDateStatus\": \"exact\",\n  \"endDateStatus\": \"date\",\n  \"startDate\": \"2026-09-01\",\n  \"endDate\": \"2026-09-07\",\n  \"budgetCents\": 200000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys",
+            "description": "Creates a journey owned by the current account and captures its ID and version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Journey is created', () => pm.response.to.have.status(201));",
+            "if (pm.response.code === 201) {",
+            "  const journey = pm.response.json().data.journey;",
+            "  pm.expect(journey.role).to.eql('owner');",
+            "  pm.collectionVariables.set('journeyId', journey.id);",
+            "  pm.collectionVariables.set('journeyVersion', journey.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-011 — Update journey details with a version",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{journeyVersion}},\n  \"name\": \"A place to return to, together\",\n  \"location\": \"Maine\",\n  \"startDateStatus\": \"exact\",\n  \"endDateStatus\": \"date\",\n  \"startDate\": \"2026-09-01\",\n  \"endDate\": \"2026-09-07\",\n  \"budgetCents\": 205000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}",
+            "description": "Updates journey details only when journeyVersion matches the authoritative version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Journey is version-checked and updated', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const journey = pm.response.json().data.journey;",
+            "  pm.expect(journey.version).to.be.above(Number(pm.collectionVariables.get('journeyVersion')));",
+            "  pm.collectionVariables.set('journeyVersion', journey.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-012 — Send a journey invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{invitedEmail}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/invitations",
+            "description": "The owner creates a hashed, expiring invitation. Copy the raw token from the invitation email into invitationToken."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Invitation delivery is accepted', () => pm.response.to.have.status(202));",
+            "if (pm.response.code === 202) pm.expect(pm.response.json().data.invitationSent).to.eql(true);"
+          ] } }]
+        },
+        {
+          "name": "TC-API-013 — Accept an invitation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/invitations/{{invitationToken}}/accept",
+            "description": "Run while authenticated as the verified account matching invitedEmail. The token admits one seat and is single use."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Matching account accepts one seat', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) pm.expect(pm.response.json().data.journeyId).to.eql(pm.collectionVariables.get('journeyId'));"
+          ] } }]
+        },
+        {
+          "name": "TC-API-014 — Remove a non-owner member",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/members/{{memberUserId}}",
+            "description": "Run as the journey owner. memberUserId must be a non-owner member; the API refuses to remove the owner."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Non-owner member is removed', () => pm.response.to.have.status(204));"
+          ] } }]
+        },
+        {
+          "name": "TC-API-015 — Read a full journey snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/snapshot?after={{afterSequence}}",
+            "description": "With afterSequence=0, returns full authorized state, membership join times, safe invitation history, ordered events, and eventChainValid."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Authorized snapshot is returned', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const data = pm.response.json().data;",
+            "  ['members', 'invitations', 'expenses', 'concerns', 'milestones', 'events'].forEach(key => pm.expect(data[key], key).to.be.an('array'));",
+            "  pm.expect(data.members.every(member => Boolean(member.joinedAt))).to.eql(true);",
+            "  pm.expect(data.invitations.every(invitation => !Object.hasOwn(invitation, 'token') && !Object.hasOwn(invitation, 'tokenHash'))).to.eql(true);",
+            "  if (Number(pm.collectionVariables.get('afterSequence')) === 0) pm.expect(data.eventChainValid).to.be.a('boolean');",
+            "}"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "Journey records and conflict handling",
+      "description": "Creation captures each record ID and version. Mutation advances the saved version. The explicit stale-write case proves the documented 409 contract before deletion uses the latest version.",
+      "item": [
+        {
+          "name": "TC-API-016 — Create an expense",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant\": \"Harbor Hotel\",\n  \"category\": \"Hotel\",\n  \"amountCents\": 74500,\n  \"occurredOn\": \"2026-09-01\",\n  \"paidByUserId\": \"{{currentUserId}}\",\n  \"payerLabel\": \"Postman owner\",\n  \"account\": \"Travel card\",\n  \"status\": \"paid\",\n  \"reference\": \"POSTMAN-1\",\n  \"notes\": \"Refundable\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/expenses",
+            "description": "Creates an expense and captures its ID and initial version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Expense is created', () => pm.response.to.have.status(201));",
+            "if (pm.response.code === 201) {",
+            "  const expense = pm.response.json().data.expense;",
+            "  pm.collectionVariables.set('expenseId', expense.id);",
+            "  pm.collectionVariables.set('expenseVersion', expense.version);",
+            "  pm.collectionVariables.set('staleExpenseVersion', expense.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-017 — Update an expense with its current version",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{expenseVersion}},\n  \"merchant\": \"Harbor Hotel\",\n  \"category\": \"Hotel\",\n  \"amountCents\": 75000,\n  \"occurredOn\": \"2026-09-01\",\n  \"paidByUserId\": \"{{currentUserId}}\",\n  \"payerLabel\": \"Postman owner\",\n  \"account\": \"Travel card\",\n  \"status\": \"paid\",\n  \"reference\": \"POSTMAN-1\",\n  \"notes\": \"Refundable\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/expenses/{{expenseId}}",
+            "description": "Version-checks and updates the expense, then captures the new version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Expense is version-checked and updated', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const expense = pm.response.json().data.expense;",
+            "  pm.expect(expense.version).to.be.above(Number(pm.collectionVariables.get('expenseVersion')));",
+            "  pm.collectionVariables.set('expenseVersion', expense.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-018 — Reject a stale expense update",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{staleExpenseVersion}},\n  \"amountCents\": 76000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/expenses/{{expenseId}}",
+            "description": "Uses the pre-update version captured at creation. The API must reject silent last-write-wins with 409 conflict."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Stale write is rejected', () => pm.response.to.have.status(409));",
+            "if (pm.response.code === 409) pm.expect(pm.response.json().error.code).to.eql('conflict');"
+          ] } }]
+        },
+        {
+          "name": "TC-API-019 — Delete an expense with its current version",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"version\": {{expenseVersion}}\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/expenses/{{expenseId}}",
+            "description": "Version-checks and tombstones the current expense record."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Expense is deleted', () => pm.response.to.have.status(204));"
+          ] } }]
+        },
+        {
+          "name": "TC-API-020 — Create a concern",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Deposit changed\",\n  \"detail\": \"Ask the hotel before arrival.\",\n  \"status\": \"open\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/concerns",
+            "description": "Creates a concern and captures its ID and version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Concern is created', () => pm.response.to.have.status(201));",
+            "if (pm.response.code === 201) {",
+            "  const concern = pm.response.json().data.concern;",
+            "  pm.collectionVariables.set('concernId', concern.id);",
+            "  pm.collectionVariables.set('concernVersion', concern.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-021 — Update a concern with its current version",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": {{concernVersion}},\n  \"title\": \"Deposit changed\",\n  \"detail\": \"The hotel confirmed the adjustment.\",\n  \"status\": \"resolved\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/concerns/{{concernId}}",
+            "description": "Version-checks and updates the concern, then captures the new version."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Concern is version-checked and updated', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const concern = pm.response.json().data.concern;",
+            "  pm.expect(concern.version).to.be.above(Number(pm.collectionVariables.get('concernVersion')));",
+            "  pm.collectionVariables.set('concernVersion', concern.version);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-022 — Delete a concern with its current version",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"version\": {{concernVersion}}\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/concerns/{{concernId}}",
+            "description": "Version-checks and tombstones the current concern record."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Concern is deleted', () => pm.response.to.have.status(204));"
+          ] } }]
+        },
+        {
+          "name": "TC-API-023 — Set a bounded action milestone",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"completed\": true\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/milestones/{{milestoneKey}}",
+            "description": "Sets one supported action milestone. Supported keys are reviewedPicture, chosePrompt, and agreedNextAction."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Milestone is set', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const milestone = pm.response.json().data.milestone;",
+            "  pm.expect(milestone.key).to.eql(pm.collectionVariables.get('milestoneKey'));",
+            "  pm.expect(milestone.completed).to.eql(true);",
+            "}"
+          ] } }]
+        },
+        {
+          "name": "TC-API-024 — Read the authoritative event stream",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/journeys/{{journeyId}}/events?after={{afterSequence}}",
+            "description": "Returns ordered authoritative events after the sequence cursor."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Authoritative event stream is returned', () => pm.response.to.have.status(200));",
+            "if (pm.response.code === 200) {",
+            "  const events = pm.response.json().data.events;",
+            "  pm.expect(events).to.be.an('array');",
+            "  pm.expect(events.every((event, index) => index === 0 || event.sequence > events[index - 1].sequence)).to.eql(true);",
+            "}"
+          ] } }]
+        }
+      ]
+    },
+    {
+      "name": "Destructive account boundary",
+      "description": "Run this case only when the current account and its data may be permanently deleted or pseudonymized.",
+      "item": [
+        {
+          "name": "TC-API-025 — Permanently delete the account",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{password}}\",\n  \"confirmation\": \"DELETE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/api/v1/account",
+            "description": "Reconfirms the password and permanently deletes or pseudonymizes the current account. This cannot be undone through the API."
+          },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Account is deleted', () => pm.response.to.have.status(204));",
+            "if (pm.response.code === 204) {",
+            "  pm.collectionVariables.unset('currentSessionCookie');",
+            "  pm.collectionVariables.unset('currentCsrfToken');",
+            "  pm.collectionVariables.unset('currentUserId');",
+            "}"
+          ] } }]
+        }
+      ]
+    }
+  ]
+}

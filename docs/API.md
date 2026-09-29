@@ -2,6 +2,8 @@
 
 All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }` for success and `{ "error": { "code", "message" } }` for failure. Authenticated mutations require the `x-together-csrf` header returned by `GET /api/v1/session`.
 
+A request may authenticate in one of two ways. A browser sends the `tl_session` cookie, which it attaches automatically, and proves the request came from our own page with the origin check and the `x-together-csrf` header. A client without a browser — the phone app — sends `Authorization: Bearer <token>` instead, which it attaches deliberately. Neither the origin check nor the CSRF header applies to a bearer request, because both exist to stop a hostile page from spending a cookie the browser attached on its own; a native app cannot be navigated to by a page, and a page cannot send an `Authorization` or `X-Together-Client` header cross-origin without a preflight this service grants only to its own origins. Presenting an `Authorization` header is never a way around the cookie path's requirements: a request that carries one is judged as a token, and a token this service did not issue is refused.
+
 ## Authentication and account lifecycle
 
 | Method | Path | Purpose |
@@ -10,11 +12,20 @@ All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }
 | POST | `/auth/verify-email` | Consume the single-use email-verification token. |
 | POST | `/auth/resend-verification` | Revoke an older unused verification token and send a replacement. |
 | POST | `/auth/login` | Verify a private username or email plus Argon2id password, then rotate the session. |
-| POST | `/auth/logout` | Revoke the current session. |
-| GET | `/session` | Return the current account and session CSRF token. |
+| POST | `/auth/refresh` | Spend a refresh token and return a rotated access and refresh pair. Bearer clients only. |
+| POST | `/auth/logout` | Revoke the current session, or the presented bearer token and everything issued with it. |
+| GET | `/session` | Return the current account, and the session CSRF token on the cookie path. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |
-| POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session. |
+| POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session and bearer token. |
 | DELETE | `/account` | Reconfirm the password and permanently delete/pseudonymize the account. |
+
+### Bearer tokens for a client without a browser
+
+`POST /auth/register` and `POST /auth/login` return a bearer token when the client asks for one by sending `X-Together-Client: app`. The reply then carries `token`, `tokenExpiresAt`, `refreshToken`, and `refreshTokenExpiresAt` alongside the user, and no session cookie or CSRF token is issued. Without that header both endpoints behave exactly as they always have: a `tl_session` cookie plus a `csrfToken`, and no bearer token in the body. The web client does not send the header and its flow is unchanged.
+
+The access token is short-lived (`ACCESS_TOKEN_MINUTES`, 30 by default). The refresh token lasts longer (`REFRESH_TOKEN_DAYS`, 30 by default) and is spent the first time it is used: `POST /auth/refresh` takes `{ "refreshToken": "…" }` and returns a new pair. Tokens issued together share a family. Signing out retires the whole family, so a copied access token cannot outlive the sign-out meant to end it, and presenting a refresh token that was already spent retires the family too — a second presentation means a copy is in circulation, and the safe reading is that neither holder should continue.
+
+`DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
 
 ## Journeys, members, and sync
 

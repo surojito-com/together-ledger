@@ -12,9 +12,7 @@ const momentCases = [
   { id: 'light', theme: 'light', title: 'A little more room', detail: 'The light treatment remains calm beside a darker page.', occurredOn: '2026-09-13' },
   { id: 'dark', theme: 'dark', title: 'A quiet evening', detail: 'The dark treatment remains legible beside a lighter page.', occurredOn: '2026-09-12' },
   { id: 'green', theme: 'green', title: 'A photo held with care', detail: 'The attachment stays readable as a named part of the moment.', occurredOn: '2026-09-11' },
-  { id: 'rose-pine', theme: 'rose-pine', title: 'Words may take the room they need', detail: 'A long moment does not ask someone to shorten what happened just to fit a card. '.repeat(7), occurredOn: '2026-09-10' },
-  { id: 'flexoki', theme: 'flexoki', title: 'A practical kindness', detail: 'Mixed treatments still make one steady timeline.', occurredOn: '2026-09-09' },
-  { id: 'tokyo-night-day', theme: 'tokyo-night-day', title: 'A clear return', detail: 'The final approved treatment stays distinct without breaking the rhythm.', occurredOn: '2026-09-08' },
+  { id: 'long-form', theme: 'flexoki', title: 'Words may take the room they need', detail: 'A long moment does not ask someone to shorten what happened just to fit a card. '.repeat(7), occurredOn: '2026-09-10' },
 ].map((moment) => ({
   ...moment, journeyId: journey.id, kind: 'memory', kindLabel: '', visibility: 'shared-now', moneyCents: null, moneyCurrency: '', locations: [],
   createdByUserId: owner.id, createdBy: owner.displayName, updatedBy: owner.displayName, shapedByBoth: false, version: 1,
@@ -43,8 +41,8 @@ async function prepareVisualJourney(page) {
   await page.route(`https://api.together-ledger.com/api/v1/journeys/${journey.id}/moments/green/images/${image.id}`, (route) => route.fulfill({ contentType: 'image/png', body: tinyPng }));
   await page.goto('/');
   await expect(page.locator('#moment-timeline .moment-card')).toHaveCount(3);
-  await page.getByRole('button', { name: 'See all 7 moments' }).click();
-  await expect(page.locator('#moment-timeline .moment-card')).toHaveCount(7);
+  await page.getByRole('button', { name: 'See all 5 moments' }).click();
+  await expect(page.locator('#moment-timeline .moment-card')).toHaveCount(5);
   await expect(page.locator('.moment-image-attachment img')).toHaveJSProperty('complete', true);
 }
 

@@ -48,6 +48,14 @@ export function eventHmac(key, event) {
   return createHmac('sha256', key).update(canonicalize(event)).digest('hex');
 }
 
+// A bearer token is read only from the Authorization header, never from a query string, so it
+// cannot be captured by a proxy log, a browser history entry, or a referrer.
+export function bearerTokenFrom(authorizationHeader) {
+  const header = String(authorizationHeader || '').trim();
+  if (!/^Bearer /i.test(header)) return '';
+  return header.slice(7).trim();
+}
+
 export function csrfForSession(secret, rawSessionToken) {
   return createHmac('sha256', secret).update(`csrf:${rawSessionToken}`).digest('base64url');
 }

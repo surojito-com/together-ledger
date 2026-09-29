@@ -30,7 +30,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 - Per-journey action milestones that describe shared actions—not relationship quality.
 - Honest local settings for themes, full backup/restore, and demo reset.
 - A visible Event Manager under every journey for locally attributable moment, thread, milestone, and practical-detail changes, including deletion tombstones.
-- All 16 Surojito brand themes, with a global switcher that persists the user’s choice.
+- Four curated themes carrying the full semantic colour contract, with a global switcher that persists the user’s choice.
 - Synthetic demo data featuring Alex and Jordan—no household records.
 - An explicit browser-only mode that never uploads existing local journey data.
 - Private sync for separate accounts, verified-email invitations, PostgreSQL journeys, recovery, deletion, conflict protection, server-authoritative shared moments, and HMAC-chained events.
@@ -42,7 +42,7 @@ This is not couples therapy, financial advice, surveillance software, or a relat
 Requirements: Node.js 22 or newer.
 
 ```bash
-git clone https://github.com/surojito-com/together-ledger.git
+git clone https://github.com/together-ledger-digital-llc/together-ledger.git
 cd together-ledger
 npm run check
 npm run dev
@@ -54,20 +54,47 @@ No account, cloud database, environment variable, or API key is required for bro
 
 The web-billing candidate is documented in [docs/STRIPE.md](docs/STRIPE.md). Never paste Stripe secrets into source, commits, issue text, logs, screenshots, or chat; rotate any key that has been exposed before configuring a local test environment.
 
+## Mobile app (early scaffold)
+
+`apps/mobile` is a new Expo client against the same server — scaffolding and store-compliance
+foundations only, no product screens yet. The web client at `src/` is unaffected; nothing here
+touches its auth, storage, or styling.
+
+```bash
+cd apps/mobile
+npm install
+cp .env.example .env.local   # points the app at a locally running server
+npm start
+```
+
+Press `i` for the iOS Simulator or `a` for an Android emulator from the Expo CLI, or scan the QR
+code with Expo Go on a physical device. `npm run typecheck` and `npm run lint` run the same checks
+CI runs on every pull request; they do not touch `npm run check` at the repo root.
+
+The API origin is never hardcoded — it is read from the `EXPO_PUBLIC_API_ORIGIN` environment
+variable at build time, the mobile equivalent of the web client's `together-api-origin` meta tag.
+Staging and production values are supplied by the EAS build profile or CI for that build, not
+committed. See `apps/mobile/src/config/api.ts`.
+
+The app currently requests zero permissions (no camera, photos, location, contacts, or
+notifications), allows no cleartext network traffic, and has no client-side third-party SDKs — no
+analytics, no crash reporting. Each of those is added only by the story that needs it. Auth tokens,
+once #179 introduces them, go through `apps/mobile/src/auth/token-storage.ts`, which is already
+wired to the platform keychain via `expo-secure-store` rather than any plain on-device storage.
+
 ## Brand themes
 
-Every current surface—navigation, hero, cards, timeline, dialogs, forms, footer, and mobile action bar—uses the same theme tokens as `surojito.com`.
+Every current surface—navigation, hero, cards, timeline, dialogs, forms, footer, and mobile action bar—reads from one set of semantic colour roles, so a theme is a set of values rather than a set of exceptions.
 
 | Light themes | Dark themes |
 |---|---|
 | Light | Dark |
-| Catppuccin Latte | Solar Red |
 | Flexoki | Green |
-| Rosé Pine Dawn | Catppuccin Mocha |
-| Kanagawa Lotus | Tokyo Night |
-| Primer Light (GitHub) | Kanagawa Wave |
-| Ayu Light | Amber |
-| Tokyo Night Day | Rosé Pine |
+
+Four themes, not sixteen. Each one defines all seventeen semantic roles, and `npm run check:themes`
+refuses a theme that leaves any role undefined, unreadable, or too close in hue to a role it must
+never be mistaken for. A theme retired in an earlier release resolves to the surviving surface
+closest to it, so a saved choice is migrated rather than dropped.
 
 The selected theme is saved in the browser and restored before the page paints.
 
@@ -81,7 +108,7 @@ UI → localStorage                    UI → same-origin API
                                           → append-only event chain
 ```
 
-The public static deployment remains safe to explore without an account. Its account screen states plainly when the protected service is unavailable; it never sends a name, email, or password to GitHub Pages. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** In private sync, private and share-later moments remain visible only to their creator; shared-now moments are visible to both authorized journeyers. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+The public static deployment remains safe to explore without an account. Its account screen states plainly when the protected service is unavailable; it never sends a name, email, or password to the static origin that serves it. Signing in never uploads existing browser journey data. Private sync is an explicit mode for newly created hosted journeys and is not production-ready until the operational release gate passes. **Browser-only visibility is a local cue, not separate-account privacy.** In private sync, private and share-later moments remain visible only to their creator; shared-now moments are visible to both authorized journeyers. Read [PRIVACY.md](PRIVACY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 The Event Manager remains browser-local in browser-only mode. The private-service candidate creates events inside the authorized PostgreSQL mutation transaction and chains them with HMAC evidence. HMAC chaining is tamper-evident, not magically immutable; deployment secret isolation and backup controls still matter.
 
@@ -100,7 +127,7 @@ The deeper rationale is in [docs/PRODUCT_PRINCIPLES.md](docs/PRODUCT_PRINCIPLES.
 
 Together Ledger is an early public prototype. Browser-only journeys are live. The PR#0003 branch contains a tested private-service candidate, but it is not a production multi-user claim until SMTP, cloud PostgreSQL, cross-cloud backup restoration, independent review, and DNS cutover pass.
 
-The next public home is planned as `together-ledger.com`; the present Surojito address remains live until that migration is checked with care. See [docs/DOMAIN_MIGRATION.md](docs/DOMAIN_MIGRATION.md) for the safe cutover sequence and [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
+The app's public home is `app.together-ledger.com`, served by this repository's Cloudflare Worker. The apex `together-ledger.com` is the company site and is deployed from the separate `together-ledger.com` repository; nothing in this repository serves it. See [docs/DOMAIN_MIGRATION.md](docs/DOMAIN_MIGRATION.md) for the safe cutover sequence and [ROADMAP.md](ROADMAP.md) for the boundary between the current safe starter and possible future collaboration features.
 
 ## Contributing
 

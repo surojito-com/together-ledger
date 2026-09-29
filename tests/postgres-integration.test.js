@@ -17,10 +17,14 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   });
   const pool = createPool(config);
   t.after(async () => pool.end());
-  await runMigrations(pool);
+  const firstRun = await runMigrations(pool);
+  assert.ok(firstRun.applied.includes('023_let-a-phone-carry-its-own-key.sql'));
+  // Applying twice is how a deploy works: server/migrate.js moves the schema, then the server
+  // starts and finds nothing left to do. The second run must say so rather than repeat itself.
+  assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -58,6 +62,17 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
     /journey events are append-only/,
   );
 
+  // pg-mem cannot prove transaction semantics, so the rule that a replayed refresh token retires
+  // its family is checked here, against a real database: the revocation has to survive the
+  // refusal that follows it rather than being rolled back with it.
+  const issued = await platform.issueTokens(registration.user.id);
+  assert.ok(await platform.tokenHolder(issued.token));
+  const rotated = await platform.refreshTokens(issued.refreshToken);
+  assert.ok(await platform.tokenHolder(rotated.token));
+  await assert.rejects(platform.refreshTokens(issued.refreshToken), (error) => error.code === 'invalid_token');
+  assert.equal(await platform.tokenHolder(rotated.token), null);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
+
   await pool.query(
     `INSERT INTO invitations (id,journey_id,invited_by_user_id,email_normalized,token_hash,expires_at)
      SELECT (
@@ -86,6 +101,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   await platform.deleteAccount(registration.user.id, 'correct horse battery staple');
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM journeys WHERE id=$1', [journey.id])).rows[0].count, 0);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journey.id])).rows[0].count, 0);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1', [registration.user.id])).rows[0].count, 0);
   const deleted = await pool.query('SELECT email_normalized,username,display_name,deleted_at FROM users WHERE id=$1', [registration.user.id]);
   assert.match(deleted.rows[0].email_normalized, /^deleted-/);
   assert.match(deleted.rows[0].username, /^deleted-/);

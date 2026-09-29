@@ -42,7 +42,7 @@ try {
   const themeResponse = await fetch(`${origin}/src/themes.js`);
   assert.equal(themeResponse.status, 200);
   assert.match(themeResponse.headers.get('content-type'), /text\/javascript/);
-  assert.match(await themeResponse.text(), /Catppuccin Mocha/);
+  assert.match(await themeResponse.text(), /Flexoki/);
 
   const missing = await fetch(`${origin}/route-that-does-not-exist`);
   assert.equal(missing.status, 200);

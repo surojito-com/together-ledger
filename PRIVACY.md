@@ -34,7 +34,7 @@ Verification, invitation, and recovery messages are delivered through Resend usi
 - Resend processes transactional messages and the routing information required to deliver them.
 - AWS hosts the primary private application and PostgreSQL service and processes the private-sync data handled there.
 - GCP stores separately encrypted disaster-recovery backups. The backup encryption identity remains outside GCP, but restored data becomes readable to the controlled recovery environment after authorized decryption.
-- GitHub Pages serves the static public application. Browser-only journey content remains in `localStorage` unless a person explicitly exports it; ordinary web hosting may still receive standard request metadata when the public files are requested.
+- A Cloudflare Worker serves the static public application at `app.together-ledger.com`. Browser-only journey content remains in `localStorage` unless a person explicitly exports it; ordinary web hosting may still receive standard request metadata when the public files are requested.
 
 ## Deletion
 

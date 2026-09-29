@@ -67,12 +67,12 @@ test('mobile welcome actions remain large, reachable, and keyboard clear', async
   expect(accessibilityScan.violations).toEqual([]);
 });
 
-test('all sixteen personal themes keep one registry, one meaning, and no decorative emoji', async ({ page }) => {
+test('the four curated themes keep one registry, one meaning, and no decorative emoji', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
 
   const themes = await page.evaluate(() => window.TOGETHER_THEMES.map(({ id, label, base }) => ({ id, label, base })));
-  expect(themes).toHaveLength(16);
+  expect(themes).toHaveLength(4);
   const optionLabels = await page.locator('#theme-select option').allTextContents();
   expect(optionLabels).toEqual(themes.map(({ label }) => label));
   expect(optionLabels.join('')).not.toMatch(/[☀️🌙🔴🟢🟣🔵🟤🟡🌸☕📜🌅🪷🐙🌤️🏙️]/u);
@@ -123,6 +123,46 @@ test('a pending account action is announced and cannot be submitted twice', asyn
   await expect(page.locator('#account-dialog')).not.toBeVisible();
 });
 
+// The status region is deliberately placed above the work so nothing is covered. A modal dialog
+// is the one surface where that stopped being true: it paints over the page and dims it, so a
+// refused sign-in wrote its reason behind the dialog that asked for it. The region is one region;
+// it has to follow the work into the dialog and leave with it.
+test('a problem raised inside a dialog is shown inside that dialog', async ({ page }) => {
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'unauthorized', message: 'Sign in first.' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/auth/login', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'invalid_credentials', message: 'Those details did not match.' } }),
+  }));
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
+  await page.locator('#login-form [name="identifier"]').fill('journeyer');
+  await page.locator('#login-form [name="password"]').fill('a-long-careful-password');
+  await page.locator('#login-form').getByRole('button', { name: 'Sign in', exact: true }).click();
+
+  const banner = page.locator('#status-banner');
+  await expect(banner).toBeVisible();
+  // Inside the dialog, and genuinely the topmost thing at its own position rather than merely
+  // present in the DOM behind a backdrop.
+  await expect(page.locator('#account-dialog #status-banner')).toBeVisible();
+  expect(await page.evaluate(() => {
+    const element = document.querySelector('#status-banner');
+    const box = element.getBoundingClientRect();
+    const onTop = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return !!(onTop && element.contains(onTop));
+  }), 'the reason must not be painted behind the dialog reporting it').toBe(true);
+
+  // Closing the dialog takes its problem with it and returns the region above the work.
+  await page.locator('[data-close-account]').first().click();
+  await expect(banner).toBeHidden();
+  await expect(page.locator('#account-dialog #status-banner')).toHaveCount(0);
+});
+
 test('a journey owner sees only the approved test billing controls', async ({ page }) => {
   const owner = { id: 'user-1', username: 'journeyer', displayName: 'Journeyer', email: 'journeyer@example.test', emailVerified: true };
   await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
@@ -162,6 +202,9 @@ test('a journey owner sees only the approved test billing controls', async ({ pa
   await expect(page.locator('#billing-panel')).toBeVisible();
   await expect(page.locator('#billing-environment')).toContainText('Test mode — checkout cannot create a real charge.');
   await expect(page.locator('#billing-status')).toContainText('1 additional person is covered');
+  // Covered and needing attention must not read alike; the state carries a tone, not just words.
+  await expect(page.locator('#billing-status')).toHaveClass(/settled/);
+  await expect(page.locator('.billing-status-glyph')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add another person · $1.00 USD / month' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Manage payment and cancellation' })).toBeVisible();
   await expect(page.locator('.billing-boundary')).toContainText('Apple App Store and future Google Play purchases remain with those stores');
@@ -324,6 +367,9 @@ test('a complete browser-only journey remains reachable at the narrowest support
 });
 
 test('representative light, dark, and high-chroma surfaces keep their visual contract', async ({ page }) => {
+  // Hold a moment prefills its date from the clock, so a live clock would bake the run's own
+  // date into the committed image and fail every day after. Timers still run; only Date is fixed.
+  await page.clock.setFixedTime(new Date('2026-09-14T12:00:00.000Z'));
   await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
     status: 401,
     contentType: 'application/json',
@@ -333,9 +379,9 @@ test('representative light, dark, and high-chroma surfaces keep their visual con
   await page.goto('/');
   await expect(page).toHaveScreenshot('welcome-light-desktop.png', { fullPage: true, animations: 'disabled' });
 
-  await page.locator('#theme-select').selectOption('solar-red');
+  await page.locator('#theme-select').selectOption('green');
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 4_000 });
-  await expect(page).toHaveScreenshot('welcome-solar-red-desktop.png', { fullPage: true, animations: 'disabled' });
+  await expect(page).toHaveScreenshot('welcome-green-desktop.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 320, height: 568 });
   await page.locator('.welcome-menu > summary').click();
@@ -350,8 +396,41 @@ test('representative light, dark, and high-chroma surfaces keep their visual con
   await expect(page).toHaveScreenshot('ledger-dark-mobile.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.locator('#workspace-theme-select').selectOption('solar-red');
+  await page.locator('#workspace-theme-select').selectOption('green');
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 4_000 });
   await page.getByRole('button', { name: 'Journey settings' }).click();
-  await expect(page).toHaveScreenshot('settings-solar-red-desktop.png', { animations: 'disabled' });
+  await expect(page).toHaveScreenshot('settings-green-desktop.png', { animations: 'disabled' });
+});
+
+test('the small screen keeps one primary action and its own section navigation', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Begin your ledger/ }).first().click();
+  await page.locator('#moment-form [name="title"]').fill('A first small truth');
+  await page.getByRole('button', { name: 'Hold this moment' }).click();
+  await expect(page.locator('#moment-timeline')).toContainText('A first small truth');
+
+  // The desktop layout offers the same action three times. A small screen keeps the one in
+  // the persistent bar and stands the inline copies down, rather than stacking them.
+  const actions = page.locator('[data-open-moment]:visible');
+  await expect(actions).toHaveCount(1);
+  await expect(page.locator('.mobile-action [data-open-moment]')).toBeVisible();
+
+  const sections = page.locator('.ledger-sections a');
+  await expect(sections).toHaveCount(2);
+  await expect(sections.first()).toHaveAttribute('href', '#moments');
+  await expect(sections.last()).toHaveAttribute('href', '#threads');
+
+  // A personal view setting stays in reach on a phone rather than moving behind journey settings.
+  await expect(page.locator('#workspace-theme-select')).toBeVisible();
+
+  const undersized = await page.evaluate(() => [...document.querySelectorAll('.ledger-sections a, .mobile-action button, .header-actions button, .header-actions select')]
+    .filter((element) => element.offsetParent !== null && element.getBoundingClientRect().height < 44)
+    .map((element) => element.textContent.trim() || element.id));
+  expect(undersized).toEqual([]);
+
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  const accessibilityScan = await new AxeBuilder({ page }).include('header').include('main').analyze();
+  expect(accessibilityScan.violations).toEqual([]);
 });

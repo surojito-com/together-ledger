@@ -35,6 +35,17 @@ jobs:
         env:
           TOGETHER_LEDGER_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
         run: npm run build:public
+      # The gate. It asks nothing of the network, so the protection in front of the site cannot
+      # refuse it: a release gate that needs Bot fight mode weakened is a gate that eventually
+      # gets the protection turned off instead.
+      - name: Verify the assembled bundle is the reviewed revision
+        env:
+          TOGETHER_LEDGER_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
+        run: >-
+          node scripts/verify-release-bundle.mjs
+          --directory _site
+          --revision "$TOGETHER_LEDGER_RELEASE_REVISION"
+          --required-text "Keep what matters,"
       - name: Validate Worker packaging
         run: ./node_modules/.bin/wrangler deploy --dry-run --config wrangler.jsonc
       - name: Publish the reviewed public bundle
@@ -47,6 +58,19 @@ jobs:
             exit 1
           fi
           ./node_modules/.bin/wrangler deploy --config wrangler.jsonc --keep-vars --message "Reviewed main $TOGETHER_LEDGER_RELEASE_REVISION frontend"
+      # The gating check, from outside Cloudflare. One hop, a real internet path, and the
+      # closest thing in this pipeline to what a person's browser actually does.
+      # Observation. Bot fight mode refuses automated traffic, which is correct, so this cannot
+      # gate a release — it reports what an unauthenticated client sees, including being refused.
+      - name: Observe the public app from the runner
+        continue-on-error: true
+        env:
+          TOGETHER_LEDGER_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
+        run: >-
+          node scripts/verify-worker-release.mjs
+          --base-url "https://app.together-ledger.com"
+          --revision "$TOGETHER_LEDGER_RELEASE_REVISION"
+          --required-text "Keep what matters,"
       - name: Validate external release-probe packaging
         run: ./node_modules/.bin/wrangler deploy --dry-run --config probes/app-release-probe/wrangler.jsonc
       - name: Deploy the external release probe
@@ -55,7 +79,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TOGETHER_LEDGER_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
         run: node scripts/deploy-release-probe.mjs
-      - name: Verify the public app revision through the external probe
+      # Observation, not a gate, while #162 step 1 runs. The probe sees a staler app than the
+      # public internet does: on 26cf2d1 the runner saw the revision in 52 seconds while the
+      # probe reported verified:false for 450. Keeping it visible without letting it block.
+      - name: Observe the external release probe
+        continue-on-error: true
         env:
           TOGETHER_LEDGER_RELEASE_REVISION: ${{ github.event.workflow_run.head_sha }}
         run: >-

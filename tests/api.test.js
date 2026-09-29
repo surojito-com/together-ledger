@@ -38,3 +38,40 @@ test('an unrelated public host does not enable accounts without an API origin', 
     assert.equal(api.accountsAvailable, false);
   });
 });
+
+function withFetch(responses, run) {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, body: init.body });
+    const { status, body } = responses.shift();
+    return { ok: status >= 200 && status < 300, status, json: async () => body };
+  };
+  return run(calls).finally(() => { globalThis.fetch = original; });
+}
+
+test('accepting an invitation sends the token in the body, never in the address', async () => {
+  await withFetch([{ status: 200, body: { data: { journeyId: 'j1' } } }], async (calls) => {
+    assert.deepEqual(await new TogetherApi('/api/v1').acceptInvitation('secret-token'), { journeyId: 'j1' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, '/api/v1/invitations/accept');
+    assert.equal(calls[0].url.includes('secret-token'), false);
+    assert.deepEqual(JSON.parse(calls[0].body), { token: 'secret-token' });
+  });
+});
+
+test('an API that predates the body route falls back to the path form, once', async () => {
+  const routeMissing = { status: 404, body: { message: 'Route POST:/api/v1/invitations/accept not found', error: 'Not Found', statusCode: 404 } };
+  await withFetch([routeMissing, { status: 200, body: { data: { journeyId: 'j1' } } }], async (calls) => {
+    assert.deepEqual(await new TogetherApi('/api/v1').acceptInvitation('secret-token'), { journeyId: 'j1' });
+    assert.deepEqual(calls.map((call) => call.url), ['/api/v1/invitations/accept', '/api/v1/invitations/secret-token/accept']);
+  });
+});
+
+test('a real invitation error is shown, not retried on the older route', async () => {
+  const invalid = { status: 400, body: { error: { code: 'invalid_invitation', message: 'This invitation is invalid, expired, or belongs to another email address.' } } };
+  await withFetch([invalid], async (calls) => {
+    await assert.rejects(new TogetherApi('/api/v1').acceptInvitation('secret-token'), { code: 'invalid_invitation', status: 400 });
+    assert.equal(calls.length, 1);
+  });
+});
