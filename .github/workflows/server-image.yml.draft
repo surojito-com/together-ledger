@@ -1,0 +1,116 @@
+# DRAFT — deliberately inert.
+#
+# GitHub Actions reads only .yml and .yaml files in this directory, so this file cannot be
+# scheduled, dispatched, or triggered. Renaming it to server-image.yml is the act of adopting
+# it, and tests/production-config.test.js asserts that it has not happened by accident.
+#
+# What it does when adopted: builds the API image from a reviewed commit, pushes it to the
+# private ECR repository, and reports the immutable digest. It does not deploy, does not reach
+# the host, and does not run migrations. Deploying stays manual — see docs/SERVER_DEPLOY.md.
+#
+# Before adopting, the owner must create the OIDC role and the `server-image` environment's
+# secrets described in that document. Without them this fails before it can build, which is the
+# correct failure: a publish job that cannot prove where it is publishing must not proceed.
+
+name: Publish a reviewed API image
+
+on:
+  # Dispatch only. A build on every merge accumulates images nobody chose to release.
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full commit SHA on main to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: server-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment:
+      name: server-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # The image is only worth publishing if the commit it came from passes the same checks a
+      # pull request does. This repeats them rather than trusting an earlier green run.
+      - run: npm run check
+
+      - name: Refuse to build without a registry to publish to
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          for value in "$AWS_ROLE_ARN" "$AWS_REGION" "$ECR_REGISTRY" "$ECR_REPOSITORY"; do
+            if [ -z "$value" ]; then
+              echo "The registry role and address are not configured for this protected environment."
+              exit 1
+            fi
+          done
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+      # --provenance=false keeps buildx from wrapping a single-platform image in an OCI index,
+      # which is what stops ECR Basic scanning from scanning it directly. See the container scan
+      # evidence section of docs/OPERATIONS.md.
+      - name: Build and push the reviewed image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.revision }}" \
+            --metadata-file image.json \
+            --push .
+          digest=$(jq -r '."containerimage.digest"' image.json)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The build's own report is a claim. Ask the registry what it stored and require agreement
+      # before anyone writes this digest into a production environment file.
+      - name: Confirm the registry holds that digest
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          stored=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="${{ inputs.revision }}" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          if [ "$stored" != "${{ steps.build.outputs.digest }}" ]; then
+            echo "The registry holds a different image than the build reported."
+            exit 1
+          fi
+
+      # Deploying is not part of this workflow and must not become part of it. The digest goes to
+      # the operator, who follows docs/SERVER_DEPLOY.md from the host.
+      - name: Report the digest for a manual deploy
+        run: |
+          {
+            echo "Built ${{ inputs.revision }}"
+            echo "Digest ${{ steps.build.outputs.digest }}"
+            echo "Deploy it by following docs/SERVER_DEPLOY.md. This workflow does not deploy."
+          } >> "$GITHUB_STEP_SUMMARY"
