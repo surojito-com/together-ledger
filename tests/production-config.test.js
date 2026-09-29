@@ -130,7 +130,7 @@ test('the API has a written deploy path, and it is deliberately manual', async (
   assert.match(deploy, /Deploying the API stays manual/);
   assert.match(deploy, /Revisit this decision when/);
   // Deploy by digest, never by a tag someone can move.
-  assert.match(deploy, /together-ledger\/api@<DIGEST>/);
+  assert.match(deploy, /<ECR_REPOSITORY>@<DIGEST>/);
   assert.match(deploy, /node server\/migrate\.js/);
   // A health check is not evidence that the change shipped.
   assert.match(deploy, /Confirm against production, not against the deploy/);

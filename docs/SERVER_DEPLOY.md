@@ -2,9 +2,36 @@
 
 ## Status of this document
 
-Nothing here has been run. The API in `server/` has never been deployed to production, so this
-is a procedure, not a record of one. It is written so that the first person to run it — the
-owner, on the host, with the real secrets — is reading rather than improvising.
+This procedure has not been run end to end. It was first written without anyone having looked at
+the running host, and a survey on 2026-09-29 found the deployment in a materially different state
+than the document assumed. The corrections are recorded here rather than quietly folded in,
+because the difference is the substance.
+
+**The API is deployed, and has been since 2026-09-14.** It runs on a single EC2 host in
+`<AWS_REGION>` from `compose.production.yaml`, behind Caddy, with a healthy daily encrypted
+backup timer. Issue #198 was filed against this repository's own documentation, which said no
+registry was configured and left every Deployment box unticked. The documentation was behind the
+machine, not the other way round.
+
+What the survey found, and what this document now assumes:
+
+- **A procedure already exists, and it lives in one person's habit.** The host holds a clone of
+  this repository at `<REPO_DIR>`. An image is built there, tagged with the registry address, and
+  started with `docker compose up -d`. Nothing is written down, and nothing is recorded after.
+- **The ECR repository is named but has never been used.** `TOGETHER_IMAGE` points at a registry
+  address, but the image behind it was built on the host: it carries no registry digest, and the
+  AWS CLI is not installed there, so nothing has been pushed or pulled. The registry address is
+  decoration.
+- **Images are pinned by tag, not by digest.** The rollback path below depends on immutable
+  digests. Until a build is genuinely pushed and pinned by digest, that rollback is a plan and
+  not a capability.
+- **Production drifts silently.** At the survey the running image was 47 commits, 8 server-side
+  pull requests and 4 migrations behind `main`, and nothing reported that anywhere. The API
+  publishes no release marker, so the gap was only visible by probing routes from outside and
+  reading `schema_migrations` on the host.
+
+So the first run of this procedure is not a first deploy. It is the first *recorded* one, and the
+first that leaves the service in a state a later operator can reason about.
 
 Every step that needs a value only the owner holds is written as `<A_PLACEHOLDER>` and listed in
 [Values the owner supplies](#values-the-owner-supplies). Nothing in this repository invents a
@@ -58,6 +85,7 @@ Revisit this decision when any of these becomes true:
 | `<AWS_ACCOUNT_ID>` | The AWS account that holds the registry and the host | AWS console |
 | `<AWS_REGION>` | The region of the registry and the host | AWS console |
 | `<REGISTRY>` | `<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com` | derived from the two above |
+| `<ECR_REPOSITORY>` | The repository name inside that registry | AWS console; one already exists |
 | `<HOST>` | SSH target of the production host | the owner's SSH configuration |
 | `<REPO_DIR>` | The reviewed checkout on the host, for example `/srv/together-ledger` | chosen at first deploy |
 | `<SECRET_ID_SESSION>` | Secrets Manager name or ARN holding `SESSION_SECRET` | AWS Secrets Manager |
@@ -72,8 +100,10 @@ readiness gate treats a secret that appeared in any of those as burned.
 
 ## Why Amazon ECR
 
-The registry is not a settled fact anywhere in this repository, so it is settled here: **a
-private Amazon ECR repository in `<AWS_REGION>`, the same account as the host.**
+The registry was not a settled fact anywhere in this repository, so it is settled here: **a
+private Amazon ECR repository in `<AWS_REGION>`, the same account as the host.** One already
+exists there and is named by `TOGETHER_IMAGE`; what has never happened is an image being pushed
+to it. Choosing ECR is therefore a ratification of what the host already points at, not a move.
 
 - `docs/OPERATIONS.md` already documents how to read scan evidence out of **ECR Basic scanning**,
   including the OCI-index caveat. That procedure was written for ECR and works nowhere else.
@@ -88,18 +118,42 @@ evidence section of `OPERATIONS.md` has to be rewritten at the same time, not af
 
 ## One-time setup
 
-### 1. Create the registry repository
+### 1. The registry
 
-Immutable tags, so a tag can never be moved to a different image behind a recorded digest:
+**A repository already exists in the owner's account. Look before creating one**, and if it is
+there, confirm its settings rather than making a second:
+
+```sh
+aws ecr describe-repositories --region <AWS_REGION> \
+  --query 'repositories[].[repositoryName,imageTagMutability,encryptionConfiguration.encryptionType]' \
+  --output table
+```
+
+If it is missing, create it. Immutable tags, so a tag can never be moved to a different image
+behind a recorded digest:
 
 ```sh
 aws ecr create-repository \
-  --repository-name together-ledger/api \
+  --repository-name <ECR_REPOSITORY> \
   --region <AWS_REGION> \
   --image-tag-mutability IMMUTABLE \
   --image-scanning-configuration scanOnPush=true \
   --encryption-configuration encryptionType=AES256
 ```
+
+If it exists with mutable tags, fix that before relying on a recorded digest:
+
+```sh
+aws ecr put-image-tag-mutability --repository-name <ECR_REPOSITORY> \
+  --region <AWS_REGION> --image-tag-mutability IMMUTABLE
+```
+
+**The host needs an AWS CLI to pull from the registry, and may not have one.** Check with
+`command -v aws` on the host before assuming a pull is possible. Without it the host cannot
+authenticate to ECR, and an image tagged with a registry address is a local build wearing a
+registry's name — which is exactly the state the 2026-09-29 survey found. Either install it, or
+record here that the build happens on the host, rather than describing a pull that does not
+happen.
 
 Give the host an IAM principal that can pull from this one repository and nothing else
 (`ecr:GetAuthorizationToken`, plus `ecr:BatchGetImage` and
@@ -182,7 +236,7 @@ docker buildx build \
   --platform linux/amd64 \
   --provenance=false \
   --sbom=false \
-  --tag <REGISTRY>/together-ledger/api:"$COMMIT" \
+  --tag <REGISTRY>/<ECR_REPOSITORY>:"$COMMIT" \
   --metadata-file /tmp/together-ledger-image.json \
   --push .
 
@@ -197,7 +251,7 @@ own report is a claim; the registry is the thing the host will pull from:
 
 ```sh
 aws ecr describe-images \
-  --repository-name together-ledger/api \
+  --repository-name <ECR_REPOSITORY> \
   --region <AWS_REGION> \
   --image-ids imageTag="$COMMIT" \
   --query 'imageDetails[0].imageDigest' --output text
@@ -209,7 +263,7 @@ If that differs from `$DIGEST`, stop and find out why before going further.
 
 ```sh
 aws ecr describe-image-scan-findings \
-  --repository-name together-ledger/api \
+  --repository-name <ECR_REPOSITORY> \
   --region <AWS_REGION> \
   --image-id imageDigest="$DIGEST" \
   --query '{status: imageScanStatus.status, counts: imageScanFindings.findingSeverityCounts}'
@@ -231,7 +285,7 @@ run the migrations from **the same image** you are about to deploy:
 docker run --rm \
   --env-file /etc/together-ledger/preproduction.env \
   --network together-preproduction \
-  <REGISTRY>/together-ledger/api@<DIGEST> \
+  <REGISTRY>/<ECR_REPOSITORY>@<DIGEST> \
   node server/migrate.js
 ```
 
@@ -270,7 +324,7 @@ grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env    # via sudo; empty
 Point the environment file at the new digest, by digest and never by tag:
 
 ```sh
-sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/together-ledger/api@<DIGEST>|" /etc/together-ledger/production.env'
+sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<DIGEST>|" /etc/together-ledger/production.env'
 sudo grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env
 ```
 
@@ -383,7 +437,7 @@ Roughly ten minutes, no data loss, provided the rule above held.
 sudo tail -5 /etc/together-ledger/releases.log
 
 # 2. Point the environment file back at the last good digest.
-sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/together-ledger/api@<PREVIOUS_DIGEST>|" /etc/together-ledger/production.env'
+sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<PREVIOUS_DIGEST>|" /etc/together-ledger/production.env'
 
 # 3. Start that image. PostgreSQL keeps running; only the app container is replaced.
 cd <REPO_DIR>

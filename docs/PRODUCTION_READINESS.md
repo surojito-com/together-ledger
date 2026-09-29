@@ -2,7 +2,16 @@
 
 This checklist records what must be true before Together Ledger's private-sync API receives public traffic. It is designed for the single-owner AWS-primary, GCP-standby posture. Do not check an item merely because a console page exists.
 
-Nothing under **Deployment** is checked because the API has never been deployed. The procedure for each of those items now exists — see [API server deployment](SERVER_DEPLOY.md) — but a written procedure is not a performed one, and this gate records what someone did, not what someone could do. Tick each box on the deploy that satisfies it, and note the UTC date beside it.
+A survey of the running host on 2026-09-29 corrected an assumption this file used to state: the
+API **is** deployed, and has been since 2026-09-14. What is missing is not the deployment but
+everything that would make it legible — a pushed image, a recorded digest, a rehearsal, a release
+log, and any way to tell from outside what revision is running.
+
+So the boxes below are unticked because the thing each one describes has not been *done and
+recorded*, not because nothing was ever deployed. Here too, a written procedure is not a performed one, and
+this gate records what someone did. Tick each box on the deploy that satisfies it, and note the
+UTC date beside it. See [API server deployment](SERVER_DEPLOY.md), whose status section records
+what the survey found.
 
 ## Foundation
 
@@ -18,7 +27,7 @@ Nothing under **Deployment** is checked because the API has never been deployed.
 - [ ] A private container registry exists, its repository rejects mutable tags, and the host has a pull-only credential scoped to that one repository.
 - [ ] The image is built from a clean checkout of a reviewed `main` commit, pushed, and its immutable digest recorded; the registry's own answer agrees with the build's.
 - [ ] The image scan completed and its severity counts were read and recorded before the release decision.
-- [ ] The root-owned production environment file exists outside the repository with mode `0600`.
+- [x] The root-owned production environment file exists outside the repository with mode `0600`. *(observed 2026-09-29)*
 - [ ] Secrets are generated uniquely, stored in AWS Secrets Manager, and their values never enter Git, screenshots, shell history, or chat.
 - [ ] The PostgreSQL role is application-only and the database has no public port.
 - [ ] Caddy receives only ports `80` and `443`; it proxies privately to the application.

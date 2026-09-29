@@ -53,8 +53,9 @@ jobs:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
-          for value in "$AWS_ROLE_ARN" "$AWS_REGION" "$ECR_REGISTRY"; do
+          for value in "$AWS_ROLE_ARN" "$AWS_REGION" "$ECR_REGISTRY" "$ECR_REPOSITORY"; do
             if [ -z "$value" ]; then
               echo "The registry role and address are not configured for this protected environment."
               exit 1
@@ -75,12 +76,13 @@ jobs:
         id: build
         env:
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
           docker buildx build \
             --platform linux/amd64 \
             --provenance=false \
             --sbom=false \
-            --tag "$ECR_REGISTRY/together-ledger/api:${{ inputs.revision }}" \
+            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.revision }}" \
             --metadata-file image.json \
             --push .
           digest=$(jq -r '."containerimage.digest"' image.json)
@@ -91,9 +93,10 @@ jobs:
       - name: Confirm the registry holds that digest
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         run: |
           stored=$(aws ecr describe-images \
-            --repository-name together-ledger/api \
+            --repository-name "$ECR_REPOSITORY" \
             --region "$AWS_REGION" \
             --image-ids imageTag="${{ inputs.revision }}" \
             --query 'imageDetails[0].imageDigest' --output text)
