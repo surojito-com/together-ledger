@@ -141,6 +141,8 @@ Keep that token scoped only to the production app Worker deployment path. Store 
 
 `together-ledger.com` is the company site. It is served through Cloudflare from the separate `together-ledger.com` repository and is deployed by that repository's own workflow. Nothing in this repository builds or deploys the apex, and no check here can speak for it.
 
+One GitHub record stays in the `together-ledger.com` zone on purpose. The TXT record `_github-pages-challenge-together-ledger-digital-llc` is the organization's GitHub Pages domain verification. It is not left over from this repository's retired Pages site (#122), and it does not mean GitHub serves anything here: no GitHub Pages site in the organization uses this domain. While the record is present, no other GitHub account can publish a Pages site on `together-ledger.com` or its immediate subdomains, so a record that ever points at GitHub by mistake cannot be taken over. Keep it. Removing it is a deliberate decision, recorded in #228, made only after the domain has been unverified in the organization's Pages settings.
+
 If a Worker release needs to be rolled back, first record the symptoms and the current release revision. From a reviewed checkout with the authorized deployment credential available only in the process environment:
 
 ```sh
