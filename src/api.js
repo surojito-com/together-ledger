@@ -92,6 +92,19 @@ export class TogetherApi {
     return this.request(path, { method, body, authenticatedMutation: true });
   }
 
+  // The token goes in the body so it never appears in a logged address (issue #208). An API that
+  // predates that route answers with Fastify's own 404, which carries no error code, so ApiError
+  // falls back to 'request_failed'; only then does this retry the older path form. A real
+  // invitation error always carries its own code and is shown as it is.
+  async acceptInvitation(token) {
+    try {
+      return await this.mutate('/invitations/accept', 'POST', { token });
+    } catch (error) {
+      if (error.status !== 404 || error.code !== 'request_failed') throw error;
+      return this.mutate(`/invitations/${encodeURIComponent(token)}/accept`, 'POST', {});
+    }
+  }
+
   imageUrl(journeyId, momentId, imageId) {
     return `${this.base}/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}/images/${encodeURIComponent(imageId)}`;
   }

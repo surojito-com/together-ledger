@@ -6,12 +6,13 @@ import { buildApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
+import { loggerOptions, redactUrl } from '../server/log-options.js';
 
 const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
 const apiOrigin = 'https://api.example.test';
 
-async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, now = () => new Date('2026-08-02T12:00:00.000Z') } = {}) {
+async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z') } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({
     name: 'char_length',
@@ -52,7 +53,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
     ...configOverrides,
   });
   const platform = new PlatformService({ pool, config, mailer, now });
-  const app = await buildApp({ platform, config, ...(billing ? { billing } : {}) });
+  const app = await buildApp({ platform, config, logger, ...(billing ? { billing } : {}) });
   return { app, mailer, pool };
 }
 
@@ -590,6 +591,52 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'ownership_transferred'));
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'member_deleted_account'));
   assert.equal(JSON.stringify(bobAfterDeletion.json().data.events).includes('Alice'), false);
+});
+
+async function invitedPair(logLines) {
+  const logger = { ...loggerOptions, level: 'info', stream: { write: (line) => logLines.push(line) } };
+  const setup = await testPlatform({ logger });
+  const alice = await register(setup.app, setup.mailer, { email: 'log-alice@example.test', username: 'log-alice' });
+  const journeyResponse = await setup.app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'A place to return to', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  const journey = journeyResponse.json().data.journey;
+  const invited = await setup.app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'log-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const token = setup.mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'log-bob@example.test').token;
+  const bob = await register(setup.app, setup.mailer, { email: 'log-bob@example.test', username: 'log-bob' });
+  return { ...setup, journey, token, bob };
+}
+
+test('an invitation accepted with its token in the body never writes the token to the log', async (t) => {
+  const lines = [];
+  const { app, pool, journey, token, bob } = await invitedPair(lines);
+  t.after(async () => { await app.close(); await pool.end(); });
+  const missing = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(bob), payload: {} });
+  assert.equal(missing.statusCode, 400, missing.body);
+  assert.equal(missing.json().error.code, 'invalid_invitation');
+  const accepted = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(bob), payload: { token } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(accepted.json().data.journeyId, journey.id);
+  assert.ok(lines.some((line) => line.includes('/api/v1/invitations/accept')), 'the accept request was logged');
+  assert.equal(lines.some((line) => line.includes(token)), false, 'the raw token appears nowhere in the log');
+});
+
+test('the older path form still works, and its token is masked in the log', async (t) => {
+  const lines = [];
+  const { app, pool, journey, token, bob } = await invitedPair(lines);
+  t.after(async () => { await app.close(); await pool.end(); });
+  const accepted = await app.inject({ method: 'POST', url: `/api/v1/invitations/${token}/accept`, headers: authHeaders(bob) });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(accepted.json().data.journeyId, journey.id);
+  assert.ok(lines.some((line) => line.includes('/api/v1/invitations/[redacted]/accept')));
+  assert.equal(lines.some((line) => line.includes(token)), false, 'the raw token appears nowhere in the log');
+});
+
+test('logged addresses mask tokens in the accept path and in link parameters', () => {
+  assert.equal(redactUrl('/api/v1/invitations/abc123/accept'), '/api/v1/invitations/[redacted]/accept');
+  assert.equal(redactUrl('/api/v1/invitations/abc123/accept?x=1'), '/api/v1/invitations/[redacted]/accept?x=1');
+  assert.equal(redactUrl('/api/v1/invitations/accept'), '/api/v1/invitations/accept');
+  assert.equal(redactUrl('/api/v1/session?verify=v1&recovery=r2&invite=i3&token=t4&keep=yes'), '/api/v1/session?verify=[redacted]&recovery=[redacted]&invite=[redacted]&token=[redacted]&keep=yes');
+  assert.equal(redactUrl('/api/v1/journeys/j1/invitations'), '/api/v1/journeys/j1/invitations');
 });
 
 test('synthetic group mode reserves independent places without advertising its ceiling', async (t) => {
@@ -1371,7 +1418,9 @@ test('claiming to be an app does not relax a check the app never needed', async 
 
 test('the deployed logger is told to drop the headers and bodies that carry a token', async () => {
   const start = await readFile(new URL('../server/start.js', import.meta.url), 'utf8');
+  assert.match(start, /logger: loggerOptions/, 'production uses the shared logger options');
   for (const field of ['req.headers.cookie', 'req.headers.authorization', 'req.body.token', 'req.body.refreshToken']) {
-    assert.ok(start.includes(`'${field}'`), `${field} is not redacted from production logs`);
+    assert.ok(loggerOptions.redact.includes(field), `${field} is not redacted from production logs`);
   }
+  assert.equal(typeof loggerOptions.serializers.req, 'function', 'logged addresses pass through redactUrl');
 });

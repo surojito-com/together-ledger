@@ -14,6 +14,7 @@
     "@expo/metro-runtime": "57.0.16",
     "expo": "57.0.24",
     "expo-constants": "57.0.19",
+    "expo-dev-client": "57.0.19",
     "expo-linking": "57.0.10",
     "expo-router": "57.0.22",
     "expo-secure-store": "57.0.4",

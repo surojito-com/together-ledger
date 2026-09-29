@@ -597,6 +597,18 @@ footer { background: var(--spruce); color: var(--on-accent); padding: 42px clamp
 footer strong { font-family: Georgia, serif; font-size: 25px; }
 footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
 
+/* /privacy — PRIVACY.md rendered as a page (scripts/render-privacy-page.mjs). A reading column,
+   nothing interactive: the policy should read as a document, not as part of the workspace. */
+.policy-page { margin: 0 auto; max-width: 760px; padding: clamp(32px, 6vw, 72px) clamp(18px, 4vw, 40px) 80px; }
+.policy-page h1 { font-size: clamp(40px, 6vw, 64px); margin-bottom: 28px; }
+.policy-page h2 { font-size: clamp(26px, 3.4vw, 34px); line-height: 1.15; margin: 44px 0 12px; }
+.policy-page p, .policy-page li { color: var(--text-secondary); }
+.policy-page ul { padding-left: 1.2em; }
+.policy-page li + li { margin-top: 8px; }
+.policy-page code { background: var(--meta-bg); border: 1px solid var(--border); border-radius: var(--radius-xs); color: var(--fg); font-size: .9em; padding: 0 4px; }
+.policy-page a { color: var(--accent); }
+.policy-page .policy-contact { border-top: 1px solid var(--border); color: var(--fg); margin-top: 44px; padding-top: 20px; }
+
 @media (max-width: 900px) {
   .welcome-nav { display: none; }
   .welcome-menu { display: block; }

@@ -249,6 +249,12 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     await platform.withdrawInviteProposal(request.auth.userId, request.params.journeyId, request.params.proposalId);
     return reply.code(204).send();
   });
+  // The token travels in the body, which the log never records (issue #208). The path form below
+  // stays for clients that haven't updated; server/log-options.js masks its token in the log.
+  app.post('/api/v1/invitations/accept', { preHandler: protectMutation }, async (request) => {
+    const token = typeof request.body?.token === 'string' ? request.body.token : '';
+    return { data: { journeyId: await platform.acceptInvitation(request.auth.userId, token) } };
+  });
   app.post('/api/v1/invitations/:token/accept', { preHandler: protectMutation }, async (request) => ({ data: { journeyId: await platform.acceptInvitation(request.auth.userId, request.params.token) } }));
   app.delete('/api/v1/journeys/:journeyId/members/:userId', { preHandler: protectMutation }, async (request, reply) => {
     await platform.removeMember(request.auth.userId, request.params.journeyId, request.params.userId);
