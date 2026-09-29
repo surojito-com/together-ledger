@@ -7,7 +7,14 @@ API **is** deployed, and has been since 2026-09-14. What is missing is not the d
 everything that would make it legible — a pushed image, a recorded digest, a rehearsal, a release
 log, and any way to tell from outside what revision is running.
 
-So the boxes below are unticked because the thing each one describes has not been *done and
+**A release was performed and recorded on 2026-09-29** (`76221ea`), following
+[API server deployment](SERVER_DEPLOY.md): migrations rehearsed against a copy, applied to
+production, the image swapped, and the result confirmed from outside. The boxes it genuinely
+satisfied are ticked with that date. The ones it did not are tracked in #225 — chiefly that no
+image has ever been pushed to the registry, so `TOGETHER_IMAGE` is still a tag and the rollback
+anchor is a local build.
+
+The remaining boxes are unticked because the thing each one describes has not been *done and
 recorded*, not because nothing was ever deployed. Here too, a written procedure is not a performed one, and
 this gate records what someone did. Tick each box on the deploy that satisfies it, and note the
 UTC date beside it. See [API server deployment](SERVER_DEPLOY.md), whose status section records
@@ -17,7 +24,7 @@ what the survey found.
 
 - [ ] The reviewed `main` commit is reproducibly built and its container digest is recorded.
 - [ ] The AWS instance has a stable attached static IP and its operating system is patched.
-- [ ] SSH access is proven from the owner's terminal; the private key is mode `0600` and never committed.
+- [x] SSH access is proven from the owner's terminal; the private key is mode `0600` and never committed. *(2026-09-29)*
 - [ ] The Lightsail network firewall permits SSH only from the owner's current trusted network. It does not expose `5432` or `4174`.
 - [ ] The host firewall is active and permits SSH. Web ports remain closed until the release step.
 - [ ] Docker and Docker Compose are installed; `./scripts/verify-production-host.sh` passes from the repository checkout.
@@ -34,9 +41,9 @@ what the survey found.
 - [ ] A Caddy domain and Cloudflare DNS record are configured only after private health checks pass.
 - [ ] `PUBLIC_ORIGIN` is exactly `https://app.together-ledger.com`, `APP_ORIGINS` contains the legacy app origin during dual-host rollout, cookies are secure, and proxy trust is enabled.
 - [ ] `TOGETHER_IMAGE` names an immutable digest, never a tag, and the digest running on the host is the digest that was reviewed.
-- [ ] Migrations were applied against a pre-production copy from that same image before production, and every migration in the release is additive enough for the previous image to run against.
-- [ ] The root-owned release log records the UTC time, commit, digest, and applied migrations of each release, so a rollback knows what to return to.
-- [ ] The release was confirmed against production from outside the host: `/healthz`, `/readyz`, and one synthetic-account exercise of the change the release actually carried.
+- [x] Migrations were applied against a pre-production copy from that same image before production, and every migration in the release is additive enough for the previous image to run against. *(2026-09-29: `020`–`023` rehearsed against a restored copy, then applied to production while the previous image kept serving.)*
+- [ ] The root-owned release log records the UTC time, commit, digest, and applied migrations of each release, so a rollback knows what to return to. *(Started 2026-09-29 at `/etc/together-ledger/release-log`; it records a tag rather than a digest, so it is not yet what this item asks for — see #225.)*
+- [ ] The release was confirmed against production from outside the host: `/healthz`, `/readyz`, and one synthetic-account exercise of the change the release actually carried. *(2026-09-29 did the first two, and proved the new routes answer, but ran no signed-in flow — see #225.)*
 
 ## Recoverability
 

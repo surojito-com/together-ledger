@@ -2,10 +2,17 @@
 
 ## Status of this document
 
-This procedure has not been run end to end. It was first written without anyone having looked at
-the running host, and a survey on 2026-09-29 found the deployment in a materially different state
-than the document assumed. The corrections are recorded here rather than quietly folded in,
-because the difference is the substance.
+**This procedure was run for the first time on 2026-09-29**, releasing `76221ea`. It was first
+written without anyone having looked at the running host, and the survey that preceded that
+release found the deployment in a materially different state than the document assumed. The
+corrections are recorded here rather than quietly folded in, because the difference is the
+substance.
+
+What that first run covered: a verified current backup, a build from a clean checkout, the
+migrations rehearsed against a restored copy and then applied to production ahead of the image
+swap, and confirmation from outside. What it did not cover, and why, is tracked in #225 — no
+image has been pushed to the registry, so the release is still pinned by tag and the rollback
+anchor is a local build.
 
 **The API is deployed, and has been since 2026-09-14.** It runs on a single EC2 host in
 `<AWS_REGION>` from `compose.production.yaml`, behind Caddy, with a healthy daily encrypted
