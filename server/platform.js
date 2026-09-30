@@ -532,8 +532,18 @@ export class PlatformService {
   async socialSignIn(provider, { idToken, displayName } = {}, { issueSession = true } = {}) {
     const identity = await this.verifiedIdentity(provider, idToken);
     return withTransaction(this.pool, async (client) => {
-      const known = await this.userForIdentity(client, identity);
-      if (known) return { user: publicUser(known), session: issueSession ? await this.createSession(client, known.id) : null };
+      let known = await this.userForIdentity(client, identity);
+      if (known) {
+        // Apple sends the person's name only on the very first authorization. An account that
+        // opened without one still carries its fallback name, the same as its username; if a name
+        // turns up now (a client resending the one it kept), it is saved, and never over a name
+        // the account already has (decided Sep 30, 2026).
+        const offered = cleanOptionalText(displayName, 80);
+        if (offered && known.display_name === known.username && known.username.startsWith('journeyer-')) {
+          known = (await client.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [offered, known.id])).rows[0];
+        }
+        return { user: publicUser(known), session: issueSession ? await this.createSession(client, known.id) : null };
+      }
 
       let email = null;
       if (identity.email) {
@@ -556,7 +566,9 @@ export class PlatformService {
         const taken = await client.query('SELECT 1 FROM users WHERE email_normalized=$1', [email]);
         if (taken.rowCount) email = null;
       }
-      // The same private sign-in name migration 003 gave accounts that predate usernames.
+      // The same private sign-in name migration 003 gave accounts that predate usernames. It is
+      // also the display name only as a fallback: the name Apple sends on the first sign-in (the
+      // client passes it as displayName; Apple never sends it again), or Google's, comes first.
       const username = `journeyer-${userId.slice(0, 8)}`;
       const name = cleanOptionalText(displayName || identity.name, 80) || username;
       const created = await client.query(
