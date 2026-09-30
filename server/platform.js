@@ -745,7 +745,14 @@ export class PlatformService {
         try {
           await deleteAccount(userId);
         } catch (error) {
-          process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple account-deleted: deletion refused, as Delete account would refuse it', code: error?.code || 'error' })}\n`);
+          // Remembered on the identity, not only in the log, because the log goes with the
+          // container at the next release. The account id is a random UUID, nothing personal.
+          await this.pool.query(
+            `UPDATE user_identities SET apple_account_deleted_at=COALESCE(apple_account_deleted_at, $1)
+             WHERE provider='apple' AND subject=$2`,
+            [this.now(), event.subject],
+          );
+          process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple account-deleted: deletion refused, as Delete account would refuse it', code: error?.code || 'error', userId, followUp: 'node server/finish-apple-account-deletion.js' })}\n`);
         }
       } else {
         // There is still a password or a Google identity: the Apple identity goes, the account
