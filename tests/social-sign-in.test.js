@@ -95,7 +95,7 @@ const fakeApple = new FakeApple();
 const googleToken = (claims, options) => idToken(google, { iss: 'https://accounts.google.com', aud: GOOGLE_CLIENT, email_verified: true, ...claims }, options);
 const appleToken = (claims, options) => idToken(apple, { iss: 'https://appleid.apple.com', aud: APPLE_APP, ...claims }, options);
 
-async function setup() {
+async function setup(overrides = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
   const pool = new (memory.adapters.createPg().Pool)();
@@ -103,6 +103,7 @@ async function setup() {
   const config = loadConfig({
     NODE_ENV: 'test', PUBLIC_ORIGIN: origin, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
     GOOGLE_CLIENT_IDS: GOOGLE_CLIENT,
+    ...overrides,
   });
   const fetch = async (url, init) => {
     if (url === 'https://www.googleapis.com/oauth2/v3/certs') return Response.json({ keys: [google.jwk] });
@@ -383,4 +384,72 @@ test('linking Apple exchanges its code only once the password is right', async (
   assert.equal(linked.statusCode, 200, linked.body);
   assert.equal(linked.json().data.user.id, owner.id);
   assert.match((await pool.query(`SELECT apple_refresh_token FROM user_identities WHERE subject='a-15'`)).rows[0].apple_refresh_token, /^v1\./);
+});
+
+test('Apple\'s first-sign-in name is kept, and the journeyer- name is only a fallback', async () => {
+  const { app } = await setup();
+  const named = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-n1', email: 'n1@example.com' }), authorizationCode: fakeApple.issueCode('a-n1'), displayName: 'Meera Rao' });
+  assert.equal(named.json().data.user.displayName, 'Meera Rao');
+
+  // No name on the first sign-in: the fallback. A later sign-in that brings one saves it...
+  const unnamed = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-n2', email: 'n2@example.com' }), authorizationCode: fakeApple.issueCode('a-n2') });
+  const fallback = unnamed.json().data.user;
+  assert.equal(fallback.displayName, fallback.username);
+  const later = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-n2' }), displayName: 'Sam' });
+  assert.equal(later.json().data.user.displayName, 'Sam');
+  // ...but never overwrites a name the account already has.
+  const again = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-n2' }), displayName: 'Someone Else' });
+  assert.equal(again.json().data.user.displayName, 'Sam');
+});
+
+test('with no Apple or Google config at all, the server still starts and email sign-in works', async () => {
+  // A production environment file that has none of the sign-in values yet must load cleanly.
+  const production = loadConfig({
+    NODE_ENV: 'production', PUBLIC_ORIGIN: 'https://app.together-ledger.com', API_ORIGIN: 'https://api.together-ledger.com',
+    ACCOUNT_ORIGIN: 'https://app.together-ledger.com', COOKIE_SECURE: 'true', SESSION_SECRET: 'p'.repeat(40),
+    AUDIT_HMAC_KEY: 'q'.repeat(40), SMTP_URL: 'smtp://relay.example.test:587',
+    GOOGLE_CLIENT_IDS: '', APPLE_CLIENT_IDS: '',
+  });
+  assert.deepEqual(production.googleClientIds, []);
+  assert.deepEqual(production.appleClientIds, []);
+
+  const { app } = await setup({ GOOGLE_CLIENT_IDS: '', APPLE_CLIENT_IDS: '' });
+  assert.equal((await app.inject({ method: 'GET', url: '/healthz' })).statusCode, 200);
+  const user = await registerWithPassword(app, 'plain@example.com');
+  const login = await post(app, '/api/v1/auth/login', { identifier: 'plain@example.com', password: PASSWORD });
+  assert.equal(login.statusCode, 200, login.body);
+  assert.equal(login.json().data.user.id, user.id);
+  for (const provider of ['google', 'apple']) {
+    const refused = await post(app, `/api/v1/auth/${provider}`, { idToken: 'anything' });
+    assert.equal(refused.statusCode, 404);
+    assert.equal(refused.json().error.code, 'sign_in_unavailable');
+  }
+});
+
+test('with the Apple key or encryption key missing or malformed, the server still starts and email sign-in works', async () => {
+  for (const apple of [
+    { privateKey: '', encryptionKey: '' },
+    { privateKey: 'not-a-key', encryptionKey: 'short' },
+  ]) {
+    const { app, platform } = await setup();
+    platform.apple = new AppleSignIn({ teamId: '769MBW6826', keyId: '985BDXJP8S', ...apple, fetch: async () => { throw new Error('must not be called'); } });
+    assert.equal((await app.inject({ method: 'GET', url: '/healthz' })).statusCode, 200);
+    const owner = await registerWithPassword(app, 'still@example.com');
+    const login = await post(app, '/api/v1/auth/login', { identifier: 'still@example.com', password: PASSWORD });
+    assert.equal(login.statusCode, 200, login.body);
+    assert.equal(login.json().data.user.id, owner.id);
+    // Google keeps working; only a new Apple account waits, and says so without a 500.
+    assert.equal((await post(app, '/api/v1/auth/google', { idToken: googleToken({ sub: `g-${apple.encryptionKey}`, email: `g-${apple.encryptionKey || 'none'}@example.com` }) })).statusCode, 200);
+    const refused = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-cfg', email: 'cfg@example.com' }), authorizationCode: fakeApple.issueCode('a-cfg') });
+    assert.equal(refused.statusCode, 503, refused.body);
+    assert.equal(refused.json().error.code, 'sign_in_unavailable');
+    // And a password account still deletes.
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const deleted = await app.inject({
+      method: 'DELETE', url: '/api/v1/account',
+      headers: { origin, cookie, 'x-together-csrf': login.json().data.csrfToken },
+      payload: { confirmation: 'DELETE', password: PASSWORD },
+    });
+    assert.equal(deleted.statusCode, 204, deleted.body);
+  }
 });

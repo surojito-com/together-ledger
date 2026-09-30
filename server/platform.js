@@ -544,7 +544,10 @@ export class PlatformService {
     if (!authorizationCode) throw new PlatformError(400, 'invalid_input', 'Sign in with Apple again to continue.');
     const clientId = identity.audience;
     const webFlow = clientId === this.config.APPLE_SERVICES_ID;
-    const exchanged = await this.apple.exchangeCode({ code: authorizationCode, clientId, webFlow });
+    // A key that is set but malformed throws while signing the client secret. That is our
+    // configuration, not the person's, so it answers like any other unavailable Apple.
+    const exchanged = await this.apple.exchangeCode({ code: authorizationCode, clientId, webFlow })
+      .catch(() => ({ ok: false, reason: 'misconfigured', error: 'client_secret_unsigned' }));
     if (!exchanged.ok) {
       if (exchanged.reason === 'invalid_grant') throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
       if (exchanged.reason === 'misconfigured') process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple token exchange refused', error: exchanged.error || 'unknown' })}\n`);
@@ -564,8 +567,17 @@ export class PlatformService {
 
   async socialSignIn(provider, { idToken, displayName, authorizationCode } = {}, { issueSession = true } = {}) {
     const identity = await this.verifiedIdentity(provider, idToken);
-    const known = await this.userForIdentity(this.pool, identity);
+    let known = await this.userForIdentity(this.pool, identity);
     if (known) {
+      // Apple sends the person's name only on the very first authorization. An account that
+      // opened without one still carries its fallback name, the same as its username; if a name
+      // turns up now (a client resending the one it kept), it is saved, and never over a name
+      // the account already has (decided Sep 30, 2026).
+      const offered = cleanOptionalText(displayName, 80);
+      if (offered && known.display_name === known.username && known.username.startsWith('journeyer-')) {
+        const renamed = await this.pool.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [offered, known.id]);
+        known = { ...renamed.rows[0], apple_refresh_token: known.apple_refresh_token };
+      }
       // An Apple account from before #218 has no refresh token yet: this sign-in's code fills it
       // in. Failing that never stops the sign-in.
       if (provider === 'apple' && authorizationCode && !known.apple_refresh_token) {
@@ -607,7 +619,9 @@ export class PlatformService {
         const taken = await client.query('SELECT 1 FROM users WHERE email_normalized=$1', [email]);
         if (taken.rowCount) email = null;
       }
-      // The same private sign-in name migration 003 gave accounts that predate usernames.
+      // The same private sign-in name migration 003 gave accounts that predate usernames. It is
+      // also the display name only as a fallback: the name Apple sends on the first sign-in (the
+      // client passes it as displayName; Apple never sends it again), or Google's, comes first.
       const username = `journeyer-${userId.slice(0, 8)}`;
       const name = cleanOptionalText(displayName || identity.name, 80) || username;
       const created = await client.query(
