@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { newDb } from 'pg-mem';
+import ts from 'typescript';
 import { buildApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
@@ -1202,6 +1203,52 @@ test('without the app header, recovery still needs our own page', async (t) => {
   assert.equal(requested.statusCode, 403, requested.body);
   const confirmed = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', payload: { token: 'x', password: 'a brand new horse battery staple' } });
   assert.equal(confirmed.statusCode, 403, confirmed.body);
+});
+
+test('the phone app\'s own client carries a whole account journey against this server', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const source = await readFile(new URL('../apps/mobile/src/api/client.ts', import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+  const { createAccountClient } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  let held = null;
+  const tokens = { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } };
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens,
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  const email = 'journey-phone@example.test';
+
+  const registered = await phone.register({ email, username: 'journey-phone', password: 'correct horse battery staple' });
+  assert.equal(registered.user.email, email);
+  assert.equal(registered.verificationSent, true);
+  assert.ok(held?.token && held?.refreshToken, 'registering leaves the phone signed in');
+  assert.equal((await phone.session()).emailVerified, false);
+  assert.equal(await phone.resendVerification(), true);
+
+  const verification = mailer.messages.findLast((message) => message.type === 'verification' && message.to === email);
+  assert.equal((await phone.verifyEmail(verification.token)).emailVerified, true);
+
+  await phone.logout();
+  assert.equal(held, null);
+  assert.equal(await phone.session(), null);
+  assert.equal((await phone.login({ identifier: email, password: 'correct horse battery staple' })).email, email);
+
+  await phone.requestRecovery(email);
+  const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === email);
+  await phone.confirmRecovery(recovery.token, 'a brand new horse battery staple');
+  assert.equal(held, null, 'a new password signs this phone out too');
+  await assert.rejects(phone.login({ identifier: email, password: 'correct horse battery staple' }), { status: 401 });
+  await phone.login({ identifier: email, password: 'a brand new horse battery staple' });
+
+  await assert.rejects(phone.deleteAccount('not the password'), { status: 401 });
+  await phone.deleteAccount('a brand new horse battery staple');
+  assert.equal(held, null);
+  await assert.rejects(phone.login({ identifier: email, password: 'a brand new horse battery staple' }), { status: 401 });
 });
 
 test('a phone registers with a bearer token and never receives a session cookie', async (t) => {
