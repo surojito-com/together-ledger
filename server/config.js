@@ -43,6 +43,18 @@ const ConfigSchema = z.object({
   // sign-in off rather than accepting a token for someone else's app.
   GOOGLE_CLIENT_IDS: z.string().default(''),
   APPLE_CLIENT_IDS: z.string().default('com.togetherledger.ledger,com.togetherledger.ledger.web'),
+  // Sign in with Apple's REST API (#218, server/apple.js): exchanging a sign-in's code for a
+  // refresh token, and revoking it when the account is deleted. The Team ID, the key's ID and the
+  // web's Return URL are public. The .p8 key (one line is fine) and the key that encrypts Apple's
+  // refresh tokens (32 random bytes, base64) are secrets, kept in Secrets Manager like the rest.
+  APPLE_TEAM_ID: z.string().default('769MBW6826'),
+  APPLE_SIGN_IN_KEY_ID: z.string().default('985BDXJP8S'),
+  APPLE_SIGN_IN_PRIVATE_KEY: z.string().default(''),
+  APPLE_TOKEN_ENCRYPTION_KEY: z.string().default(''),
+  // The web's Services ID and the Return URL Sign in with Apple JS is initialised with. A code the
+  // web asked for is exchanged with both; a code from the phone with neither.
+  APPLE_SERVICES_ID: z.string().default('com.togetherledger.ledger.web'),
+  APPLE_WEB_REDIRECT_URI: z.string().default('https://app.together-ledger.com/'),
 });
 
 function assertStripeConfiguration(config) {

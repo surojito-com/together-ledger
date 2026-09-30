@@ -99,6 +99,8 @@ Revisit this decision when any of these becomes true:
 | `<SECRET_ID_AUDIT>` | Secrets Manager name or ARN holding `AUDIT_HMAC_KEY` | AWS Secrets Manager |
 | `<SECRET_ID_POSTGRES>` | Secrets Manager name or ARN holding `POSTGRES_PASSWORD` | AWS Secrets Manager |
 | `<SECRET_ID_SMTP>` | Secrets Manager name or ARN holding the Resend relay URL | AWS Secrets Manager |
+| `<SECRET_ID_APPLE_SIGN_IN>` | Secrets Manager name or ARN holding `APPLE_SIGN_IN_PRIVATE_KEY`: the Sign in with Apple key `985BDXJP8S`'s `.p8` contents, on one line | AWS Secrets Manager |
+| `<SECRET_ID_APPLE_TOKENS>` | Secrets Manager name or ARN holding `APPLE_TOKEN_ENCRYPTION_KEY`: 32 random bytes, base64 (`openssl rand -base64 32`) | AWS Secrets Manager |
 | `<COMMIT>` | The reviewed `main` commit being released | `git rev-parse HEAD` in a clean checkout |
 | `<DIGEST>` | The immutable image digest recorded in step 2 | printed by the build |
 
@@ -188,6 +190,8 @@ sudo sh -c 'umask 077; {
   printf "AUDIT_HMAC_KEY=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_AUDIT> --query SecretString --output text)"
   printf "POSTGRES_PASSWORD=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_POSTGRES> --query SecretString --output text)"
   printf "SMTP_URL=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_SMTP> --query SecretString --output text)"
+  printf "APPLE_SIGN_IN_PRIVATE_KEY=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_APPLE_SIGN_IN> --query SecretString --output text | tr -d "\n")"
+  printf "APPLE_TOKEN_ENCRYPTION_KEY=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_APPLE_TOKENS> --query SecretString --output text)"
 } >> /etc/together-ledger/production.env'
 ```
 

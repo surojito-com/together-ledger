@@ -33,7 +33,17 @@ const app = await buildApp({
   logger: loggerOptions,
 });
 
+// Apple revocations a deletion couldn't finish (Apple unreachable) are retried every ten minutes
+// (#218). A failure here is logged and left for the next round; it never stops the server.
+const appleRetry = setInterval(() => {
+  platform.drainAppleRevocations()
+    .then((tally) => { if (tally.revoked || tally.retrying || tally.dropped) app.log.info(tally, 'apple revocations'); })
+    .catch((error) => app.log.error({ err: { name: error?.name } }, 'apple revocations failed'));
+}, 10 * 60 * 1000);
+appleRetry.unref();
+
 async function shutdown(signal) {
+  clearInterval(appleRetry);
   app.log.info({ signal }, 'shutting down');
   await app.close();
   await pool.end();
