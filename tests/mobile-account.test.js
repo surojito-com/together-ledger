@@ -125,7 +125,11 @@ test('account deletion is three taps from settings, and says what goes and what 
   const remove = await readFile(new URL('app/delete-account.tsx', mobile), 'utf8');
   assert.match(settings, /label="Delete account" onPress=\{\(\) => router\.push\('\/delete-account'\)\}/, 'tap 1: settings opens the deletion screen');
   assert.match(remove, /label="Permanently delete account"[^\n]*onPress=\{confirm\}/, 'tap 2: the deletion button asks to confirm');
-  assert.match(remove, /Alert\.alert\('Permanently delete this account\?'[\s\S]*style: 'destructive', onPress: remove/, 'tap 3: the confirmation deletes');
+  assert.match(remove, /if \(!await shell\.confirmConsequence\(\{ title: 'Permanently delete this account\?', consequence: 'This follows the journey ownership rules shown here and cannot be undone\.', confirmLabel: 'Permanently delete account', destructive: true \}\)\) return;\s*setPending\(true\);[\s\S]*session\.client\.deleteAccount\(password\)/, 'tap 3: the consequence dialog, in the web\'s words, deletes');
+  assert.doesNotMatch(remove, /Alert\.alert/, 'the consequence dialog, not the phone\'s stock pop-up (#243)');
+  const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.ok(web.includes("confirmConsequence({ title: 'Permanently delete this account?', consequence: 'This follows the journey ownership rules shown here and cannot be undone.', confirmLabel: 'Permanently delete account', destructive: true })"), 'the phone asks exactly what the web asks');
+  assert.match(remove, /shell\.showStatus\(accountMessage\(error\), \{ source: 'account-deletion' \}\)/, 'a wrong password goes to the status region');
   assert.match(remove, /What is deleted:/);
   assert.match(remove, /What stays:/);
 });
