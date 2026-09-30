@@ -3,6 +3,7 @@ import { router, Stack } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider } from '../src/auth/session';
 import { ShellOverlays } from '../src/components/dialogs';
+import { JourneyProvider } from '../src/journey/use-journey';
 import { ShellProvider } from '../src/shell/shell-provider';
 import { fontSources, targetSize, ThemeProvider, useTheme } from '../src/theme';
 
@@ -36,6 +37,7 @@ function ThemedStack() {
       <Stack.Screen name="recovery-confirm" options={{ title: 'Account recovery' }} />
       <Stack.Screen name="verify-email" options={{ title: 'Verify email' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
+      <Stack.Screen name="moment" options={{ title: 'Hold a moment', presentation: 'modal' }} />
     </Stack>
   );
 }
@@ -48,7 +50,9 @@ export default function RootLayout() {
     <ThemeProvider>
       <SessionProvider>
         <ShellProvider>
-          <ThemedStack />
+          <JourneyProvider>
+            <ThemedStack />
+          </JourneyProvider>
           <ShellOverlays />
         </ShellProvider>
       </SessionProvider>

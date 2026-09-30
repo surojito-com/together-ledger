@@ -1301,6 +1301,55 @@ test('the phone reads a shared journey through this server, and never another pe
   assert.equal(view.moneyContext(recent[0]), '$12.50 is held here as context, not a score.');
 });
 
+test('the phone holds, changes, shares and deletes a moment through this server', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const draft = await load('../apps/mobile/src/journey/moment-draft.ts');
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'holder@example.test', username: 'holder', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'holder@example.test').token);
+  const created = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: { authorization: `Bearer ${held.token}`, 'x-together-client': 'app' }, payload: { name: 'Ours', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  assert.equal(created.statusCode, 201, created.body);
+  const journeyId = created.json().data.journey.id;
+
+  const fresh = { ...draft.draftFrom(null, { kind: 'other' }), kindLabel: 'A small win', title: 'We found the view', visibility: 'private', theme: 'green', money: '12.5', moneyCurrency: 'EUR', locations: draft.addPlace([], ' Marlow ').locations };
+  assert.equal(draft.draftProblem(fresh), null);
+  const moment = await phone.createMoment(journeyId, draft.payloadFrom(fresh, null));
+  assert.equal(moment.kindLabel, 'A small win');
+  assert.equal(moment.theme, 'green');
+  assert.equal(moment.moneyCents, 1250);
+  assert.deepEqual(moment.locations.map(({ label }) => label), ['Marlow']);
+
+  const later = await phone.updateMoment(journeyId, moment.id, draft.payloadFrom({ ...draft.draftFrom(moment), visibility: 'share-later', locations: [] }, moment));
+  assert.equal(later.visibility, 'share-later');
+  assert.deepEqual(later.locations, [], 'a place removed on the phone is removed');
+  await assert.rejects(phone.updateMoment(journeyId, moment.id, draft.payloadFrom(draft.draftFrom(moment), moment)), { status: 409, message: 'This moment changed on another device.' }, 'an edit from a stale version is refused, not merged over');
+
+  const shared = await phone.updateMoment(journeyId, moment.id, draft.sharePayload(later));
+  assert.equal(shared.visibility, 'shared-now');
+  await assert.rejects(phone.updateMoment(journeyId, moment.id, draft.payloadFrom({ ...draft.draftFrom(shared), visibility: 'private' }, shared)), { status: 400, message: 'A moment already shared cannot become private again. Prior access cannot be undone.' }, 'the server, not only the form, keeps a shared moment shared');
+
+  await phone.deleteMoment(journeyId, moment.id, shared.version);
+  const after = await phone.snapshot(journeyId);
+  assert.deepEqual(after.moments, []);
+  assert.ok(after.events.some((event) => event.action === 'moment_deleted'), 'deleting a shared moment leaves its tombstone');
+});
+
 test('a phone registers with a bearer token and never receives a session cookie', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });

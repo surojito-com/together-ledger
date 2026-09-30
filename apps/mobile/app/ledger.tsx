@@ -1,21 +1,25 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Choices } from '../src/components/choices';
 import { EmptyState } from '../src/components/empty-state';
-import { MomentCard } from '../src/components/moment-card';
+import { CardAction, MomentCard, momentColors } from '../src/components/moment-card';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
 import { journeyPeriod, momentFilters, MOMENT_TYPES, openThreads, recentMoments, shownMoments, type Concern, type Journey } from '../src/journey/journey-view';
+import { useMomentActions } from '../src/journey/moment-actions';
+import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
-import { fonts, targetSize, useTheme } from '../src/theme';
+import { fonts, useTheme } from '../src/theme';
 
 /**
  * The ledger surface: the open journey and its moments (TL-M-07, #182), ported from the web's
- * render() and renderSharedJourney(). Holding, editing and sharing a moment are #183 and #184.
+ * render() and renderSharedJourney(). Holding, editing and sharing a moment is #183, in app/moment.tsx.
  */
 export default function LedgerScreen() {
   const journey = useJourney();
+  const actions = useMomentActions();
   const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState('all');
@@ -44,7 +48,20 @@ export default function LedgerScreen() {
       <FlatList
         data={shown}
         keyExtractor={(moment) => moment.id}
-        renderItem={({ item }) => <MomentCard moment={item} />}
+        renderItem={({ item }) => {
+          const cardColors = momentColors(item, colors);
+          return (
+            <MomentCard
+              moment={item}
+              actions={
+                <>
+                  {item.visibility === 'share-later' ? <CardAction label="Share now" colors={cardColors} onPress={() => actions.share(item as EditableMoment)} /> : null}
+                  <CardAction label="Edit" colors={cardColors} onPress={() => router.push({ pathname: '/moment', params: { id: item.id } })} />
+                </>
+              }
+            />
+          );
+        }}
         contentContainerStyle={styles.list}
         ItemSeparatorComponent={() => <View style={styles.gap} />}
         refreshControl={<RefreshControl refreshing={journey.refreshing} onRefresh={journey.refresh} tintColor={colors.accent} colors={[colors.accent]} />}
@@ -62,6 +79,7 @@ export default function LedgerScreen() {
               <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>Recent moments</Text>
               <Text style={[styles.body, { color: colors.muted }]}>Hold what happened in words that feel true.</Text>
             </View>
+            <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />
             {recent.length ? <Button kind="quiet" label={expanded ? 'Show recent' : `See all ${recent.length} moments`} onPress={() => setExpanded(!expanded)} /> : null}
             {expanded && recent.length ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
           </View>
@@ -76,30 +94,6 @@ export default function LedgerScreen() {
 /** The web's journey select, as a row of choices a thumb can reach. */
 function JourneyPicker({ journeys, activeId, onSelect }: { journeys: Journey[]; activeId: string; onSelect: (id: string) => void }) {
   return <Choices label="Journey" options={journeys.map((item) => [item.id, item.name])} selected={activeId} onSelect={onSelect} />;
-}
-
-/** A single choice among a few, the pressed one marked by a filled shape as well as colour. */
-function Choices({ label, options, selected, onSelect }: { label: string; options: [string, string][]; selected: string; onSelect: (value: string) => void }) {
-  const { theme } = useTheme();
-  const colors = theme.colors;
-  return (
-    <View accessibilityRole="radiogroup" accessibilityLabel={label} style={styles.choices}>
-      {options.map(([value, text]) => {
-        const active = value === selected;
-        return (
-          <Pressable
-            key={value}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: active }}
-            onPress={() => onSelect(value)}
-            style={({ pressed }) => [styles.choice, targetSize, { borderColor: active ? colors.accent : colors.border, backgroundColor: active ? colors.accent : colors.surface, borderRadius: theme.radius.pill, opacity: pressed ? 0.7 : 1 }]}
-          >
-            <Text style={[styles.choiceText, { color: active ? colors.onAccent : colors.fg }]}>{active ? '● ' : ''}{text}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
 }
 
 function Threads({ threads }: { threads: Concern[] }) {
@@ -133,7 +127,7 @@ function EmptyStart({ signedIn }: { signedIn: boolean }) {
       <Body>A ledger can hold the things you want to remember, name, or return to. It begins empty.</Body>
       <View style={[styles.types, { backgroundColor: colors.metaBg, borderColor: colors.border, borderRadius: theme.radius.l }]}>
         <Text style={[styles.body, { color: colors.muted }]}>There are no examples here—only possibilities:</Text>
-        <View style={styles.choices}>
+        <View style={styles.kinds}>
           {kinds.map(([value, label]) => (
             <Text key={value} style={[styles.type, { color: colors.fg, borderColor: colors.border, backgroundColor: colors.surface, borderRadius: theme.radius.pill }]}>{label}</Text>
           ))}
@@ -165,13 +159,11 @@ const styles = StyleSheet.create({
   section: { gap: 6, marginTop: 8 },
   eyebrow: { fontSize: 12, fontWeight: '900', letterSpacing: 1.9, textTransform: 'uppercase' },
   sectionTitle: { fontSize: 28, lineHeight: 34 },
-  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  choice: { borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center' },
-  choiceText: { fontSize: 15, fontWeight: '700' },
   threads: { borderWidth: 1, padding: 20, gap: 6, marginTop: 24 },
   thread: { borderTopWidth: 1, paddingVertical: 17, gap: 6 },
   openChip: { alignSelf: 'flex-start', borderWidth: 1, fontSize: 12, fontWeight: '900', letterSpacing: 1, paddingHorizontal: 8, paddingVertical: 4, textTransform: 'uppercase', overflow: 'hidden' },
   threadTitle: { fontSize: 17, fontWeight: '700' },
   types: { borderWidth: 1, padding: 22, gap: 16 },
+  kinds: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   type: { borderWidth: 1, fontSize: 14, fontWeight: '800', paddingHorizontal: 12, paddingVertical: 9, overflow: 'hidden' },
 });

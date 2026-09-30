@@ -6,9 +6,9 @@
  * copied, so a date or an amount can never read differently on the phone.
  */
 import { dateLabel, money, MOMENT_TYPES } from '../../../../src/model.js';
-import { momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
+import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
 
-export { dateLabel, money, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme };
+export { dateLabel, money, MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme };
 
 export type Visibility = 'private' | 'share-later' | 'shared-now';
 
@@ -39,6 +39,7 @@ export type Moment = {
   locations?: { label: string }[];
   createdBy?: string;
   shapedByBoth?: boolean;
+  version?: number;
   updatedAt: string;
 };
 

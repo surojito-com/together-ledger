@@ -175,6 +175,17 @@ export function createAccountClient({ base, fetch, tokens }: {
     async snapshot<S>(journeyId: string) {
       return request<S>(`/journeys/${encodeURIComponent(journeyId)}/snapshot`, { signedIn: true });
     },
+    /** Hold a new moment (TL-M-08, #183). */
+    async createMoment<M>(journeyId: string, moment: object) {
+      return (await request<{ moment: M }>(`/journeys/${encodeURIComponent(journeyId)}/moments`, { method: 'POST', body: moment, signedIn: true })).moment;
+    },
+    /** Change a moment, from the version it was read at; a newer one elsewhere is a conflict. */
+    async updateMoment<M>(journeyId: string, momentId: string, moment: object) {
+      return (await request<{ moment: M }>(`/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}`, { method: 'PATCH', body: moment, signedIn: true })).moment;
+    },
+    async deleteMoment(journeyId: string, momentId: string, version: number) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}`, { method: 'DELETE', body: { version }, signedIn: true });
+    },
     /**
      * Where a moment's photo is, with the access token the image loader has to send. A token
      * about to lapse is refreshed first, because the loader cannot retry the way request() does.

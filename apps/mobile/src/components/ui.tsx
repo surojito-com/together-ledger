@@ -1,7 +1,8 @@
-import { type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { PENDING_LABEL } from '../shell/defaults';
+import { useShell } from '../shell/shell-provider';
 import { ScreenStatusRegion } from './status-region';
 import { fonts, targetSize, useTheme } from '../theme';
 
@@ -12,11 +13,18 @@ import { fonts, targetSize, useTheme } from '../theme';
  */
 export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'] }: { title: string; lead?: string; children: ReactNode; edges?: Edge[] }) {
   const { theme } = useTheme();
+  const { status } = useShell();
+  const scroll = useRef<ScrollView>(null);
+  // Being in the right place is not the same as being seen (the web's placeStatus): a message
+  // raised at the foot of a long form brings the region at its top into view.
+  useEffect(() => {
+    if (status) scroll.current?.scrollTo({ y: 0, animated: true });
+  }, [status]);
   // The header covers the top inset; a screen without one passes 'top' too, so nothing sits
   // under a notch or the status bar.
   return (
     <SafeAreaView edges={edges} style={[styles.fill, { backgroundColor: theme.colors.bg }]}>
-      <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scroll} contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
         <ScreenStatusRegion />
         <Text accessibilityRole="header" style={[styles.title, fonts.serif, { color: theme.colors.fg }]}>{title}</Text>
         {lead ? <Text style={[styles.body, { color: theme.colors.textSecondary }]}>{lead}</Text> : null}
@@ -26,7 +34,7 @@ export function Screen({ title, lead, children, edges = ['bottom', 'left', 'righ
   );
 }
 
-export function Field({ label, hint, ...input }: { label: string; hint?: string } & TextInputProps) {
+export function Field({ label, hint, style, ...input }: { label: string; hint?: string } & TextInputProps) {
   const { theme } = useTheme();
   return (
     <View style={styles.field}>
@@ -34,7 +42,7 @@ export function Field({ label, hint, ...input }: { label: string; hint?: string 
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor={theme.colors.muted}
-        style={[styles.input, targetSize, { color: theme.colors.fg, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.m }]}
+        style={[styles.input, targetSize, { color: theme.colors.fg, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.m }, style]}
         {...input}
       />
       {hint ? <Text style={[styles.hint, { color: theme.colors.muted }]}>{hint}</Text> : null}

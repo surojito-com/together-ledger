@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { accountMessage } from '../auth/account-messages';
 import { useSession } from '../auth/session';
 import { useShell } from '../shell/shell-provider';
@@ -17,8 +17,11 @@ type Held = { forUser: string; state: JourneyState };
  * Loads the signed-in person's journeys and the open one's snapshot, the way the web's
  * refreshCloudState() does (TL-M-07, #182). What is held belongs to one account: it is keyed by
  * who loaded it, so after signing out or switching account nothing of the last one is shown.
+ *
+ * It is held once, above every screen, so the ledger and the moment form (#183) read and
+ * refresh the same journey.
  */
-export function useJourney() {
+function useJourneyLoader() {
   const session = useSession();
   const shell = useShell();
   const { client, setUser } = session;
@@ -87,5 +90,23 @@ export function useJourney() {
     retry: () => {
       if (userId) load(userId, activeId);
     },
+    /** Re-read quietly after a change this phone made, such as holding a moment. */
+    reload: async () => {
+      if (userId) await load(userId, activeId);
+    },
   };
+}
+
+export type JourneyValue = ReturnType<typeof useJourneyLoader>;
+
+const JourneyContext = createContext<JourneyValue | null>(null);
+
+export function JourneyProvider({ children }: { children: ReactNode }) {
+  return createElement(JourneyContext.Provider, { value: useJourneyLoader() }, children);
+}
+
+export function useJourney(): JourneyValue {
+  const value = useContext(JourneyContext);
+  if (!value) throw new Error('useJourney must be used inside JourneyProvider');
+  return value;
 }
