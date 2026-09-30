@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction } from './db.js';
+import { identityVerifierFor } from './identity.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
 import {
   assertPassword,
@@ -13,10 +14,13 @@ import {
 } from './security.js';
 
 export class PlatformError extends Error {
-  constructor(status, code, message) {
+  // `details` carries the few facts a client needs to act on an error, such as the email an
+  // existing account uses when a sign-in has to be linked first. Most errors have none.
+  constructor(status, code, message, details = null) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -325,11 +329,12 @@ function publicEvent(row) {
 }
 
 export class PlatformService {
-  constructor({ pool, config, mailer, now = () => new Date(), onDeliveryFailure = () => {} }) {
+  constructor({ pool, config, mailer, now = () => new Date(), onDeliveryFailure = () => {}, identity = identityVerifierFor(config) }) {
     this.pool = pool;
     this.config = config;
     this.mailer = mailer;
     this.now = now;
+    this.identity = identity;
     this.onDeliveryFailure = onDeliveryFailure;
     this.dummyPasswordHash = hashPassword('invalid-login-padding'.padEnd(20, 'x'));
   }
@@ -497,6 +502,101 @@ export class PlatformService {
     return { user: publicUser(found.rows[0]), session };
   }
 
+  // Google and Apple (#214). A known identity signs straight in. An unknown one whose email
+  // already belongs to an account is never signed in or merged because the addresses match
+  // (decided Sep 30, 2026, for all three apps): a password account answers `link_required`, and
+  // the client asks for that password once and calls linkIdentity(); an account without a
+  // password answers `email_in_use`. An Apple Hide My Email address never matches, so it always
+  // opens a new account. Anything else opens one.
+  async verifiedIdentity(provider, idToken) {
+    if (!this.identity.configured(provider)) throw new PlatformError(404, 'sign_in_unavailable', 'This way of signing in is not available yet.');
+    let identity;
+    try {
+      identity = await this.identity.verify(provider, idToken);
+    } catch {
+      throw new PlatformError(503, 'sign_in_unavailable', 'Signing in this way is not working right now. Try again soon.');
+    }
+    if (!identity) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
+    return identity;
+  }
+
+  async userForIdentity(client, identity) {
+    const found = await client.query(
+      `SELECT u.* FROM user_identities i JOIN users u ON u.id=i.user_id
+       WHERE i.provider=$1 AND i.subject=$2 AND u.deleted_at IS NULL`,
+      [identity.provider, identity.subject],
+    );
+    return found.rows[0] || null;
+  }
+
+  async socialSignIn(provider, { idToken, displayName } = {}, { issueSession = true } = {}) {
+    const identity = await this.verifiedIdentity(provider, idToken);
+    return withTransaction(this.pool, async (client) => {
+      const known = await this.userForIdentity(client, identity);
+      if (known) return { user: publicUser(known), session: issueSession ? await this.createSession(client, known.id) : null };
+
+      let email = null;
+      if (identity.email) {
+        try { email = normalizeEmail(identity.email); } catch { email = null; }
+      }
+      if (email && !identity.isPrivateEmail) {
+        const holder = await client.query('SELECT id,password_hash FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [email]);
+        if (holder.rowCount) {
+          if (holder.rows[0].password_hash) {
+            throw new PlatformError(409, 'link_required', 'You already have an account with this email. Enter its password once to connect it.', { email });
+          }
+          throw new PlatformError(409, 'email_in_use', 'An account already uses this email. Sign in the way you did before.');
+        }
+      }
+      // Apple leaves the email out after the first sign-in, and a relay address could in principle
+      // already be taken. Either way the account still needs an address the column can hold, so it
+      // gets one built from its own id that can never be a real inbox.
+      const userId = randomUUID();
+      if (email) {
+        const taken = await client.query('SELECT 1 FROM users WHERE email_normalized=$1', [email]);
+        if (taken.rowCount) email = null;
+      }
+      // The same private sign-in name migration 003 gave accounts that predate usernames.
+      const username = `journeyer-${userId.slice(0, 8)}`;
+      const name = cleanOptionalText(displayName || identity.name, 80) || username;
+      const created = await client.query(
+        `INSERT INTO users (id,email_normalized,username,display_name,password_hash,email_verified_at)
+         VALUES ($1,$2,$3,$4,NULL,$5) RETURNING *`,
+        [userId, email || `${provider}-${userId}@no-email.invalid`, username, name, email && (identity.emailVerified || provider === 'apple') ? this.now() : null],
+      );
+      await client.query('INSERT INTO user_identities (provider,subject,user_id,created_at) VALUES ($1,$2,$3,$4)', [provider, identity.subject, userId, this.now()]);
+      return { user: publicUser(created.rows[0]), session: issueSession ? await this.createSession(client, userId) : null };
+    });
+  }
+
+  // The second half of the #214 decision. The same ID token comes back with the password of the
+  // account that uses its email. The check is login's own: the same argon2 work whether or not
+  // there is a real hash to compare, and the same single `invalid_credentials` for every miss.
+  async linkIdentity(provider, { idToken, password } = {}, { issueSession = true } = {}) {
+    const identity = await this.verifiedIdentity(provider, idToken);
+    let email = null;
+    if (identity.email && !identity.isPrivateEmail) {
+      try { email = normalizeEmail(identity.email); } catch { email = null; }
+    }
+    const found = email
+      ? await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [email])
+      : { rowCount: 0, rows: [] };
+    const candidateHash = found.rows[0]?.password_hash || await this.dummyPasswordHash;
+    const passwordMatches = await verifyPassword(candidateHash, password);
+    if (!found.rowCount || !found.rows[0].password_hash || !passwordMatches) {
+      throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+    }
+    const user = found.rows[0];
+    return withTransaction(this.pool, async (client) => {
+      const known = await this.userForIdentity(client, identity);
+      if (known && known.id !== user.id) throw new PlatformError(409, 'identity_in_use', 'That sign-in already belongs to another account.');
+      if (!known) {
+        await client.query('INSERT INTO user_identities (provider,subject,user_id,created_at) VALUES ($1,$2,$3,$4)', [provider, identity.subject, user.id, this.now()]);
+      }
+      return { user: publicUser(user), session: issueSession ? await this.createSession(client, user.id) : null };
+    });
+  }
+
   async session(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
@@ -520,7 +620,9 @@ export class PlatformService {
     let normalizedEmail;
     try { normalizedEmail = normalizeEmail(email); } catch { return; }
     const user = await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [normalizedEmail]);
-    if (!user.rowCount) return;
+    // An account opened with Google or Apple has no password to recover, and adding one is out of
+    // scope for now (#213). It answers exactly as an unknown address does.
+    if (!user.rowCount || !user.rows[0].password_hash) return;
     const token = opaqueToken();
     await withTransaction(this.pool, async (client) => {
       await client.query(`UPDATE account_tokens SET consumed_at=$1 WHERE user_id=$2 AND purpose='password_recovery' AND consumed_at IS NULL`, [this.now(), user.rows[0].id]);
@@ -1309,9 +1411,13 @@ export class PlatformService {
     }
   }
 
+  // An account with a password confirms with it. One opened with Google or Apple has none to
+  // give, so the typed DELETE confirmation the route already requires is the whole of it (#214),
+  // and deleting stays within three taps.
   async deleteAccount(userId, password) {
     const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
-    if (!user.rowCount || !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    if (!user.rowCount) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    if (user.rows[0].password_hash && !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
     await withTransaction(this.pool, async (client) => {
       const memberships = await client.query('SELECT jm.*,j.owner_user_id FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.user_id=$1', [userId]);
       for (const membership of memberships.rows) {
@@ -1346,6 +1452,7 @@ export class PlatformService {
       await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM account_tokens WHERE user_id=$1', [userId]);
+      await client.query('DELETE FROM user_identities WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM invitations WHERE invited_by_user_id=$1', [userId]);
       await client.query('UPDATE invitations SET revoked_at=$1 WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL', [this.now(), user.rows[0].email_normalized]);
       await client.query(

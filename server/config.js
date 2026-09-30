@@ -37,6 +37,12 @@ const ConfigSchema = z.object({
   STRIPE_PORTAL_CONFIGURATION_ID: z.string().default(''),
   STRIPE_TAX_ENABLED: z.enum(['true', 'false']).default('false'),
   BILLING_GRACE_DAYS: z.coerce.number().int().min(0).max(90).default(7),
+  // Who a Google or Apple ID token may be issued to (its `aud`), comma-separated. These are
+  // public identifiers, not secrets (#214, #215). Apple's are the phone's App ID and the web's
+  // Services ID. Google's wait for Together Ledger's own OAuth clients; empty turns Google
+  // sign-in off rather than accepting a token for someone else's app.
+  GOOGLE_CLIENT_IDS: z.string().default(''),
+  APPLE_CLIENT_IDS: z.string().default('com.togetherledger.ledger,com.togetherledger.ledger.web'),
 });
 
 function assertStripeConfiguration(config) {
@@ -91,9 +97,12 @@ export function loadConfig(overrides = {}) {
     if (!config.SMTP_URL) throw new Error('Production SMTP delivery must be configured.');
   }
   const appOrigins = [...new Set(config.APP_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean))];
+  const listOf = (value) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
   return {
     ...config,
     appOrigins,
+    googleClientIds: listOf(config.GOOGLE_CLIENT_IDS),
+    appleClientIds: listOf(config.APPLE_CLIENT_IDS),
     databaseSsl: config.DATABASE_SSL === 'true',
     cookieSecure: config.COOKIE_SECURE === 'true',
     trustProxy: config.TRUST_PROXY === 'true',

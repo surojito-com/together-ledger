@@ -12,12 +12,14 @@ A request may authenticate in one of two ways. A browser sends the `tl_session` 
 | POST | `/auth/verify-email` | Consume the single-use email-verification token. |
 | POST | `/auth/resend-verification` | Revoke an older unused verification token and send a replacement. |
 | POST | `/auth/login` | Verify a private username or email plus Argon2id password, then rotate the session. |
+| POST | `/auth/google`, `/auth/apple` | Verify a Google or Apple ID token and sign in, opening an account on the first sign-in. |
+| POST | `/auth/link` | Link a Google or Apple sign-in to the password account that already uses its email, after that password is entered once. |
 | POST | `/auth/refresh` | Spend a refresh token and return a rotated access and refresh pair. Bearer clients only. |
 | POST | `/auth/logout` | Revoke the current session, or the presented bearer token and everything issued with it. |
 | GET | `/session` | Return the current account, and the session CSRF token on the cookie path. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |
 | POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session and bearer token. |
-| DELETE | `/account` | Reconfirm the password and permanently delete/pseudonymize the account. |
+| DELETE | `/account` | Reconfirm the password (an account opened with Google or Apple has none, so the typed `DELETE` is the whole confirmation) and permanently delete/pseudonymize the account. |
 
 ### Bearer tokens for a client without a browser
 
@@ -26,6 +28,18 @@ A request may authenticate in one of two ways. A browser sends the `tl_session` 
 The access token is short-lived (`ACCESS_TOKEN_MINUTES`, 30 by default). The refresh token lasts longer (`REFRESH_TOKEN_DAYS`, 30 by default) and is spent the first time it is used: `POST /auth/refresh` takes `{ "refreshToken": "…" }` and returns a new pair. Tokens issued together share a family. Signing out retires the whole family, so a copied access token cannot outlive the sign-out meant to end it, and presenting a refresh token that was already spent retires the family too — a second presentation means a copy is in circulation, and the safe reading is that neither holder should continue.
 
 `DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
+
+### Signing in with Google or Apple
+
+`POST /auth/google` and `POST /auth/apple` take `{ "idToken": "…", "displayName"?: "…" }`. The token's signature is checked against the provider's published keys, and its `iss`, `aud` and `exp` against what that provider documents. `aud` must be one of `GOOGLE_CLIENT_IDS` or `APPLE_CLIENT_IDS`; Apple's are the phone's App ID, `com.togetherledger.ledger`, and the web's Services ID, `com.togetherledger.ledger.web`. With no Google client ID configured, `POST /auth/google` answers `404 sign_in_unavailable`. A reply is exactly a password login's: a cookie plus `csrfToken`, or a bearer pair for `X-Together-Client: app`.
+
+An account is found by the provider's stable user id (`sub`), never by email. The first sign-in opens an account with the private username `journeyer-` plus eight characters of its id (the same shape migration 003 gave older accounts), the provider's name or the `displayName` sent, and no password. When the email already belongs to an account, nothing is signed in or merged (decided on #214, Sep 30, 2026):
+
+- If that account has a password, the answer is `409 link_required` with `details.email`. The client asks for that password once and sends `POST /auth/link` with `{ "provider", "idToken", "password" }`. A correct password links the provider to the account and signs in, and from then on the provider signs straight in. A wrong one is login's `401 invalid_credentials`.
+- If that account has no password, the answer is `409 email_in_use`: sign in the way you did before.
+- An Apple Hide My Email address never matches, so it always opens a new account.
+
+An account without a password can't sign in with one, and asking to recover it sends nothing, exactly as for an address with no account.
 
 ## Journeys, members, and sync
 
