@@ -1,7 +1,8 @@
 // Google and Apple sign-in on the server (#214), with the linking rule the owner decided on
 // Sep 30, 2026: a sign-in whose email already has a password account asks for that password
 // once, and nothing is ever linked because two emails match. Then Sign in with Apple's REST API
-// (#218): exchanging the code at sign-in and revoking at deletion.
+// (#218): exchanging the code at sign-in and revoking at deletion; and Apple's own server-to-server
+// notifications (#250).
 //
 // Each provider is a fake that signs ID tokens with a key generated here and serves the public
 // half the way Google and Apple publish theirs, so the verifier does real signature checks. The
@@ -383,4 +384,42 @@ test('linking Apple exchanges its code only once the password is right', async (
   assert.equal(linked.statusCode, 200, linked.body);
   assert.equal(linked.json().data.user.id, owner.id);
   assert.match((await pool.query(`SELECT apple_refresh_token FROM user_identities WHERE subject='a-15'`)).rows[0].apple_refresh_token, /^v1\./);
+});
+
+function notification(type, sub, signer = apple) {
+  return idToken(signer, { iss: 'https://appleid.apple.com', aud: APPLE_APP, jti: 'n', events: JSON.stringify({ type, sub, event_time: NOW.getTime() }) });
+}
+const notify = (app, payload) => app.inject({ method: 'POST', url: '/api/v1/auth/apple/notifications', payload: { payload } });
+
+test('Apple notifications: an unsigned one is refused, the email ones are acknowledged', async () => {
+  const { app } = await setup();
+  assert.equal((await notify(app, notification('account-deleted', 'a-16', google))).statusCode, 400);
+  assert.equal((await notify(app, 'not-a-jwt')).statusCode, 400);
+  assert.equal((await notify(app, notification('email-disabled', 'nobody'))).statusCode, 200);
+  assert.equal((await notify(app, notification('email-enabled', 'nobody'))).statusCode, 200);
+});
+
+test('consent-revoked signs the person out everywhere and drops the token, keeping the account', async () => {
+  const { app, pool } = await setup();
+  const account = await appleAccount(app, 'a-17');
+  assert.equal((await notify(app, notification('consent-revoked', 'a-17'))).statusCode, 200);
+  const session = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { cookie: account.cookie } });
+  assert.equal(session.statusCode, 401);
+  assert.equal((await pool.query(`SELECT apple_refresh_token FROM user_identities WHERE subject='a-17'`)).rows[0].apple_refresh_token, null);
+  assert.equal((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [account.user.id])).rows[0].deleted_at, null);
+});
+
+test('account-deleted deletes an Apple-only account, and only unlinks one that has a password', async () => {
+  const { app, pool } = await setup();
+  const only = await appleAccount(app, 'a-18');
+  assert.equal((await notify(app, notification('account-deleted', 'a-18'))).statusCode, 200);
+  assert.ok((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [only.user.id])).rows[0].deleted_at);
+
+  const owner = await registerWithPassword(app, 'both@example.com');
+  const token = appleToken({ sub: 'a-19', email: 'both@example.com' });
+  await post(app, '/api/v1/auth/link', { provider: 'apple', idToken: token, authorizationCode: fakeApple.issueCode('a-19'), password: PASSWORD });
+  assert.equal((await notify(app, notification('account-deleted', 'a-19'))).statusCode, 200);
+  assert.equal((await pool.query(`SELECT * FROM user_identities WHERE subject='a-19'`)).rowCount, 0);
+  assert.equal((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [owner.id])).rows[0].deleted_at, null);
+  assert.equal((await post(app, '/api/v1/auth/login', { identifier: 'both@example.com', password: PASSWORD })).statusCode, 200);
 });

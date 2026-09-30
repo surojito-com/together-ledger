@@ -43,6 +43,8 @@ An account without a password can't sign in with one, and asking to recover it s
 
 `POST /auth/apple` also takes Apple's one-time `authorizationCode`, and so does `POST /auth/link` for Apple (#218). The server exchanges it at `https://appleid.apple.com/auth/token` with a client secret signed ES256 by the Sign in with Apple key, and keeps the refresh token AES-256-GCM encrypted against the identity. A code from the web (`aud` = `APPLE_SERVICES_ID`) is exchanged with `APPLE_WEB_REDIRECT_URI` as well. A new Apple account opens only once its code has exchanged: `400` with no code, `401 invalid_token` for an expired or someone else's code, `503 sign_in_unavailable` while Apple can't be reached or the two Apple secrets aren't set. Deleting the account moves the token, still encrypted, into `apple_revocations` inside the deletion's transaction and revokes it straight after; if Apple can't be reached the server retries every ten minutes, with backoff, for up to a week.
 
+`POST /auth/apple/notifications` takes Apple's server-to-server events, `{ "payload": "<JWT>" }` signed with Apple's ID-token keys. It needs no origin, cookie or token; an unverifiable payload is a `400`. `consent-revoked` signs the person out everywhere and drops the token. `account-deleted` deletes an account only Apple could open, through the same billing check as `DELETE /account`, or removes only the Apple identity from one that has a password or Google too. `email-disabled` and `email-enabled` are acknowledged.
+
 ## Journeys, members, and sync
 
 | Method | Path | Purpose |
