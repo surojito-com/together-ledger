@@ -11,7 +11,7 @@ import { fonts, getTheme, targetSize, useTheme, type ThemeColors } from '../them
  * The visibility cue is part of the card itself, drawn in the same pass as the title, so a
  * moment is never on screen without it: shape, word and border together, never colour alone.
  */
-export function MomentCard({ moment }: { moment: ShownMoment }) {
+export function MomentCard({ moment, actions }: { moment: ShownMoment; actions?: React.ReactNode }) {
   const app = useTheme().theme;
   const ownTheme = normalizeMomentTheme(moment.theme);
   const colors = ownTheme ? getTheme(ownTheme).colors : app.colors;
@@ -65,6 +65,7 @@ export function MomentCard({ moment }: { moment: ShownMoment }) {
           </View>
         ) : null}
       </View>
+      {actions ? <View style={styles.actions}>{actions}</View> : null}
     </View>
   );
 }
@@ -75,6 +76,21 @@ function Chip({ text, colors, radius }: { text: string; colors: ThemeColors; rad
       <Text style={[styles.chipText, { color: colors.fg }]}>{text}</Text>
     </View>
   );
+}
+
+/** A card's own small action ("Edit", "Share now"), painted in the card's colours. */
+export function CardAction({ label, onPress, colors }: { label: string; onPress: () => void; colors: ThemeColors }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.action, targetSize, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}>
+      <Text style={[styles.actionText, { color: colors.fg }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** The colours a moment is drawn in: its own theme's, or the app's. */
+export function momentColors(moment: { theme?: string | null }, appColors: ThemeColors) {
+  const own = normalizeMomentTheme(moment.theme);
+  return own ? getTheme(own).colors : appColors;
 }
 
 /** The web's <details>: closed until asked, with + and − as it has. */
@@ -147,4 +163,7 @@ const styles = StyleSheet.create({
   authorText: { fontSize: 14, fontWeight: '800' },
   badge: { paddingHorizontal: 9, paddingVertical: 5 },
   badgeText: { fontSize: 14, fontWeight: '800' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  action: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, justifyContent: 'center' },
+  actionText: { fontSize: 14, fontWeight: '800' },
 });
