@@ -1,5 +1,5 @@
 /**
- * The phone's account client for TL-M-05 (#180), against the bearer-token path from TL-M-04 (#179).
+ * The phone's client for the account (TL-M-05, #180) and the journey it shows (TL-M-07, #182), against the bearer-token path from TL-M-04 (#179).
  *
  * Every request says it is the app (`x-together-client: app`), so the server issues tokens rather
  * than a cookie. A signed-in request carries its access token. When that token has expired, the
@@ -167,6 +167,33 @@ export function createAccountClient({ base, fetch, tokens }: {
       await request('/recovery/confirm', { method: 'POST', body: { token, password } });
       // A new password signs the account out everywhere, this phone included.
       await tokens.clear();
+    },
+    /** The journeys this account belongs to, most recently changed first (TL-M-07, #182). */
+    async journeys<J>() {
+      return (await request<{ journeys: J[] }>('/journeys', { signedIn: true }))?.journeys ?? [];
+    },
+    async snapshot<S>(journeyId: string) {
+      return request<S>(`/journeys/${encodeURIComponent(journeyId)}/snapshot`, { signedIn: true });
+    },
+    /**
+     * Where a moment's photo is, with the access token the image loader has to send. A token
+     * about to lapse is refreshed first, because the loader cannot retry the way request() does.
+     */
+    async imageSource(journeyId: string, momentId: string, imageId: string, now = Date.now()) {
+      let held = await tokens.read();
+      if (!held) throw new ApiError(SIGN_IN_AGAIN_MESSAGE, { code: 'authentication_required', status: 401 });
+      if (Date.parse(held.tokenExpiresAt) - now < 60_000) held = await refresh();
+      if (!held) throw new ApiError(SIGN_IN_AGAIN_MESSAGE, { code: 'authentication_required', status: 401 });
+      let root: string;
+      try {
+        root = base();
+      } catch {
+        throw new ApiError(UNAVAILABLE_MESSAGE, { code: 'accounts_unavailable' });
+      }
+      return {
+        uri: `${root}/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}/images/${encodeURIComponent(imageId)}`,
+        headers: { Authorization: `Bearer ${held.token}`, 'x-together-client': 'app' },
+      };
     },
     async deleteAccount(password: string) {
       await request('/account', { method: 'DELETE', body: { password, confirmation: 'DELETE' }, signedIn: true });
