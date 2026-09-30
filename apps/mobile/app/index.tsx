@@ -1,16 +1,37 @@
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
+import { StyleSheet, Text } from 'react-native';
 import { Body, Button, Screen } from '../src/components/ui';
+import { useShell } from '../src/shell/shell-provider';
+import { openingSurface } from '../src/shell/surface';
+import { fonts, useTheme } from '../src/theme';
 
 /**
- * Welcome. The real introduction and the app shell are TL-M-06 (#181); until then this is the
- * way into the account screens TL-M-05 (#180) builds.
+ * Where the app opens. Someone who has begun their ledger goes straight to it; everyone else
+ * meets the welcome first (the web's showWelcomeSurface / showLedgerSurface). The words are the
+ * web's welcome (index.html).
  */
 export default function WelcomeScreen() {
+  const shell = useShell();
+  const { theme } = useTheme();
+  if (openingSurface({ onboardingComplete: shell.onboardingComplete }) === 'ledger') return <Redirect href="/ledger" />;
   return (
-    <Screen title="Together Ledger">
-      <Body>A private place for two people to hold the moments, plans, and memories they want to come back to.</Body>
-      <Button label="Account" onPress={() => router.push('/account')} />
+    <Screen title="Together Ledger" edges={['top', 'bottom', 'left', 'right']}>
+      <Text style={[styles.eyebrow, { color: theme.colors.accent }]}>A shared journey, held with care</Text>
+      <Text accessibilityRole="header" style={[styles.headline, fonts.serif, { color: theme.colors.fg }]}>
+        Keep what matters, <Text style={fonts.serifItalic}>together.</Text>
+      </Text>
+      <Body>A private place for two people to hold the moments, plans, and memories they want to come back to—without the noise of a feed.</Body>
+      <Button label="Begin your ledger →" onPress={() => {
+        shell.completeOnboarding();
+        router.replace('/ledger');
+      }} />
+      <Button kind="quiet" label="Account" onPress={() => router.push('/account')} />
       <Button kind="quiet" label="Settings" onPress={() => router.push('/settings')} />
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  eyebrow: { fontSize: 12, fontWeight: '900', letterSpacing: 1.9, textTransform: 'uppercase' },
+  headline: { fontSize: 40, lineHeight: 44 },
+});
