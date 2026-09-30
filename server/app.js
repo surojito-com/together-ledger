@@ -138,8 +138,12 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(201).send({ data: { user: result.user, csrfToken: result.session.csrfToken, verificationSent: result.verificationSent } });
   });
 
+  // The single-use token in the body is the credential here, and nothing ambient is spent or
+  // issued: no cookie is read and none is set. So the origin check guards nothing for a phone,
+  // which has no origin to send, and it is skipped for a client that says it is the app, as
+  // signing in does. A browser still has to be ours (TL-M-05, #180).
   app.post('/api/v1/auth/verify-email', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     return { data: { user: await platform.verifyEmail(request.body?.token) } };
   });
 
@@ -201,13 +205,18 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(200).send(result);
   });
 
+  // Someone who has forgotten their password has no token yet, so a phone asking for a recovery
+  // link is one of the places a credential is still to come, like registering. The link it sends
+  // goes to the account origin, never to an address the caller chose.
   app.post('/api/v1/recovery/request', { config: { rateLimit: { max: 5, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    await platform.requestRecovery(request.body?.email, accountOriginFor(request));
+    await platform.requestRecovery(request.body?.email, accountOriginFor(request, { issuingToken: asksForToken(request) }));
     return reply.code(202).send({ data: { accepted: true } });
   });
 
+  // As with verifying an email, the recovery token in the body is the credential, and a new
+  // password revokes every session and token the account holds, phones included.
   app.post('/api/v1/recovery/confirm', { config: { rateLimit: { max: 10, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     await platform.confirmRecovery(request.body || {});
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return { data: { passwordChanged: true } };
