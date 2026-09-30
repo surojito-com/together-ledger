@@ -1,17 +1,23 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, type Ref } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
+import { PENDING_LABEL } from '../shell/defaults';
+import { ScreenStatusRegion } from './status-region';
 import { fonts, targetSize, useTheme } from '../theme';
 
 /**
- * The small set of pieces the account screens are built from. Every tappable thing meets the
+ * The small set of pieces every screen is built from. Each screen carries the status region
+ * at the top of its work (TL-M-06, #181). Every tappable thing meets the
  * 44-point minimum (#178), and colour comes from semantic roles only.
  */
-export function Screen({ title, lead, children }: { title: string; lead?: string; children: ReactNode }) {
+export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'] }: { title: string; lead?: string; children: ReactNode; edges?: Edge[] }) {
   const { theme } = useTheme();
+  // The header covers the top inset; a screen without one passes 'top' too, so nothing sits
+  // under a notch or the status bar.
   return (
-    <SafeAreaView edges={['bottom']} style={[styles.fill, { backgroundColor: theme.colors.bg }]}>
+    <SafeAreaView edges={edges} style={[styles.fill, { backgroundColor: theme.colors.bg }]}>
       <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+        <ScreenStatusRegion />
         <Text accessibilityRole="header" style={[styles.title, fonts.serif, { color: theme.colors.fg }]}>{title}</Text>
         {lead ? <Text style={[styles.body, { color: theme.colors.textSecondary }]}>{lead}</Text> : null}
         {children}
@@ -38,13 +44,18 @@ export function Field({ label, hint, ...input }: { label: string; hint?: string 
 
 type ButtonKind = 'primary' | 'quiet' | 'destructive';
 
-export function Button({ label, onPress, kind = 'primary', pending = false, pendingLabel, disabled = false }: {
+/**
+ * A pending button (the web's setButtonPending) is disabled, marked busy, and says what it is
+ * doing, "Working…" unless the caller names the work; its own label comes back when it is done.
+ */
+export function Button({ label, onPress, kind = 'primary', pending = false, pendingLabel = PENDING_LABEL, disabled = false, ref }: {
   label: string;
   onPress: () => void;
   kind?: ButtonKind;
   pending?: boolean;
   pendingLabel?: string;
   disabled?: boolean;
+  ref?: Ref<View>;
 }) {
   const { theme } = useTheme();
   // The destructive colour is only for what cannot be undone (CLAUDE.md).
@@ -56,10 +67,11 @@ export function Button({ label, onPress, kind = 'primary', pending = false, pend
       accessibilityState={{ disabled: disabled || pending, busy: pending }}
       disabled={disabled || pending}
       onPress={onPress}
+      ref={ref}
       style={({ pressed }) => [styles.button, targetSize, { backgroundColor: fill, borderRadius: theme.radius.pill, borderColor: kind === 'quiet' ? theme.colors.border : fill, opacity: pressed || disabled ? 0.7 : 1 }]}
     >
       {pending ? <ActivityIndicator color={text} /> : null}
-      <Text style={[styles.buttonText, { color: text }]}>{pending && pendingLabel ? pendingLabel : label}</Text>
+      <Text style={[styles.buttonText, { color: text }]}>{pending ? pendingLabel : label}</Text>
     </Pressable>
   );
 }

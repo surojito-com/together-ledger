@@ -1,7 +1,20 @@
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider } from '../src/auth/session';
-import { fontSources, ThemeProvider, useTheme } from '../src/theme';
+import { ShellOverlays } from '../src/components/dialogs';
+import { ShellProvider } from '../src/shell/shell-provider';
+import { fontSources, targetSize, ThemeProvider, useTheme } from '../src/theme';
+
+/** Settings from the ledger's header, at the 44-point minimum like everything else. */
+function SettingsButton() {
+  const { theme } = useTheme();
+  return (
+    <Pressable accessibilityRole="button" onPress={() => router.push('/settings')} style={({ pressed }) => [styles.headerButton, targetSize, { opacity: pressed ? 0.7 : 1 }]}>
+      <Text style={[styles.headerButtonText, { color: theme.colors.accent }]}>Settings</Text>
+    </Pressable>
+  );
+}
 
 function ThemedStack() {
   const { theme } = useTheme();
@@ -13,8 +26,9 @@ function ThemedStack() {
         contentStyle: { backgroundColor: theme.colors.bg },
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Welcome' }} />
-      <Stack.Screen name="ledger" options={{ title: 'Ledger' }} />
+      {/* The two surfaces (TL-M-06, #181). index decides which one opens. */}
+      <Stack.Screen name="index" options={{ title: 'Welcome', headerShown: false }} />
+      <Stack.Screen name="ledger" options={{ title: 'Ledger', headerRight: () => <SettingsButton /> }} />
       <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       <Stack.Screen name="account" options={{ title: 'Account' }} />
       <Stack.Screen name="register" options={{ title: 'Create account' }} />
@@ -33,8 +47,16 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <SessionProvider>
-        <ThemedStack />
+        <ShellProvider>
+          <ThemedStack />
+          <ShellOverlays />
+        </ShellProvider>
       </SessionProvider>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  headerButton: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  headerButtonText: { fontSize: 16, fontWeight: '700' },
+});
