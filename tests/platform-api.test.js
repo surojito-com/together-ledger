@@ -1251,6 +1251,56 @@ test('the phone app\'s own client carries a whole account journey against this s
   await assert.rejects(phone.login({ identifier: email, password: 'a brand new horse battery staple' }), { status: 401 });
 });
 
+test('the phone reads a shared journey through this server, and never another person\'s private moment', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const view = await load('../apps/mobile/src/journey/journey-view.ts');
+
+  const alice = await register(app, mailer, { email: 'ledger-alice@example.test', username: 'ledger-alice' });
+  const created = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'The summer we chose slowly', location: 'Marlow', startDateStatus: 'exact', startDate: '2026-05-14', endDateStatus: 'forever', endDate: null, budgetCents: 0 } });
+  assert.equal(created.statusCode, 201, created.body);
+  const journey = created.json().data.journey;
+  const hold = (visibility, title, extra = {}) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice), payload: { kind: 'memory', title, detail: '', occurredOn: '2026-06-02', visibility, moneyCents: null, moneyCurrency: '', locations: [], ...extra } });
+  assert.equal((await hold('shared-now', 'The road near Marlow', { moneyCents: 1250, moneyCurrency: 'USD' })).statusCode, 201);
+  assert.equal((await hold('private', 'Only mine')).statusCode, 201);
+  assert.equal((await hold('share-later', 'For next time')).statusCode, 201);
+  const invited = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'ledger-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const invitation = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'ledger-bob@example.test').token;
+
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'ledger-bob@example.test', username: 'ledger-bob', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'ledger-bob@example.test').token);
+  assert.deepEqual(await phone.journeys(), [], 'nothing before the invitation is accepted');
+  const accepted = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: { authorization: `Bearer ${held.token}`, 'x-together-client': 'app' }, payload: { token: invitation } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+
+  const journeys = await phone.journeys();
+  assert.deepEqual(journeys.map(({ id }) => id), [journey.id]);
+  const snapshot = await phone.snapshot(journeys[0].id);
+  const recent = view.recentMoments(snapshot);
+  assert.deepEqual(recent.map(({ title }) => title), ['The road near Marlow'], 'another person\'s private and share-later moments never reach this phone');
+  assert.equal(view.visibilityCue(recent[0].visibility).label, 'Shared now');
+  assert.equal(recent[0].createdBy, 'ledger-alice');
+  assert.equal(view.journeyPeriod(snapshot.journey), 'Marlow · Began May 14 · No end date planned');
+  assert.equal(view.moneyContext(recent[0]), '$12.50 is held here as context, not a score.');
+});
+
 test('a phone registers with a bearer token and never receives a session cookie', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
