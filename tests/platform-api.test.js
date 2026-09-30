@@ -1163,6 +1163,47 @@ async function registerOnPhone(app, mailer, { email, username = email.split('@')
   return { response, ...response.json().data };
 }
 
+test('a phone verifies its email and recovers its password without a browser origin', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const app_ = { 'x-together-client': 'app' };
+
+  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: app_, payload: { email: 'recover@example.test', username: 'recover-phone', password: 'correct horse battery staple' } });
+  assert.equal(registered.statusCode, 201, registered.body);
+  const verification = mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'recover@example.test');
+  assert.equal(new URL(verification.accountOrigin).origin, new URL(apiOrigin).origin, 'the link goes to the account origin, not one the caller chose');
+
+  const browserless = await app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', payload: { token: verification.token } });
+  assert.equal(browserless.statusCode, 403, 'a caller that is neither our page nor the app is still refused');
+  const verified = await app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', headers: app_, payload: { token: verification.token } });
+  assert.equal(verified.statusCode, 200, verified.body);
+  assert.ok(verified.json().data.user.emailVerifiedAt || verified.json().data.user.emailVerified);
+
+  const requested = await app.inject({ method: 'POST', url: '/api/v1/recovery/request', headers: app_, payload: { email: 'recover@example.test' } });
+  assert.equal(requested.statusCode, 202, requested.body);
+  const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === 'recover@example.test');
+  assert.ok(recovery, 'the recovery email was sent');
+
+  const oldToken = registered.json().data.token;
+  const confirmed = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', headers: app_, payload: { token: recovery.token, password: 'a brand new horse battery staple' } });
+  assert.equal(confirmed.statusCode, 200, confirmed.body);
+  const revoked = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(oldToken) });
+  assert.equal(revoked.statusCode, 401, 'a new password revokes the phone\'s old token');
+
+  const signedIn = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: app_, payload: { identifier: 'recover@example.test', password: 'a brand new horse battery staple' } });
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
+  assert.ok(signedIn.json().data.token);
+});
+
+test('without the app header, recovery still needs our own page', async (t) => {
+  const { app, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const requested = await app.inject({ method: 'POST', url: '/api/v1/recovery/request', payload: { email: 'nobody@example.test' } });
+  assert.equal(requested.statusCode, 403, requested.body);
+  const confirmed = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', payload: { token: 'x', password: 'a brand new horse battery staple' } });
+  assert.equal(confirmed.statusCode, 403, confirmed.body);
+});
+
 test('a phone registers with a bearer token and never receives a session cookie', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
@@ -1395,19 +1436,30 @@ test('the bridge tells an app which headers it may send', async (t) => {
   assert.equal(stranger.statusCode, 403);
 });
 
-test('claiming to be an app does not relax a check the app never needed', async (t) => {
+test('claiming to be the app gets a phone to recovery, and nothing past it', async (t) => {
   const { app, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
 
-  // Recovery is unauthenticated and nothing in the phone story asks it to change. The header
-  // that asks for a token is not a general-purpose way past the origin check: only a token this
-  // service actually issued stands in for one, and an unauthenticated caller has none.
+  // This used to refuse the app header on recovery, because nothing in the phone story asked
+  // recovery to change. TL-M-05 (#180) does: someone who has forgotten their password has no
+  // token, and a phone has no origin. The header still opens nothing a browser page can reach,
+  // because a hostile page cannot send it without a preflight, and the preflight is refused.
   const claimed = await app.inject({
     method: 'POST', url: '/api/v1/recovery/request', headers: { 'x-together-client': 'app' },
     payload: { email: 'someone@example.test' },
   });
-  assert.equal(claimed.statusCode, 403, claimed.body);
-  assert.equal(claimed.json().error.code, 'invalid_origin');
+  assert.equal(claimed.statusCode, 202, claimed.body);
+  const hostilePreflight = await app.inject({
+    method: 'OPTIONS', url: '/api/v1/recovery/request',
+    headers: { origin: 'https://evil.example', 'access-control-request-headers': 'x-together-client' },
+  });
+  assert.notEqual(hostilePreflight.headers['access-control-allow-origin'], 'https://evil.example', 'a hostile page cannot send the app header');
+
+  // It is not a way past an authenticated check: a mutation still needs a token this service issued.
+  const unauthenticated = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: { 'x-together-client': 'app' }, payload: {},
+  });
+  assert.equal(unauthenticated.statusCode, 403, unauthenticated.body);
 
   const fromTheApp = await app.inject({
     method: 'POST', url: '/api/v1/recovery/request', headers: { origin },
