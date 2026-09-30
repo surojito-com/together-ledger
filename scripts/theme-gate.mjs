@@ -238,4 +238,4 @@ export function auditThemes({ css, themes, momentThemes }) {
   };
 }
 
-export { REQUIRED_TOKENS, EMERGING_ROLES };
+export { REQUIRED_TOKENS, EMERGING_ROLES, CONTRAST_CONTRACT, EMERGING_CONTRAST, HUE_SEPARATION };
