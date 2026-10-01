@@ -192,6 +192,24 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return socialReply(request, reply, (options) => platform.linkIdentity(provider, request.body || {}, options));
   });
 
+  // Apple's server-to-server notifications (#250), set on the com.togetherledger.ledger App ID as
+  // https://api.together-ledger.com/api/v1/auth/apple/notifications. Apple's servers send them, so
+  // there is no origin, cookie or token to check: the signed payload is the credential, verified
+  // against Apple's keys. An account deleted this way goes through the same billing check as
+  // Delete account.
+  app.post('/api/v1/auth/apple/notifications', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const payload = request.body?.payload;
+    if (typeof payload !== 'string') throw new PlatformError(400, 'invalid_input', 'The request is not valid.');
+    const accepted = await platform.handleAppleNotification(payload, {
+      deleteAccount: async (userId) => {
+        await billing.assertAccountDeletable(userId);
+        await platform.deleteAccount(userId, null);
+      },
+    });
+    if (!accepted) throw new PlatformError(400, 'invalid_token', 'The notification could not be verified.');
+    return reply.code(200).send({ data: { accepted: true } });
+  });
+
   // Rotation, not renewal: the refresh token presented here is spent, and the reply carries a
   // fresh pair. Nothing is read from the URL, so neither token reaches a log or a history entry.
   app.post('/api/v1/auth/refresh', { config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({

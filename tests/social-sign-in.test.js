@@ -1,7 +1,8 @@
 // Google and Apple sign-in on the server (#214), with the linking rule the owner decided on
 // Sep 30, 2026: a sign-in whose email already has a password account asks for that password
 // once, and nothing is ever linked because two emails match. Then Sign in with Apple's REST API
-// (#218): exchanging the code at sign-in and revoking at deletion.
+// (#218): exchanging the code at sign-in and revoking at deletion; and Apple's own server-to-server
+// notifications (#250).
 //
 // Each provider is a fake that signs ID tokens with a key generated here and serves the public
 // half the way Google and Apple publish theirs, so the verifier does real signature checks. The
@@ -18,6 +19,8 @@ import { AppleSignIn } from '../server/apple.js';
 import { IdentityVerifier } from '../server/identity.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
+import { DisabledBillingService } from '../server/billing.js';
+import { finishRefusedAppleDeletion, listRefusedAppleDeletions } from '../server/apple-deletion-followup.js';
 
 const origin = 'http://127.0.0.1:4174';
 const PASSWORD = 'correct horse battery staple';
@@ -34,6 +37,7 @@ const MIGRATIONS = [
   '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql',
   '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
+  '026_remember-a-refused-apple-deletion.sql',
 ];
 
 function provider(kid) {
@@ -386,6 +390,44 @@ test('linking Apple exchanges its code only once the password is right', async (
   assert.match((await pool.query(`SELECT apple_refresh_token FROM user_identities WHERE subject='a-15'`)).rows[0].apple_refresh_token, /^v1\./);
 });
 
+function notification(type, sub, signer = apple) {
+  return idToken(signer, { iss: 'https://appleid.apple.com', aud: APPLE_APP, jti: 'n', events: JSON.stringify({ type, sub, event_time: NOW.getTime() }) });
+}
+const notify = (app, payload) => app.inject({ method: 'POST', url: '/api/v1/auth/apple/notifications', payload: { payload } });
+
+test('Apple notifications: an unsigned one is refused, the email ones are acknowledged', async () => {
+  const { app } = await setup();
+  assert.equal((await notify(app, notification('account-deleted', 'a-16', google))).statusCode, 400);
+  assert.equal((await notify(app, 'not-a-jwt')).statusCode, 400);
+  assert.equal((await notify(app, notification('email-disabled', 'nobody'))).statusCode, 200);
+  assert.equal((await notify(app, notification('email-enabled', 'nobody'))).statusCode, 200);
+});
+
+test('consent-revoked signs the person out everywhere and drops the token, keeping the account', async () => {
+  const { app, pool } = await setup();
+  const account = await appleAccount(app, 'a-17');
+  assert.equal((await notify(app, notification('consent-revoked', 'a-17'))).statusCode, 200);
+  const session = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { cookie: account.cookie } });
+  assert.equal(session.statusCode, 401);
+  assert.equal((await pool.query(`SELECT apple_refresh_token FROM user_identities WHERE subject='a-17'`)).rows[0].apple_refresh_token, null);
+  assert.equal((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [account.user.id])).rows[0].deleted_at, null);
+});
+
+test('account-deleted deletes an Apple-only account, and only unlinks one that has a password', async () => {
+  const { app, pool } = await setup();
+  const only = await appleAccount(app, 'a-18');
+  assert.equal((await notify(app, notification('account-deleted', 'a-18'))).statusCode, 200);
+  assert.ok((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [only.user.id])).rows[0].deleted_at);
+
+  const owner = await registerWithPassword(app, 'both@example.com');
+  const token = appleToken({ sub: 'a-19', email: 'both@example.com' });
+  await post(app, '/api/v1/auth/link', { provider: 'apple', idToken: token, authorizationCode: fakeApple.issueCode('a-19'), password: PASSWORD });
+  assert.equal((await notify(app, notification('account-deleted', 'a-19'))).statusCode, 200);
+  assert.equal((await pool.query(`SELECT * FROM user_identities WHERE subject='a-19'`)).rowCount, 0);
+  assert.equal((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [owner.id])).rows[0].deleted_at, null);
+  assert.equal((await post(app, '/api/v1/auth/login', { identifier: 'both@example.com', password: PASSWORD })).statusCode, 200);
+});
+
 test('Apple\'s first-sign-in name is kept, and the journeyer- name is only a fallback', async () => {
   const { app } = await setup();
   const named = await post(app, '/api/v1/auth/apple', { idToken: appleToken({ sub: 'a-n1', email: 'n1@example.com' }), authorizationCode: fakeApple.issueCode('a-n1'), displayName: 'Meera Rao' });
@@ -452,4 +494,65 @@ test('with the Apple key or encryption key missing or malformed, the server stil
     });
     assert.equal(deleted.statusCode, 204, deleted.body);
   }
+});
+
+test('account-deleted for an owner of a shared journey does exactly what Delete account does: refuses, and changes nothing', async () => {
+  const { app, pool } = await setup();
+  const owner = await appleAccount(app, 'a-30');
+  const headers = { origin, cookie: owner.cookie, 'x-together-csrf': owner.csrfToken };
+  const journey = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers,
+    payload: { name: 'Shared', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  });
+  assert.equal(journey.statusCode, 201, journey.body);
+  const journeyId = journey.json().data.journey.id;
+  const partner = await registerWithPassword(app, 'partner@example.com');
+  await pool.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member')`, [journeyId, partner.id]);
+
+  // In the app, deleting is refused until the journey is handed over...
+  const inApp = await app.inject({ method: 'DELETE', url: '/api/v1/account', headers, payload: { confirmation: 'DELETE' } });
+  assert.equal(inApp.statusCode, 409);
+  assert.equal(inApp.json().error.code, 'ownership_transfer_required');
+
+  // ...and Apple's event is refused the same way. Nothing is deleted or unlinked.
+  assert.equal((await notify(app, notification('account-deleted', 'a-30'))).statusCode, 200);
+  assert.equal((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [owner.user.id])).rows[0].deleted_at, null);
+  assert.equal((await pool.query(`SELECT * FROM user_identities WHERE subject='a-30'`)).rowCount, 1);
+  assert.equal((await pool.query('SELECT * FROM journey_members WHERE journey_id=$1', [journeyId])).rowCount, 2);
+  assert.equal((await pool.query('SELECT * FROM apple_revocations')).rowCount, 0);
+});
+
+test('a refused Apple deletion is remembered, listed with its journey, and finished by handing the journey over', async () => {
+  const { app, pool, platform } = await setup();
+  const owner = await appleAccount(app, 'a-31');
+  const headers = { origin, cookie: owner.cookie, 'x-together-csrf': owner.csrfToken };
+  const journey = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers,
+    payload: { name: 'Held together', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  });
+  const journeyId = journey.json().data.journey.id;
+  const partner = await registerWithPassword(app, 'keeps@example.com');
+  await pool.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member')`, [journeyId, partner.id]);
+  await notify(app, notification('account-deleted', 'a-31'));
+
+  // Remembered on the identity, so the follow-up survives the container's log being lost.
+  const [waiting] = await listRefusedAppleDeletions(pool, new Date(NOW.getTime() + 3 * 24 * 60 * 60 * 1000));
+  assert.equal(waiting.userId, owner.user.id);
+  assert.equal(waiting.daysWaiting, 3);
+  assert.deepEqual(waiting.journeys.map((j) => j.journeyId), [journeyId]);
+  assert.deepEqual(waiting.journeys[0].members.map((m) => m.userId), [partner.id]);
+
+  const services = { pool, platform, billing: new DisabledBillingService() };
+  // Without handing the journey over, deletion still refuses, exactly as in the app.
+  await assert.rejects(finishRefusedAppleDeletion(services, owner.user.id, []), { code: 'ownership_transfer_required' });
+  // A password account isn't this tool's to delete.
+  await assert.rejects(finishRefusedAppleDeletion(services, partner.id, []), { code: 'not_a_refused_apple_deletion' });
+
+  const done = await finishRefusedAppleDeletion(services, owner.user.id, [{ journeyId, toUserId: partner.id }]);
+  assert.deepEqual(done, { deleted: true, handedOver: 1 });
+  assert.ok((await pool.query('SELECT deleted_at FROM users WHERE id=$1', [owner.user.id])).rows[0].deleted_at);
+  assert.equal((await pool.query('SELECT owner_user_id FROM journeys WHERE id=$1', [journeyId])).rows[0].owner_user_id, partner.id);
+  assert.deepEqual(await listRefusedAppleDeletions(pool), []);
+  // Deleting it revoked its Apple token like any other deletion.
+  assert.equal(revokeCalls().at(-1).form.token.startsWith('rt-'), true);
 });

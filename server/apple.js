@@ -17,6 +17,7 @@ import { createCipheriv, createDecipheriv, createPrivateKey, randomBytes, sign }
 //   https://developer.apple.com/documentation/signinwithapplerestapi/generate-and-validate-tokens
 //   https://developer.apple.com/documentation/signinwithapplerestapi/revoke-tokens
 //   https://developer.apple.com/documentation/accountorganizationaldatasharing/creating-a-client-secret
+//   https://developer.apple.com/documentation/signinwithapple/processing-changes-for-sign-in-with-apple-accounts
 const APPLE = 'https://appleid.apple.com';
 const SECRET_TTL_S = 24 * 60 * 60;
 const SECRET_REFRESH_S = 60 * 60;
@@ -149,4 +150,17 @@ export function appleSignInFor(config, options = {}) {
     redirectUri: config.APPLE_WEB_REDIRECT_URI,
     ...options,
   });
+}
+
+// Apple's server-to-server event types. Apple's page spells the deletion `account-deleted`;
+// `account-delete` is accepted too. `events` is documented as an object but reported as a JSON
+// string in practice, so both are read.
+export function appleEventFrom(claims) {
+  let events = claims.events;
+  if (typeof events === 'string') {
+    try { events = JSON.parse(events); } catch { return null; }
+  }
+  if (!events || typeof events.type !== 'string' || typeof events.sub !== 'string') return null;
+  const type = events.type === 'account-delete' ? 'account-deleted' : events.type;
+  return { type, subject: events.sub };
 }

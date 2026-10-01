@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
-import { appleSignInFor } from './apple.js';
+import { appleEventFrom, appleSignInFor } from './apple.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
 import {
   assertPassword,
@@ -701,6 +701,72 @@ export class PlatformService {
       }
     }
     return tally;
+  }
+
+  // Apple's server-to-server notifications (#250). `deleteAccount` is the caller's, because
+  // deleting also has to clear billing, which the platform doesn't own. Returns false only for a
+  // payload Apple didn't sign.
+  async handleAppleNotification(payload, { deleteAccount }) {
+    const claims = await this.identity.verifiedClaims('apple', payload, this.config.appleClientIds).catch(() => null);
+    if (!claims) return false;
+    const event = appleEventFrom(claims);
+    if (!event) return true;
+    const found = await this.pool.query(
+      `SELECT i.user_id FROM user_identities i JOIN users u ON u.id=i.user_id
+       WHERE i.provider='apple' AND i.subject=$1 AND u.deleted_at IS NULL`,
+      [event.subject],
+    );
+    if (!found.rowCount) return true;
+    const userId = found.rows[0].user_id;
+    const signOut = async (client) => {
+      await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
+    };
+
+    if (event.type === 'consent-revoked') {
+      // They stopped using their Apple ID with Together Ledger. Apple has voided the token already;
+      // Apple's guidance is to treat it as signing out. The account stays.
+      await withTransaction(this.pool, async (client) => {
+        await client.query(`UPDATE user_identities SET apple_client_id=NULL, apple_refresh_token=NULL WHERE provider='apple' AND subject=$1`, [event.subject]);
+        await signOut(client);
+      });
+    } else if (event.type === 'account-deleted') {
+      const others = await this.pool.query(
+        `SELECT (SELECT count(*) FROM user_identities WHERE user_id=$1 AND NOT (provider='apple' AND subject=$2))
+              + (SELECT count(*) FROM users WHERE id=$1 AND password_hash IS NOT NULL) AS n`,
+        [userId, event.subject],
+      );
+      if (Number(others.rows[0].n) === 0) {
+        // Apple was the only way in, so the account is deleted exactly as Delete account would
+        // delete it, through the same function and the same billing check (owner, Sep 30, 2026).
+        // That includes refusing: while the person still owns a journey someone else is in, or has
+        // billing to settle, Delete account asks them to hand the journey over first, and so does
+        // this. Nothing is changed, and the log says why, for the owner to follow up by hand.
+        try {
+          await deleteAccount(userId);
+        } catch (error) {
+          // Remembered on the identity, not only in the log, because the log goes with the
+          // container at the next release. The account id is a random UUID, nothing personal.
+          await this.pool.query(
+            `UPDATE user_identities SET apple_account_deleted_at=COALESCE(apple_account_deleted_at, $1)
+             WHERE provider='apple' AND subject=$2`,
+            [this.now(), event.subject],
+          );
+          process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple account-deleted: deletion refused, as Delete account would refuse it', code: error?.code || 'error', userId, followUp: 'node server/finish-apple-account-deletion.js' })}\n`);
+        }
+      } else {
+        // There is still a password or a Google identity: the Apple identity goes, the account
+        // stays, and its sessions end so nothing signed in through Apple lingers.
+        await withTransaction(this.pool, async (client) => {
+          await client.query(`DELETE FROM user_identities WHERE provider='apple' AND subject=$1`, [event.subject]);
+          await signOut(client);
+        });
+      }
+    }
+    // email-disabled and email-enabled: a Hide My Email relay stopped or restarted forwarding.
+    // Apple itself drops mail to a disabled relay, and nothing Together Ledger sends is lost that
+    // the person could act on, so there is nothing to change here.
+    return true;
   }
 
   async session(rawToken) {
