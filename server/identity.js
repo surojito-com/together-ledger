@@ -61,13 +61,13 @@ export class IdentityVerifier {
     return this.keys[provider].byKid.get(kid) || null;
   }
 
-  // Null when the token doesn't verify, for any reason: the caller answers every one of them the
-  // same way. A provider that can't be reached for its keys throws instead, because that is not
-  // the person's mistake.
-  async verify(provider, idToken) {
-    if (!this.configured(provider)) return null;
-    const parts = String(idToken || '').split('.');
-    if (parts.length !== 3) return null;
+  // The claims of a JWT this provider signed, or null when it doesn't verify for any reason:
+  // signature, issuer, audience, or dates. A provider that can't be reached for its keys throws
+  // instead, because that is not the person's mistake. Apple signs its server-to-server
+  // notifications with the same keys as its ID tokens, so both are checked here.
+  async verifiedClaims(provider, jwt, audiences) {
+    const parts = String(jwt || '').split('.');
+    if (parts.length !== 3 || !PROVIDERS[provider]) return null;
     let header;
     let claims;
     try {
@@ -94,11 +94,19 @@ export class IdentityVerifier {
     if (!signed) return null;
 
     const nowS = Math.floor(this.now() / 1000);
-    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    const claimed = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
     if (!PROVIDERS[provider].issuers.includes(claims.iss)) return null;
-    if (!audiences.some((aud) => this.clientIds[provider].includes(aud))) return null;
-    if (typeof claims.exp !== 'number' || claims.exp + CLOCK_SKEW_S < nowS) return null;
+    if (!claimed.some((aud) => audiences.includes(aud))) return null;
+    if (typeof claims.exp === 'number' && claims.exp + CLOCK_SKEW_S < nowS) return null;
     if (typeof claims.iat === 'number' && claims.iat - CLOCK_SKEW_S > nowS) return null;
+    return { ...claims, audience: claimed.find((aud) => audiences.includes(aud)) };
+  }
+
+  // An ID token: a signed JWT that must also carry an expiry and a subject.
+  async verify(provider, idToken) {
+    if (!this.configured(provider)) return null;
+    const claims = await this.verifiedClaims(provider, idToken, this.clientIds[provider]);
+    if (!claims || typeof claims.exp !== 'number') return null;
     if (typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 255) return null;
 
     const email = typeof claims.email === 'string' ? claims.email : null;
@@ -112,7 +120,7 @@ export class IdentityVerifier {
       // Google carries the person's name in the token. Apple never does; its client sends the
       // name it was given on the first sign-in instead.
       name: typeof claims.name === 'string' ? claims.name : null,
-      audience: audiences.find((aud) => this.clientIds[provider].includes(aud)),
+      audience: claims.audience,
     };
   }
 }

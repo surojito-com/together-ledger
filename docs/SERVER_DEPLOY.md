@@ -99,6 +99,8 @@ Revisit this decision when any of these becomes true:
 | `<SECRET_ID_AUDIT>` | Secrets Manager name or ARN holding `AUDIT_HMAC_KEY` | AWS Secrets Manager |
 | `<SECRET_ID_POSTGRES>` | Secrets Manager name or ARN holding `POSTGRES_PASSWORD` | AWS Secrets Manager |
 | `<SECRET_ID_SMTP>` | Secrets Manager name or ARN holding the Resend relay URL | AWS Secrets Manager |
+| `<SECRET_ID_APPLE_SIGN_IN>` | Secrets Manager name or ARN holding `APPLE_SIGN_IN_PRIVATE_KEY`: the Sign in with Apple key `985BDXJP8S`'s `.p8` contents, on one line | AWS Secrets Manager |
+| `<SECRET_ID_APPLE_TOKENS>` | Secrets Manager name or ARN holding `APPLE_TOKEN_ENCRYPTION_KEY`: 32 random bytes, base64 (`openssl rand -base64 32`) | AWS Secrets Manager |
 | `<COMMIT>` | The reviewed `main` commit being released | `git rev-parse HEAD` in a clean checkout |
 | `<DIGEST>` | The immutable image digest recorded in step 2 | printed by the build |
 
@@ -184,15 +186,89 @@ command:
 
 ```sh
 sudo sh -c 'umask 077; {
-  printf "SESSION_SECRET=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_SESSION> --query SecretString --output text)"
-  printf "AUDIT_HMAC_KEY=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_AUDIT> --query SecretString --output text)"
-  printf "POSTGRES_PASSWORD=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_POSTGRES> --query SecretString --output text)"
-  printf "SMTP_URL=%s\n" "$(aws secretsmanager get-secret-value --secret-id <SECRET_ID_SMTP> --query SecretString --output text)"
+  printf "SESSION_SECRET=%s\n" "$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_SESSION> --query SecretString --output text)"
+  printf "AUDIT_HMAC_KEY=%s\n" "$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_AUDIT> --query SecretString --output text)"
+  printf "POSTGRES_PASSWORD=%s\n" "$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_POSTGRES> --query SecretString --output text)"
+  printf "SMTP_URL=%s\n" "$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_SMTP> --query SecretString --output text)"
 } >> /etc/together-ledger/production.env'
 ```
 
-Confirm the file has exactly one line for each of those keys and no placeholder left from the
-example. `DATABASE_URL` is derived by `compose.production.yaml`; do not set it by hand.
+Then add the two Sign in with Apple values as below. Confirm the file has exactly one line for
+each key and no placeholder left from the example. `DATABASE_URL` is derived by
+`compose.production.yaml`; do not set it by hand.
+
+**What the running host actually has (owner, 2026-10-01).** The four values above live in one
+combined secret holding several values, not one secret each as the block assumes. The
+production file already holds them, so a release does not re-run that block. If it ever has to
+be rebuilt, read each value out of the combined secret instead, still without printing it.
+
+#### Adding the two Sign in with Apple values (#218)
+
+The two Apple values are one secret each (`<SECRET_ID_APPLE_SIGN_IN>`,
+`<SECRET_ID_APPLE_TOKENS>`), kept apart from the combined secret so either can be replaced
+without rewriting the others. Done on 2026-10-01, before #249 merged.
+
+**Who reads them.** The `aws` that runs under `sudo` on the host is the IAM role
+`together-ledger-host-image-pull`, through the host's managed-instance (`mi-`) registration. The
+login user's `aws` is the Lightsail-managed instance role, in Lightsail's own account, and can
+read nothing of ours. The pull role was given one inline policy,
+`read-together-ledger-apple-secrets`: `secretsmanager:GetSecretValue` on those two secrets' ARNs
+and nothing else. They use the default `aws/secretsmanager` key, so no KMS grant is needed.
+Check it without printing a value:
+
+```sh
+sudo aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_APPLE_TOKENS> \
+  --query 'length(SecretString)' --output text      # 44
+```
+
+**Appending them to an existing file.** Back the file up first (`sudo cp -p`, and remove the
+copy once the checks below pass). The values go into variables inside one root shell, so
+nothing is printed. If either comes back empty, nothing is written. A missing final newline is
+added first, so the new lines cannot join the last one. `tr -d "\r\n"` folds the `.p8` onto one
+line, Windows line endings included; the server rebuilds the PEM from it (`server/apple.js`).
+
+```sh
+sudo sh -c 'umask 077
+F=/etc/together-ledger/production.env
+K=$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_APPLE_SIGN_IN> --query SecretString --output text | tr -d "\r\n")
+E=$(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id <SECRET_ID_APPLE_TOKENS> --query SecretString --output text | tr -d "\r\n")
+if [ -z "$K" ] || [ -z "$E" ]; then echo "a secret came back empty; nothing written"; exit 1; fi
+[ -z "$(tail -c1 "$F")" ] || printf "\n" >> "$F"
+printf "APPLE_SIGN_IN_PRIVATE_KEY=%s\nAPPLE_TOKEN_ENCRYPTION_KEY=%s\n" "$K" "$E" >> "$F"
+echo "written"'
+```
+
+Before appending, `sudo grep -c -E '^APPLE_(SIGN_IN_PRIVATE_KEY|TOKEN_ENCRYPTION_KEY)=' <file>`
+must print `0`. If it prints anything else, replace those lines rather than adding new ones.
+
+**Proving they are set, without printing them:**
+
+```sh
+F=/etc/together-ledger/production.env
+# One line each, and how long each value is.
+sudo awk -F= '/^APPLE_(SIGN_IN_PRIVATE_KEY|TOKEN_ENCRYPTION_KEY)=/ { print $1, length($0) - length($1) - 1 }' "$F"
+# The key parses as P-256: prints only "ASN1 OID: prime256v1" and "NIST CURVE: P-256".
+sudo sed -n 's/^APPLE_SIGN_IN_PRIVATE_KEY=//p' "$F" \
+  | sed -e 's/-----BEGIN PRIVATE KEY-----//' -e 's/-----END PRIVATE KEY-----//' \
+  | base64 -d | openssl pkey -inform DER -noout -text_pub | grep -E 'ASN1 OID|NIST CURVE'
+# The encryption key is 32 bytes.
+sudo sed -n 's/^APPLE_TOKEN_ENCRYPTION_KEY=//p' "$F" | base64 -d | wc -c
+# Both match Secrets Manager.
+sudo bash -c 'F=/etc/together-ledger/production.env
+for n in APPLE_SIGN_IN_PRIVATE_KEY:<SECRET_ID_APPLE_SIGN_IN> APPLE_TOKEN_ENCRYPTION_KEY:<SECRET_ID_APPLE_TOKENS>; do
+  k=${n%%:*}; id=${n#*:}
+  cmp -s <(sed -n "s/^$k=//p" "$F") \
+         <(aws secretsmanager get-secret-value --region <AWS_REGION> --secret-id "$id" --query SecretString --output text | tr -d "\r\n"; echo) \
+    && echo "$k matches Secrets Manager" || echo "$k DIFFERS"
+done'
+# Compose hands both to the app: prints only true/false.
+cd <REPO_DIR>
+sudo TOGETHER_ENV_FILE="$F" docker compose --env-file "$F" -f compose.production.yaml config --format json \
+  | jq '.services.app.environment | {signInKey: has("APPLE_SIGN_IN_PRIVATE_KEY"), tokenKey: has("APPLE_TOKEN_ENCRYPTION_KEY")}'
+```
+
+No restart is needed when only these two lines are added: code before #249 ignores them, and the
+next release's `up -d` picks them up.
 
 ### 3. Create the release log
 
