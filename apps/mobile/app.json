@@ -23,7 +23,8 @@
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "./plugins/with-scene-life-cycle"
     ],
     "experiments": {
       "typedRoutes": true
