@@ -1609,6 +1609,16 @@ export class PlatformService {
     const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
     if (!user.rowCount) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
     if (user.rows[0].password_hash && !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    await this.eraseAccount(userId);
+  }
+
+  // Everything account deletion does once the password is confirmed. It stands apart so a database
+  // restored from backup can have the deletions made after that backup applied again before it
+  // serves anyone (server/reapply-account-deletions.js, docs/OPERATIONS.md). Returns false when the
+  // account was already deleted, so re-applying the same list twice is harmless.
+  async eraseAccount(userId) {
+    const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    if (!user.rowCount) return false;
     const revocationIds = await withTransaction(this.pool, async (client) => {
       const memberships = await client.query('SELECT jm.*,j.owner_user_id FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.user_id=$1', [userId]);
       for (const membership of memberships.rows) {
@@ -1669,11 +1679,16 @@ export class PlatformService {
       );
       return queued;
     });
+    // The account id, never the email. Written here rather than by one route, so a deletion
+    // Apple asked for is found too: this line is what lets a restore from backup re-apply it
+    // (docs/OPERATIONS.md, "Re-applying deletions after a restore").
+    process.stderr.write(`${JSON.stringify({ level: 'info', message: 'account deleted', deletedAccountId: userId })}\n`);
     // The deletion has committed. A failure from here on only leaves the rows for the retry timer.
     if (revocationIds.length) {
       await this.drainAppleRevocations({ onlyIds: revocationIds }).catch((error) => {
         process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple revocation after deletion failed; it will be retried', errorName: error?.name || 'Error' })}\n`);
       });
     }
+    return true;
   }
 }

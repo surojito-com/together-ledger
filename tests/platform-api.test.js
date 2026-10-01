@@ -58,7 +58,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   });
   const platform = new PlatformService({ pool, config, mailer, now });
   const app = await buildApp({ platform, config, logger, ...(billing ? { billing } : {}) });
-  return { app, mailer, pool };
+  return { app, mailer, pool, platform };
 }
 
 function cookieFrom(response) {
@@ -595,6 +595,30 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'ownership_transferred'));
   assert.ok(bobAfterDeletion.json().data.events.some((event) => event.action === 'member_deleted_account'));
   assert.equal(JSON.stringify(bobAfterDeletion.json().data.events).includes('Alice'), false);
+});
+
+test('a deletion can be applied again to a database restored from before it', async (t) => {
+  const { app, mailer, pool, platform } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const carol = await register(app, mailer, { email: 'carol@example.test', username: 'carol-restored' });
+  const written = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => { written.push(String(chunk)); return write.call(process.stderr, chunk, ...rest); };
+  try {
+    assert.equal(await platform.eraseAccount(carol.user.id), true);
+  } finally {
+    process.stderr.write = write;
+  }
+  const logged = written.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter((line) => line?.message === 'account deleted');
+  assert.deepEqual(logged.map((line) => line.deletedAccountId), [carol.user.id], 'every deletion path logs the id a restore needs');
+  assert.equal(written.join('').includes('carol@example.test'), false, 'never the email');
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'carol@example.test', password: 'correct horse battery staple' } });
+  assert.equal(login.statusCode, 401, login.body);
+  const row = await pool.query('SELECT email_normalized,display_name,deleted_at FROM users WHERE id=$1', [carol.user.id]);
+  assert.equal(row.rows[0].email_normalized, `deleted-${carol.user.id}@invalid.local`);
+  assert.equal(row.rows[0].display_name, 'Deleted account');
+  assert.ok(row.rows[0].deleted_at);
+  assert.equal(await platform.eraseAccount(carol.user.id), false, 're-applying the same list twice is harmless');
 });
 
 async function invitedPair(logLines) {

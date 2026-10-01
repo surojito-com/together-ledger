@@ -276,6 +276,7 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.delete('/api/v1/account', { preHandler: protectMutation }, async (request, reply) => {
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
+    // deleteAccount logs the `account deleted` line a restore from backup relies on.
     await platform.deleteAccount(request.auth.userId, request.body?.password);
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.code(204).send();
