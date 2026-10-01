@@ -38,6 +38,9 @@ function ThemedStack() {
       <Stack.Screen name="verify-email" options={{ title: 'Verify email' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
       <Stack.Screen name="moment" options={{ title: 'Hold a moment', presentation: 'modal' }} />
+      <Stack.Screen name="journey-settings" options={{ title: 'Journey sharing' }} />
+      <Stack.Screen name="history" options={{ title: 'History' }} />
+      <Stack.Screen name="concern" options={{ title: 'Return-to conversation', presentation: 'modal' }} />
     </Stack>
   );
 }

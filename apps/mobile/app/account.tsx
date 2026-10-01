@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { accountMessage, ACCOUNT_NOTICES } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { useJourney } from '../src/journey/use-journey';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
 
 /**
@@ -14,7 +15,10 @@ export default function AccountScreen() {
   const { notice: carried } = useLocalSearchParams<{ notice?: keyof typeof ACCOUNT_NOTICES }>();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [pending, setPending] = useState<'sign-in' | 'resend' | 'sign-out' | 'refresh' | null>(null);
+  const [pending, setPending] = useState<'sign-in' | 'resend' | 'sign-out' | 'refresh' | 'name' | null>(null);
+  // The name being edited; null until the person types, so it shows their current name.
+  const [name, setName] = useState<string | null>(null);
+  const journey = useJourney();
   const [notice, setNotice] = useState<string | null>(carried && carried in ACCOUNT_NOTICES ? ACCOUNT_NOTICES[carried] : null);
   const [problem, setProblem] = useState(false);
 
@@ -41,6 +45,14 @@ export default function AccountScreen() {
       <Screen title="Account" lead="Passwords are never shared between journeyers.">
         <Body>{user.displayName || user.username} · {user.email}</Body>
         <Body>{user.emailVerified ? 'Email verified.' : 'Email not verified yet. Invitations can be accepted once it is.'}</Body>
+        {/* The name journeyers see (#253). Each journey notes when it changes; the handle stays private. */}
+        <Field label="Name journeyers see" value={name ?? user.displayName} onChangeText={setName} maxLength={80} autoComplete="name" textContentType="name" hint={`Everyone in your journeys sees this name, and each journey notes when it changes. Your handle, @${user.username}, stays private.`} />
+        <Button kind="quiet" label="Save name" pending={pending === 'name'} pendingLabel="Saving…" disabled={!(name ?? user.displayName).trim() || (name ?? user.displayName).trim() === user.displayName} onPress={() => run('name', async () => {
+          session.setUser(await session.client.changeDisplayName((name ?? user.displayName).trim()));
+          setName(null);
+          await journey.reload();
+          return 'Name saved. Your journeyers see it now.';
+        })} />
         {!user.emailVerified ? (
           <>
             <Button kind="quiet" label="Resend verification email" pending={pending === 'resend'} pendingLabel="Sending…" onPress={() => run('resend', async () => (

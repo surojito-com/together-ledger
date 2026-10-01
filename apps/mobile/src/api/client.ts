@@ -206,6 +206,46 @@ export function createAccountClient({ base, fetch, tokens }: {
         headers: { Authorization: `Bearer ${held.token}`, 'x-together-client': 'app' },
       };
     },
+    /** The name journeyers see (#253); the private username never changes. */
+    async changeDisplayName(displayName: string) {
+      return (await request<{ user: AccountUser }>('/account', { method: 'PATCH', body: { displayName }, signedIn: true })).user;
+    },
+    /**
+     * Journey settings (TL-M-09, #184). Proposing is not adding: nothing reaches the person until
+     * everyone already in the journey agrees (migration 022), so each answer says what happened.
+     */
+    async proposeInvitation(journeyId: string, input: { email: string; note?: string }) {
+      return request<{ invitationSent?: boolean }>(`/journeys/${encodeURIComponent(journeyId)}/invitations`, { method: 'POST', body: input, signedIn: true });
+    },
+    async decideProposal(journeyId: string, proposalId: string, decision: 'agree' | 'decline') {
+      return request<{ invitationSent?: boolean }>(`/journeys/${encodeURIComponent(journeyId)}/invite-proposals/${encodeURIComponent(proposalId)}/decision`, { method: 'POST', body: { decision }, signedIn: true });
+    },
+    async withdrawProposal(journeyId: string, proposalId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/invite-proposals/${encodeURIComponent(proposalId)}`, { method: 'DELETE', body: {}, signedIn: true });
+    },
+    async removeMember(journeyId: string, userId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE', body: {}, signedIn: true });
+    },
+    async transferOwnership(journeyId: string, userId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/ownership`, { method: 'POST', body: { userId }, signedIn: true });
+    },
+    async setUnpaidCapacityRest(journeyId: string, input: { mode?: string; restOrder?: string[] }) {
+      return request(`/journeys/${encodeURIComponent(journeyId)}/unpaid-capacity`, { method: 'PATCH', body: input, signedIn: true });
+    },
+    /** Where this journey's paid capacity stands. Read only: the phone never starts a purchase (#203). */
+    async billingStatus<B>(journeyId: string) {
+      return request<B>(`/journeys/${encodeURIComponent(journeyId)}/billing`, { signedIn: true });
+    },
+    async createConcern(journeyId: string, concern: { title: string; detail: string; status: string }) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/concerns`, { method: 'POST', body: concern, signedIn: true });
+    },
+    /** From the version it was read at; a newer one elsewhere is a conflict. */
+    async updateConcern(journeyId: string, concernId: string, concern: { title: string; detail: string; status: string; version: number }) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/concerns/${encodeURIComponent(concernId)}`, { method: 'PATCH', body: concern, signedIn: true });
+    },
+    async deleteConcern(journeyId: string, concernId: string, version: number) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/concerns/${encodeURIComponent(concernId)}`, { method: 'DELETE', body: { version }, signedIn: true });
+    },
     async deleteAccount(password: string) {
       await request('/account', { method: 'DELETE', body: { password, confirmation: 'DELETE' }, signedIn: true });
       await tokens.clear();

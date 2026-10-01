@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode, type Ref } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { PENDING_LABEL } from '../shell/defaults';
 import { useShell } from '../shell/shell-provider';
@@ -11,7 +11,14 @@ import { fonts, targetSize, useTheme } from '../theme';
  * at the top of its work (TL-M-06, #181). Every tappable thing meets the
  * 44-point minimum (#178), and colour comes from semantic roles only.
  */
-export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'] }: { title: string; lead?: string; children: ReactNode; edges?: Edge[] }) {
+export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'], refresh }: {
+  title: string;
+  lead?: string;
+  children: ReactNode;
+  edges?: Edge[];
+  /** Pull to refresh, as on the ledger, for a screen that shows what other journeyers change. */
+  refresh?: { refreshing: boolean; onRefresh: () => void };
+}) {
   const { theme } = useTheme();
   const { status } = useShell();
   const scroll = useRef<ScrollView>(null);
@@ -24,7 +31,12 @@ export function Screen({ title, lead, children, edges = ['bottom', 'left', 'righ
   // under a notch or the status bar.
   return (
     <SafeAreaView edges={edges} style={[styles.fill, { backgroundColor: theme.colors.bg }]}>
-      <ScrollView ref={scroll} contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scroll}
+        contentContainerStyle={styles.screen}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={refresh ? <RefreshControl refreshing={refresh.refreshing} onRefresh={refresh.onRefresh} tintColor={theme.colors.accent} colors={[theme.colors.accent]} /> : undefined}
+      >
         <ScreenStatusRegion />
         <Text accessibilityRole="header" style={[styles.title, fonts.serif, { color: theme.colors.fg }]}>{title}</Text>
         {lead ? <Text style={[styles.body, { color: theme.colors.textSecondary }]}>{lead}</Text> : null}
