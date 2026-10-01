@@ -75,7 +75,8 @@ Keep that uploader credential in a root-owned mode-0600 file outside the reposit
 
 ```sh
 GCP_BACKUP_BUCKET=replace-with-private-bucket
-GCP_BACKUP_SERVICE_ACCOUNT=backup-uploader@your-project.iam.gserviceaccount.com
+GCP_BACKUP_PROJECT=togetherledger-app
+GCP_BACKUP_SERVICE_ACCOUNT=backup-uploader@togetherledger-app.iam.gserviceaccount.com
 GOOGLE_APPLICATION_CREDENTIALS=/etc/together-ledger/backup-uploader-key.json
 ```
 
@@ -86,9 +87,48 @@ sudo /usr/local/lib/together-ledger/verify-production-recovery.sh
 sudo systemctl enable --now together-ledger-backup.timer
 ```
 
-The one-off service first makes and checksum-verifies the local encrypted dump, uploads the dump and sidecar, and then records a root-only upload receipt. The recovery preflight accepts only a current local backup whose checksum agrees with that receipt. It deliberately fails closed if the recipient file, uploader configuration, backup, checksum, or receipt is missing or stale.
+The one-off service first makes and checksum-verifies the local encrypted dump, uploads the dump and sidecar, and then records a root-only upload receipt naming the bucket it went to. The job refuses to upload when the uploader's service account is not in `GCP_BACKUP_PROJECT`, so a half-changed uploader file cannot send backups to the wrong project. The recovery preflight accepts only a current local backup whose checksum agrees with that receipt, uploaded to the bucket the uploader file names now. It deliberately fails closed if the recipient file, uploader configuration, backup, checksum, or receipt is missing or stale, and after the uploader is pointed at a new bucket it fails until a backup has reached that bucket.
 
 The uploader's successful cloud response is deployment evidence, but a human GCP owner should still periodically check the private bucket and perform an isolated restore drill. Do not upload the private age identity.
+
+### The backup bucket
+
+The bucket lives in the company project `togetherledger-app`, billed to the company (#254). It never lives on a personal account. A GCP owner of that project creates it once:
+
+```sh
+BUCKET=replace-with-private-bucket
+gcloud storage buckets create "gs://$BUCKET" --project=togetherledger-app --location=us-west1 \
+  --default-storage-class=STANDARD --uniform-bucket-level-access --public-access-prevention \
+  --soft-delete-duration=0
+printf '%s\n' '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > lifecycle.json
+gcloud storage buckets update "gs://$BUCKET" --lifecycle-file=lifecycle.json
+gcloud storage buckets describe "gs://$BUCKET"
+```
+
+The description must show the 30-day delete rule, public access prevention enforced, uniform bucket-level access, no soft delete, versioning off and no retention policy. Those last three would keep deleted backups recoverable and break the 30-day promise in PRIVACY.md.
+
+The uploader is its own service account with one role, on that bucket only:
+
+```sh
+gcloud iam service-accounts create backup-uploader --project=togetherledger-app \
+  --display-name="Together Ledger backup uploader"
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member=serviceAccount:backup-uploader@togetherledger-app.iam.gserviceaccount.com \
+  --role=roles/storage.objectCreator
+```
+
+`roles/storage.objectCreator` adds objects and nothing else: it cannot read, list, replace or delete a backup. Its key goes straight into the root-owned mode-0600 file named by `GOOGLE_APPLICATION_CREDENTIALS` on the host. No other copy is kept; a lost key is replaced by a new one and the old one deleted.
+
+### Restore drill
+
+A backup counts as proven only once it has been restored. The drill runs away from the host, because the private age identity must never be there:
+
+1. As a GCP owner, download one backup and its `.sha256` file from the bucket into the same folder.
+2. Put the age identity, from wherever it is kept offline, in a mode-0600 file next to them.
+3. Run `scripts/restore-backup-drill.sh <backup>.dump.age <identity file>`. It checks the hash, decrypts the backup straight into `pg_restore`, and restores it into a throwaway `postgres:16-alpine` container, which it removes on exit. Set `DRILL_DATABASE_URL` to an empty database instead if Docker isn't available.
+4. It prints only counts: each table's rows and the migrations the backup carries. Record the line starting `Restore drill passed`, never the counts per table, then delete the identity file, the backup and the `.sha256` file.
+
+A drill database is never promoted. Promoting a restore is the incident procedure below, which also re-applies deletions.
 
 ## Release gate
 
