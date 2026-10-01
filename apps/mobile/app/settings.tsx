@@ -6,7 +6,8 @@ import { Body, Button, Screen } from '../src/components/ui';
 import { useTheme } from '../src/theme';
 
 /**
- * Settings. The theme picker offers all four themes (#181). Account deletion is one tap away
+ * Settings. The theme picker offers all four themes (#181). Journey sharing and the journey's
+ * history open from here (#184). Account deletion is one tap away
  * here, then a screen that says what it removes and keeps, then a confirmation: three taps, the
  * bar the stores set (#180).
  */
@@ -18,6 +19,13 @@ export default function SettingsScreen() {
       <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>Appearance</Text>
       <ThemePicker />
       <Body>Your theme changes only your own view. Each journeyer chooses what feels right on their screen.</Body>
+      {session.status === 'signed-in' ? (
+        <>
+          <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>This journey</Text>
+          <Button kind="quiet" label="Journey sharing" onPress={() => router.push('/journey-settings')} />
+          <Button kind="quiet" label="History and conversations" onPress={() => router.push('/history')} />
+        </>
+      ) : null}
       <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>Account</Text>
       <Button kind="quiet" label="Account" onPress={() => router.push('/account')} />
       {session.status === 'signed-in' ? (
