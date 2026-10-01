@@ -190,3 +190,16 @@ test('a name is changed from Account, and the private handle is never edited (#2
   assert.match(screens.account, /changeDisplayName/);
   assert.doesNotMatch(screens.account, /changeUsername|username:\s*name/);
 });
+
+test('sharing and history re-read the journey when they come into view, and can be pulled to refresh', async () => {
+  // Found in the Simulator: a proposal made by someone else never appeared until the app was
+  // restarted, so a question about another person's access was answered from a stale view.
+  for (const source of [screens.sharing, screens.history]) {
+    assert.match(source, /useReloadWhenShown\(\);/);
+    assert.match(source, /refresh=\{\{ refreshing, onRefresh: refresh \}\}/);
+  }
+  const loader = await read('src/journey/use-journey.ts');
+  assert.match(loader, /useFocusEffect\(useCallback\(\(\) => \{\n\s+reload\(\);\n\s+\}, \[reload\]\)\)/);
+  // reload is memoised, so the focus effect runs once per arrival rather than on every render.
+  assert.match(loader, /const reload = useCallback\(async \(\) => \{/);
+});

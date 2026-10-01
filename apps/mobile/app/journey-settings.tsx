@@ -33,7 +33,7 @@ import {
   type InviteProposal,
   type SharingSnapshot,
 } from '../src/journey/sharing-view';
-import { useJourney } from '../src/journey/use-journey';
+import { useJourney, useReloadWhenShown } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
 import { useTheme } from '../src/theme';
 
@@ -63,9 +63,10 @@ function useNow(intervalMs = 30_000) {
 
 function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: string }) {
   const { client } = useSession();
-  const { reload } = useJourney();
+  const { reload, refresh, refreshing } = useJourney();
   const { confirmConsequence, showStatus, showToast } = useShell();
   const now = useNow();
+  useReloadWhenShown();
   const journeyId = snapshot.journey.id;
   const role = snapshot.journey.role;
   const creator = journeyCreator(snapshot);
@@ -144,7 +145,7 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
   const restMode = snapshot.capacity?.unpaidCapacityMode || 'read-only';
 
   return (
-    <Screen title="Journey sharing" lead={sharingCopy(snapshot.members.length, canPropose)}>
+    <Screen title="Journey sharing" lead={sharingCopy(snapshot.members.length, canPropose)} refresh={{ refreshing, onRefresh: refresh }}>
       {canPropose ? (
         <Section title="Propose a journeyer">
           <Field label="Propose a journeyer by email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="journeyer@example.com" hint="Everyone already in this journey has to agree before anything is sent. Until they all do, nothing reaches this person and they learn nothing about the journey." />

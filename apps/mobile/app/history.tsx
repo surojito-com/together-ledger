@@ -5,7 +5,7 @@ import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { Body, Button, Screen } from '../src/components/ui';
 import { CONSEQUENCES, concernsByRecency, dateTimeLabel, historyEvents, valueLabel, type ConcernRecord, type SharingSnapshot } from '../src/journey/sharing-view';
-import { useJourney } from '../src/journey/use-journey';
+import { useJourney, useReloadWhenShown } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
 import { targetSize, useTheme } from '../src/theme';
 
@@ -23,9 +23,10 @@ export default function HistoryScreen() {
 function History({ snapshot }: { snapshot: SharingSnapshot }) {
   const { theme } = useTheme();
   const { client } = useSession();
-  const { reload } = useJourney();
+  const { reload, refresh, refreshing } = useJourney();
   const { confirmConsequence, showStatus, showToast } = useShell();
   const [pending, setPending] = useState<string | null>(null);
+  useReloadWhenShown();
   const concerns = concernsByRecency(snapshot.concerns);
   const events = historyEvents(snapshot);
 
@@ -44,7 +45,7 @@ function History({ snapshot }: { snapshot: SharingSnapshot }) {
   };
 
   return (
-    <Screen title={`${snapshot.journey.name} history`} lead="Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones.">
+    <Screen title={`${snapshot.journey.name} history`} lead="Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones." refresh={{ refreshing, onRefresh: refresh }}>
       <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>Return-to conversations</Text>
       <Button label="Start a return-to conversation" onPress={() => router.push('/concern')} />
       {concerns.length ? concerns.map((concern) => (
