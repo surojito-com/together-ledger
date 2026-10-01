@@ -55,7 +55,7 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   ].filter(Boolean));
 
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message } });
+    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
     if (error.validation) return reply.code(400).send({ error: { code: 'invalid_input', message: 'The request is not valid.' } });
     if (error.statusCode === 429) return reply.code(429).send({ error: { code: 'rate_limit_exceeded', message: 'Too many requests. Wait and try again.' } });
     request.log.error({ err: { name: error.name, message: error.message } }, 'request failed');
@@ -163,6 +163,33 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
     setSession(reply, result.session);
     return { data: { user: result.user, csrfToken: result.session.csrfToken } };
+  });
+
+  // Google and Apple (#214). Like signing in with a password, these are places a credential is
+  // born, so a phone's claim to want a token is honoured and a browser must be ours. The ID token
+  // in the body is the credential; the reply is the same cookie + CSRF pair, or token pair, that
+  // a password login gives, so nothing downstream can tell how someone signed in.
+  async function socialReply(request, reply, signIn) {
+    const wantsToken = asksForToken(request);
+    if (!wantsToken) requireOrigin(request);
+    const result = await signIn({ issueSession: !wantsToken });
+    if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
+    setSession(reply, result.session);
+    return { data: { user: result.user, csrfToken: result.session.csrfToken } };
+  }
+
+  for (const provider of ['google', 'apple']) {
+    app.post(`/api/v1/auth/${provider}`, { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => (
+      socialReply(request, reply, (options) => platform.socialSignIn(provider, request.body || {}, options))
+    ));
+  }
+
+  // The answer to `link_required`: the same ID token, with the password of the account that
+  // already uses its email. It shares login's rate limit, since it is a password check too.
+  app.post('/api/v1/auth/link', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const provider = request.body?.provider;
+    if (provider !== 'google' && provider !== 'apple') throw new PlatformError(400, 'invalid_input', 'Choose Google or Apple.');
+    return socialReply(request, reply, (options) => platform.linkIdentity(provider, request.body || {}, options));
   });
 
   // Rotation, not renewal: the refresh token presented here is spent, and the reply carries a

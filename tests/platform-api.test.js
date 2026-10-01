@@ -43,6 +43,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/021_let-unpaid-capacity-rest-without-losing-history.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/022_agree-together-before-adding-someone.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/023_let-a-phone-carry-its-own-key.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
