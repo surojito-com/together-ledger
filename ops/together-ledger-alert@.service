@@ -1,0 +1,9 @@
+[Unit]
+Description=Notify on-call that %i failed
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/together-ledger/alert-webhook.env
+ExecStart=/usr/local/lib/together-ledger/alert-on-call.sh %I

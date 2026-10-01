@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
+import { runMigrations } from '../server/db.js';
 
 test('production deployment bundle keeps the database private and requires deliberate secrets', async () => {
   const [compose, caddy, environment, backup, backupRunner, recoveryCheck, recoveryInstaller, backupService, backupTimer, hostCheck, readiness, dockerfile] = await Promise.all([
@@ -87,4 +89,108 @@ test('public home is prepared for the protected account service', async () => {
   const publicHome = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(publicHome, /<meta name="together-api-origin" content="https:\/\/api\.together-ledger\.com" \/>/);
   assert.match(publicHome, /<meta name="together-accounts-enabled" content="true" \/>/);
+});
+
+test('the migration entry point reports what it applied and repeats nothing', async () => {
+  // Only pool.connect() and a client with query/release are used, so the contract that the
+  // deploy procedure leans on can be proven without a database: the schema moves as a step
+  // whose output someone reads, and running it again is a no-op.
+  const statements = [];
+  const alreadyApplied = new Set(['001_platform.sql']);
+  const pool = {
+    connect: async () => ({
+      query: async (text, values) => {
+        statements.push(text);
+        if (text.startsWith('SELECT 1 FROM schema_migrations')) {
+          return { rowCount: alreadyApplied.has(values[0]) ? 1 : 0 };
+        }
+        if (text.startsWith('INSERT INTO schema_migrations')) alreadyApplied.add(values[0]);
+        return { rowCount: 0 };
+      },
+      release: () => {},
+    }),
+  };
+
+  const first = await runMigrations(pool);
+  assert.ok(first.applied.length > 0);
+  assert.ok(!first.applied.includes('001_platform.sql'), 'an applied migration is never run twice');
+  assert.ok(first.applied.includes('023_let-a-phone-carry-its-own-key.sql'));
+  assert.deepEqual(first.applied, [...first.applied].sort(), 'migrations apply in filename order');
+  assert.equal(statements.at(-1), 'COMMIT');
+
+  assert.deepEqual((await runMigrations(pool)).applied, []);
+});
+
+test('the API has a written deploy path, and it is deliberately manual', async () => {
+  const [deploy, operations, readiness, draft] = await Promise.all([
+    readFile(new URL('../docs/SERVER_DEPLOY.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/PRODUCTION_READINESS.md', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/server-image.yml.draft', import.meta.url), 'utf8'),
+  ]);
+
+  // The decision the issue asked to be recorded rather than left as a gap.
+  assert.match(deploy, /Deploying the API stays manual/);
+  assert.match(deploy, /Revisit this decision when/);
+  // Deploy by digest, never by a tag someone can move.
+  assert.match(deploy, /<ECR_REPOSITORY>@<DIGEST>/);
+  assert.match(deploy, /node server\/migrate\.js/);
+  // A health check is not evidence that the change shipped.
+  assert.match(deploy, /Confirm against production, not against the deploy/);
+  assert.match(deploy, /## Rollback/);
+  assert.match(deploy, /must be safe for the previous image to run against/);
+
+  // The registry question is answered somewhere, so OPERATIONS may no longer say it is open.
+  assert.doesNotMatch(operations, /A registry is not configured yet/);
+  assert.match(operations, /SERVER_DEPLOY\.md/);
+  assert.match(operations, /Returning the image does not return the schema/);
+  assert.match(readiness, /SERVER_DEPLOY\.md/);
+  assert.match(readiness, /a written procedure is not a performed one/);
+
+  // The draft builds and publishes. It must never grow a deploy step, because the reason it is
+  // allowed to exist is that it cannot reach production.
+  assert.match(draft, /workflow_dispatch:/);
+  assert.doesNotMatch(draft, /compose\.production\.yaml/);
+  assert.doesNotMatch(draft, /appleboy\/ssh-action|ssh -/);
+});
+
+test('the drafted image workflow stays inert until someone renames it on purpose', async () => {
+  // GitHub Actions reads only .yml and .yaml here. A draft that ships as either one is live,
+  // whatever its comments say, so adopting it has to be a visible rename in a pull request.
+  const workflows = readdirSync(new URL('../.github/workflows', import.meta.url));
+  assert.ok(workflows.includes('server-image.yml.draft'));
+  assert.ok(!workflows.includes('server-image.yml'));
+  assert.ok(!workflows.includes('server-image.yaml'));
+});
+
+test('backups go only to the company project, and a restore drill can prove one (#254)', async () => {
+  const [runner, recoveryCheck, drill, operations] = await Promise.all([
+    readFile(new URL('../scripts/run-production-backup.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/verify-production-recovery.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/restore-backup-drill.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8'),
+  ]);
+  // The uploader names its project, and a key from any other project is refused before upload.
+  assert.match(runner, /GCP_BACKUP_PROJECT:\?/);
+  assert.match(runner, /\*@"\$GCP_BACKUP_PROJECT"\.iam\.gserviceaccount\.com\)/);
+  assert.ok(runner.indexOf('does not belong to GCP_BACKUP_PROJECT') < runner.indexOf('gcloud storage cp'));
+  // The receipt names the bucket, and the preflight only accepts the bucket configured now.
+  assert.match(runner, /UPLOADED_TO=%s/);
+  assert.match(recoveryCheck, /backup-uploader\.env/);
+  assert.match(recoveryCheck, /require_root_file "\$uploader_file"/);
+  assert.match(recoveryCheck, /different bucket than the uploader is configured for/);
+  assert.ok(recoveryCheck.indexOf('different bucket') < recoveryCheck.indexOf('Recovery preflight passed'));
+  // The drill checks the hash first, restores into a throwaway database, and prints counts only.
+  assert.ok(drill.indexOf('does not match its .sha256 file') < drill.indexOf('age -d'));
+  assert.match(drill, /postgres:16-alpine/);
+  assert.match(drill, /docker rm -f/);
+  assert.match(drill, /must point at an empty database/);
+  assert.match(drill, /--exit-on-error/);
+  assert.doesNotMatch(drill, /SELECT \* FROM/i);
+  // The bucket's settings and the order of the move are written down.
+  assert.match(operations, /GCP_BACKUP_PROJECT=togetherledger-app/);
+  assert.match(operations, /public-access-prevention/);
+  assert.match(operations, /--soft-delete-duration=0/);
+  assert.match(operations, /roles\/storage\.objectCreator/);
+  assert.match(operations, /restore-backup-drill\.sh/);
 });

@@ -2,16 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { newDb } from 'pg-mem';
+import ts from 'typescript';
 import { buildApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
+import { loggerOptions, redactUrl } from '../server/log-options.js';
 
 const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
 const apiOrigin = 'https://api.example.test';
 
-async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, now = () => new Date('2026-08-02T12:00:00.000Z') } = {}) {
+async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z') } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({
     name: 'char_length',
@@ -41,6 +43,9 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/021_let-unpaid-capacity-rest-without-losing-history.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/022_agree-together-before-adding-someone.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/023_let-a-phone-carry-its-own-key.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -52,7 +57,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
     ...configOverrides,
   });
   const platform = new PlatformService({ pool, config, mailer, now });
-  const app = await buildApp({ platform, config, ...(billing ? { billing } : {}) });
+  const app = await buildApp({ platform, config, logger, ...(billing ? { billing } : {}) });
   return { app, mailer, pool, platform };
 }
 
@@ -596,7 +601,17 @@ test('a deletion can be applied again to a database restored from before it', as
   const { app, mailer, pool, platform } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
   const carol = await register(app, mailer, { email: 'carol@example.test', username: 'carol-restored' });
-  assert.equal(await platform.eraseAccount(carol.user.id), true);
+  const written = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => { written.push(String(chunk)); return write.call(process.stderr, chunk, ...rest); };
+  try {
+    assert.equal(await platform.eraseAccount(carol.user.id), true);
+  } finally {
+    process.stderr.write = write;
+  }
+  const logged = written.map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter((line) => line?.message === 'account deleted');
+  assert.deepEqual(logged.map((line) => line.deletedAccountId), [carol.user.id], 'every deletion path logs the id a restore needs');
+  assert.equal(written.join('').includes('carol@example.test'), false, 'never the email');
   const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: 'carol@example.test', password: 'correct horse battery staple' } });
   assert.equal(login.statusCode, 401, login.body);
   const row = await pool.query('SELECT email_normalized,display_name,deleted_at FROM users WHERE id=$1', [carol.user.id]);
@@ -604,6 +619,52 @@ test('a deletion can be applied again to a database restored from before it', as
   assert.equal(row.rows[0].display_name, 'Deleted account');
   assert.ok(row.rows[0].deleted_at);
   assert.equal(await platform.eraseAccount(carol.user.id), false, 're-applying the same list twice is harmless');
+});
+
+async function invitedPair(logLines) {
+  const logger = { ...loggerOptions, level: 'info', stream: { write: (line) => logLines.push(line) } };
+  const setup = await testPlatform({ logger });
+  const alice = await register(setup.app, setup.mailer, { email: 'log-alice@example.test', username: 'log-alice' });
+  const journeyResponse = await setup.app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'A place to return to', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  const journey = journeyResponse.json().data.journey;
+  const invited = await setup.app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'log-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const token = setup.mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'log-bob@example.test').token;
+  const bob = await register(setup.app, setup.mailer, { email: 'log-bob@example.test', username: 'log-bob' });
+  return { ...setup, journey, token, bob };
+}
+
+test('an invitation accepted with its token in the body never writes the token to the log', async (t) => {
+  const lines = [];
+  const { app, pool, journey, token, bob } = await invitedPair(lines);
+  t.after(async () => { await app.close(); await pool.end(); });
+  const missing = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(bob), payload: {} });
+  assert.equal(missing.statusCode, 400, missing.body);
+  assert.equal(missing.json().error.code, 'invalid_invitation');
+  const accepted = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(bob), payload: { token } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(accepted.json().data.journeyId, journey.id);
+  assert.ok(lines.some((line) => line.includes('/api/v1/invitations/accept')), 'the accept request was logged');
+  assert.equal(lines.some((line) => line.includes(token)), false, 'the raw token appears nowhere in the log');
+});
+
+test('the older path form still works, and its token is masked in the log', async (t) => {
+  const lines = [];
+  const { app, pool, journey, token, bob } = await invitedPair(lines);
+  t.after(async () => { await app.close(); await pool.end(); });
+  const accepted = await app.inject({ method: 'POST', url: `/api/v1/invitations/${token}/accept`, headers: authHeaders(bob) });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  assert.equal(accepted.json().data.journeyId, journey.id);
+  assert.ok(lines.some((line) => line.includes('/api/v1/invitations/[redacted]/accept')));
+  assert.equal(lines.some((line) => line.includes(token)), false, 'the raw token appears nowhere in the log');
+});
+
+test('logged addresses mask tokens in the accept path and in link parameters', () => {
+  assert.equal(redactUrl('/api/v1/invitations/abc123/accept'), '/api/v1/invitations/[redacted]/accept');
+  assert.equal(redactUrl('/api/v1/invitations/abc123/accept?x=1'), '/api/v1/invitations/[redacted]/accept?x=1');
+  assert.equal(redactUrl('/api/v1/invitations/accept'), '/api/v1/invitations/accept');
+  assert.equal(redactUrl('/api/v1/session?verify=v1&recovery=r2&invite=i3&token=t4&keep=yes'), '/api/v1/session?verify=[redacted]&recovery=[redacted]&invite=[redacted]&token=[redacted]&keep=yes');
+  assert.equal(redactUrl('/api/v1/journeys/j1/invitations'), '/api/v1/journeys/j1/invitations');
 });
 
 test('synthetic group mode reserves independent places without advertising its ceiling', async (t) => {
@@ -1130,6 +1191,192 @@ async function registerOnPhone(app, mailer, { email, username = email.split('@')
   return { response, ...response.json().data };
 }
 
+test('a phone verifies its email and recovers its password without a browser origin', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const app_ = { 'x-together-client': 'app' };
+
+  const registered = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: app_, payload: { email: 'recover@example.test', username: 'recover-phone', password: 'correct horse battery staple' } });
+  assert.equal(registered.statusCode, 201, registered.body);
+  const verification = mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'recover@example.test');
+  assert.equal(new URL(verification.accountOrigin).origin, new URL(apiOrigin).origin, 'the link goes to the account origin, not one the caller chose');
+
+  const browserless = await app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', payload: { token: verification.token } });
+  assert.equal(browserless.statusCode, 403, 'a caller that is neither our page nor the app is still refused');
+  const verified = await app.inject({ method: 'POST', url: '/api/v1/auth/verify-email', headers: app_, payload: { token: verification.token } });
+  assert.equal(verified.statusCode, 200, verified.body);
+  assert.ok(verified.json().data.user.emailVerifiedAt || verified.json().data.user.emailVerified);
+
+  const requested = await app.inject({ method: 'POST', url: '/api/v1/recovery/request', headers: app_, payload: { email: 'recover@example.test' } });
+  assert.equal(requested.statusCode, 202, requested.body);
+  const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === 'recover@example.test');
+  assert.ok(recovery, 'the recovery email was sent');
+
+  const oldToken = registered.json().data.token;
+  const confirmed = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', headers: app_, payload: { token: recovery.token, password: 'a brand new horse battery staple' } });
+  assert.equal(confirmed.statusCode, 200, confirmed.body);
+  const revoked = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(oldToken) });
+  assert.equal(revoked.statusCode, 401, 'a new password revokes the phone\'s old token');
+
+  const signedIn = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: app_, payload: { identifier: 'recover@example.test', password: 'a brand new horse battery staple' } });
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
+  assert.ok(signedIn.json().data.token);
+});
+
+test('without the app header, recovery still needs our own page', async (t) => {
+  const { app, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const requested = await app.inject({ method: 'POST', url: '/api/v1/recovery/request', payload: { email: 'nobody@example.test' } });
+  assert.equal(requested.statusCode, 403, requested.body);
+  const confirmed = await app.inject({ method: 'POST', url: '/api/v1/recovery/confirm', payload: { token: 'x', password: 'a brand new horse battery staple' } });
+  assert.equal(confirmed.statusCode, 403, confirmed.body);
+});
+
+test('the phone app\'s own client carries a whole account journey against this server', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const source = await readFile(new URL('../apps/mobile/src/api/client.ts', import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+  const { createAccountClient } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  let held = null;
+  const tokens = { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } };
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens,
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  const email = 'journey-phone@example.test';
+
+  const registered = await phone.register({ email, username: 'journey-phone', password: 'correct horse battery staple' });
+  assert.equal(registered.user.email, email);
+  assert.equal(registered.verificationSent, true);
+  assert.ok(held?.token && held?.refreshToken, 'registering leaves the phone signed in');
+  assert.equal((await phone.session()).emailVerified, false);
+  assert.equal(await phone.resendVerification(), true);
+
+  const verification = mailer.messages.findLast((message) => message.type === 'verification' && message.to === email);
+  assert.equal((await phone.verifyEmail(verification.token)).emailVerified, true);
+
+  await phone.logout();
+  assert.equal(held, null);
+  assert.equal(await phone.session(), null);
+  assert.equal((await phone.login({ identifier: email, password: 'correct horse battery staple' })).email, email);
+
+  await phone.requestRecovery(email);
+  const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === email);
+  await phone.confirmRecovery(recovery.token, 'a brand new horse battery staple');
+  assert.equal(held, null, 'a new password signs this phone out too');
+  await assert.rejects(phone.login({ identifier: email, password: 'correct horse battery staple' }), { status: 401 });
+  await phone.login({ identifier: email, password: 'a brand new horse battery staple' });
+
+  await assert.rejects(phone.deleteAccount('not the password'), { status: 401 });
+  await phone.deleteAccount('a brand new horse battery staple');
+  assert.equal(held, null);
+  await assert.rejects(phone.login({ identifier: email, password: 'a brand new horse battery staple' }), { status: 401 });
+});
+
+test('the phone reads a shared journey through this server, and never another person\'s private moment', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const view = await load('../apps/mobile/src/journey/journey-view.ts');
+
+  const alice = await register(app, mailer, { email: 'ledger-alice@example.test', username: 'ledger-alice' });
+  const created = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'The summer we chose slowly', location: 'Marlow', startDateStatus: 'exact', startDate: '2026-05-14', endDateStatus: 'forever', endDate: null, budgetCents: 0 } });
+  assert.equal(created.statusCode, 201, created.body);
+  const journey = created.json().data.journey;
+  const hold = (visibility, title, extra = {}) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice), payload: { kind: 'memory', title, detail: '', occurredOn: '2026-06-02', visibility, moneyCents: null, moneyCurrency: '', locations: [], ...extra } });
+  assert.equal((await hold('shared-now', 'The road near Marlow', { moneyCents: 1250, moneyCurrency: 'USD' })).statusCode, 201);
+  assert.equal((await hold('private', 'Only mine')).statusCode, 201);
+  assert.equal((await hold('share-later', 'For next time')).statusCode, 201);
+  const invited = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'ledger-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const invitation = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'ledger-bob@example.test').token;
+
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'ledger-bob@example.test', username: 'ledger-bob', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'ledger-bob@example.test').token);
+  assert.deepEqual(await phone.journeys(), [], 'nothing before the invitation is accepted');
+  const accepted = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: { authorization: `Bearer ${held.token}`, 'x-together-client': 'app' }, payload: { token: invitation } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+
+  const journeys = await phone.journeys();
+  assert.deepEqual(journeys.map(({ id }) => id), [journey.id]);
+  const snapshot = await phone.snapshot(journeys[0].id);
+  const recent = view.recentMoments(snapshot);
+  assert.deepEqual(recent.map(({ title }) => title), ['The road near Marlow'], 'another person\'s private and share-later moments never reach this phone');
+  assert.equal(view.visibilityCue(recent[0].visibility).label, 'Shared now');
+  assert.equal(recent[0].createdBy, 'ledger-alice');
+  assert.equal(view.journeyPeriod(snapshot.journey), 'Marlow · Began May 14 · No end date planned');
+  assert.equal(view.moneyContext(recent[0]), '$12.50 is held here as context, not a score.');
+});
+
+test('the phone holds, changes, shares and deletes a moment through this server', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const draft = await load('../apps/mobile/src/journey/moment-draft.ts');
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'holder@example.test', username: 'holder', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'holder@example.test').token);
+  const created = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: { authorization: `Bearer ${held.token}`, 'x-together-client': 'app' }, payload: { name: 'Ours', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  assert.equal(created.statusCode, 201, created.body);
+  const journeyId = created.json().data.journey.id;
+
+  const fresh = { ...draft.draftFrom(null, { kind: 'other' }), kindLabel: 'A small win', title: 'We found the view', visibility: 'private', theme: 'green', money: '12.5', moneyCurrency: 'EUR', locations: draft.addPlace([], ' Marlow ').locations };
+  assert.equal(draft.draftProblem(fresh), null);
+  const moment = await phone.createMoment(journeyId, draft.payloadFrom(fresh, null));
+  assert.equal(moment.kindLabel, 'A small win');
+  assert.equal(moment.theme, 'green');
+  assert.equal(moment.moneyCents, 1250);
+  assert.deepEqual(moment.locations.map(({ label }) => label), ['Marlow']);
+
+  const later = await phone.updateMoment(journeyId, moment.id, draft.payloadFrom({ ...draft.draftFrom(moment), visibility: 'share-later', locations: [] }, moment));
+  assert.equal(later.visibility, 'share-later');
+  assert.deepEqual(later.locations, [], 'a place removed on the phone is removed');
+  await assert.rejects(phone.updateMoment(journeyId, moment.id, draft.payloadFrom(draft.draftFrom(moment), moment)), { status: 409, message: 'This moment changed on another device.' }, 'an edit from a stale version is refused, not merged over');
+
+  const shared = await phone.updateMoment(journeyId, moment.id, draft.sharePayload(later));
+  assert.equal(shared.visibility, 'shared-now');
+  await assert.rejects(phone.updateMoment(journeyId, moment.id, draft.payloadFrom({ ...draft.draftFrom(shared), visibility: 'private' }, shared)), { status: 400, message: 'A moment already shared cannot become private again. Prior access cannot be undone.' }, 'the server, not only the form, keeps a shared moment shared');
+
+  await phone.deleteMoment(journeyId, moment.id, shared.version);
+  const after = await phone.snapshot(journeyId);
+  assert.deepEqual(after.moments, []);
+  assert.ok(after.events.some((event) => event.action === 'moment_deleted'), 'deleting a shared moment leaves its tombstone');
+});
+
 test('a phone registers with a bearer token and never receives a session cookie', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
@@ -1362,19 +1609,30 @@ test('the bridge tells an app which headers it may send', async (t) => {
   assert.equal(stranger.statusCode, 403);
 });
 
-test('claiming to be an app does not relax a check the app never needed', async (t) => {
+test('claiming to be the app gets a phone to recovery, and nothing past it', async (t) => {
   const { app, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
 
-  // Recovery is unauthenticated and nothing in the phone story asks it to change. The header
-  // that asks for a token is not a general-purpose way past the origin check: only a token this
-  // service actually issued stands in for one, and an unauthenticated caller has none.
+  // This used to refuse the app header on recovery, because nothing in the phone story asked
+  // recovery to change. TL-M-05 (#180) does: someone who has forgotten their password has no
+  // token, and a phone has no origin. The header still opens nothing a browser page can reach,
+  // because a hostile page cannot send it without a preflight, and the preflight is refused.
   const claimed = await app.inject({
     method: 'POST', url: '/api/v1/recovery/request', headers: { 'x-together-client': 'app' },
     payload: { email: 'someone@example.test' },
   });
-  assert.equal(claimed.statusCode, 403, claimed.body);
-  assert.equal(claimed.json().error.code, 'invalid_origin');
+  assert.equal(claimed.statusCode, 202, claimed.body);
+  const hostilePreflight = await app.inject({
+    method: 'OPTIONS', url: '/api/v1/recovery/request',
+    headers: { origin: 'https://evil.example', 'access-control-request-headers': 'x-together-client' },
+  });
+  assert.notEqual(hostilePreflight.headers['access-control-allow-origin'], 'https://evil.example', 'a hostile page cannot send the app header');
+
+  // It is not a way past an authenticated check: a mutation still needs a token this service issued.
+  const unauthenticated = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: { 'x-together-client': 'app' }, payload: {},
+  });
+  assert.equal(unauthenticated.statusCode, 403, unauthenticated.body);
 
   const fromTheApp = await app.inject({
     method: 'POST', url: '/api/v1/recovery/request', headers: { origin },
@@ -1385,7 +1643,9 @@ test('claiming to be an app does not relax a check the app never needed', async 
 
 test('the deployed logger is told to drop the headers and bodies that carry a token', async () => {
   const start = await readFile(new URL('../server/start.js', import.meta.url), 'utf8');
+  assert.match(start, /logger: loggerOptions/, 'production uses the shared logger options');
   for (const field of ['req.headers.cookie', 'req.headers.authorization', 'req.body.token', 'req.body.refreshToken']) {
-    assert.ok(start.includes(`'${field}'`), `${field} is not redacted from production logs`);
+    assert.ok(loggerOptions.redact.includes(field), `${field} is not redacted from production logs`);
   }
+  assert.equal(typeof loggerOptions.serializers.req, 'function', 'logged addresses pass through redactUrl');
 });

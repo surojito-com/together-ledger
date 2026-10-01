@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Together Ledger Stripe reconciliation freshness hourly
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+Persistent=true
+RandomizedDelaySec=2m
+Unit=together-ledger-stripe-reconciliation-freshness.service
+
+[Install]
+WantedBy=timers.target
