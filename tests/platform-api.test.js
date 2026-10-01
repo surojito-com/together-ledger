@@ -1625,3 +1625,83 @@ test('the deployed logger is told to drop the headers and bodies that carry a to
   }
   assert.equal(typeof loggerOptions.serializers.req, 'function', 'logged addresses pass through redactUrl');
 });
+
+// #253: a Google or Apple account opened without a name shows `journeyer-…`, and nobody could
+// change the name journeyers see. Only the signed-in person's own name changes, and each journey
+// they are in records it, so nobody can quietly take another journeyer's name.
+async function sharedJourney() {
+  const setup = await testPlatform();
+  const alice = await register(setup.app, setup.mailer, { email: 'name-alice@example.test', username: 'name-alice' });
+  const journeyResponse = await setup.app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'Where we keep returning', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  assert.equal(journeyResponse.statusCode, 201, journeyResponse.body);
+  const journey = journeyResponse.json().data.journey;
+  const invited = await setup.app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'name-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const token = setup.mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'name-bob@example.test').token;
+  const bob = await register(setup.app, setup.mailer, { email: 'name-bob@example.test', username: 'name-bob' });
+  const accepted = await setup.app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(bob), payload: { token } });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+  return { ...setup, alice, bob, journey };
+}
+
+test('a person changes the name journeyers see, and each journey they are in records it', async (t) => {
+  const { app, pool, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  const changed = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: '  Sam  ' } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.equal(changed.json().data.user.displayName, 'Sam', 'trimmed');
+  assert.equal(changed.json().data.user.username, 'name-bob', 'the private username never changes');
+
+  const session = await app.inject({ method: 'GET', url: '/api/v1/session', headers: authHeaders(bob) });
+  assert.equal(session.json().data.user.displayName, 'Sam');
+
+  const seen = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data;
+  assert.equal(seen.members.find((member) => member.id === bob.user.id).displayName, 'Sam', 'the other journeyer sees the new name');
+  assert.equal(seen.members.find((member) => member.id === alice.user.id).displayName, 'name-alice', 'nobody else is renamed');
+  const renamed = seen.events.filter((event) => event.action === 'member_renamed');
+  assert.equal(renamed.length, 1);
+  assert.equal(renamed[0].actorUserId, bob.user.id);
+  assert.equal(renamed[0].summary, 'Changed their name from name-bob to Sam');
+  assert.deepEqual(renamed[0].before, { displayName: 'name-bob' });
+  assert.deepEqual(renamed[0].after, { displayName: 'Sam' });
+
+  const unchanged = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: 'Sam' } });
+  assert.equal(unchanged.statusCode, 200, unchanged.body);
+  const after = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data;
+  assert.equal(after.events.filter((event) => event.action === 'member_renamed').length, 1, 'the same name again records nothing');
+});
+
+test('a name must be 1 to 80 characters, and changing it needs the account itself', async (t) => {
+  const { app, pool, alice, bob } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  for (const displayName of ['', '   ', 'x'.repeat(81), undefined]) {
+    const refused = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: displayName === undefined ? {} : { displayName } });
+    assert.equal(refused.statusCode, 400, `${JSON.stringify(displayName)}: ${refused.body}`);
+    assert.equal(refused.json().error.code, 'invalid_input');
+  }
+  const longest = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: 'x'.repeat(80) } });
+  assert.equal(longest.statusCode, 200, longest.body);
+
+  const signedOut = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: { origin }, payload: { displayName: 'Anyone' } });
+  assert.equal(signedOut.statusCode, 401, signedOut.body);
+  const noCsrf = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: { origin, cookie: bob.cookie }, payload: { displayName: 'Forged' } });
+  assert.equal(noCsrf.statusCode, 403, noCsrf.body);
+
+  // Nothing in the request can point at someone else: a stray id is ignored, and only Bob changes.
+  const aimed = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: 'Not Alice', id: alice.user.id, userId: alice.user.id } });
+  assert.equal(aimed.statusCode, 200, aimed.body);
+  assert.equal(aimed.json().data.user.id, bob.user.id);
+  const aliceNow = await pool.query('SELECT display_name FROM users WHERE id=$1', [alice.user.id]);
+  assert.equal(aliceNow.rows[0].display_name, 'name-alice');
+});
+
+test('a phone changes its name with its token', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const phone = await registerOnPhone(app, mailer, { email: 'name-phone@example.test', username: 'name-phone' });
+  const changed = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: { ...phoneHeaders(phone.token), 'x-together-client': 'app' }, payload: { displayName: 'Phone Name' } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  assert.equal(changed.json().data.user.displayName, 'Phone Name');
+});

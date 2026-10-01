@@ -332,6 +332,8 @@ function renderAccountState() {
   $$('[data-open-account]').forEach((button) => { button.textContent = signedIn ? 'Account settings' : accountsAvailable ? 'Sign in' : 'Accounts soon'; });
   $('#account-dialog-copy').textContent = accountsAvailable ? 'Passwords are never shared between journeyers.' : 'The private account service is not live on this public page yet.';
   $('#account-name').textContent = signedIn ? accountUser.displayName : '';
+  const nameInput = $('#display-name-form [name=displayName]');
+  if (document.activeElement !== nameInput) nameInput.value = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
@@ -1513,6 +1515,22 @@ $('#resend-verification-button').addEventListener('click', async () => {
   try {
     const result = await api.mutate('/auth/resend-verification', 'POST', {});
     showToast(result.delivered ? 'A new verification link is on its way.' : 'Email delivery is still unavailable. Please try again later.');
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
+});
+
+$('#display-name-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const { displayName } = Object.fromEntries(new FormData(form));
+  try {
+    const { user } = await api.mutate('/account', 'PATCH', { displayName });
+    accountUser = user;
+    form.querySelector('[name=displayName]').blur();
+    renderAccountState();
+    if (isCloudJourney()) await refreshCloudState();
+    showToast('Name saved. Your journeyers see it now.');
   } catch (error) {
     showStatus(accountMessage(error));
   }
