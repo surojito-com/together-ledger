@@ -143,6 +143,42 @@ test('a verified account without a journey can begin one from Journey settings',
   await expect(page.getByRole('heading', { name: 'Begin a shared journey' })).toBeVisible();
 });
 
+test('a signed-in person changes the name journeyers see from Account settings (#253)', async ({ page }) => {
+  let user = { id: 'user-name', username: 'journeyer-ab12cd34', displayName: 'journeyer-ab12cd34', email: 'named@example.test', emailVerified: true };
+  const sent = [];
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { user, csrfToken: 'csrf-test' } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: { journeys: [] } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/account', async (route) => {
+    const request = route.request();
+    if (request.method() !== 'PATCH') return route.fallback();
+    sent.push({ body: request.postDataJSON(), csrf: request.headers()['x-together-csrf'] });
+    user = { ...user, displayName: request.postDataJSON().displayName.trim() };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { user } }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Account settings' }).first().click();
+  const field = page.getByLabel('Name journeyers see');
+  await expect(field).toHaveValue('journeyer-ab12cd34');
+  await expect(page.locator('#account-username')).toHaveText('@journeyer-ab12cd34');
+
+  await field.fill('Sam');
+  await page.getByRole('button', { name: 'Save name' }).click();
+  await expect(page.locator('#account-name')).toHaveText('Sam');
+  await expect(field).toHaveValue('Sam');
+  await expect(page.locator('#account-username')).toHaveText('@journeyer-ab12cd34');
+  expect(sent).toEqual([{ body: { displayName: 'Sam' }, csrf: 'csrf-test' }]);
+
+  const scan = await new AxeBuilder({ page }).include('#account-dialog').analyze();
+  expect(scan.violations).toEqual([]);
+});
+
 test('a hosted journey can hold a private moment and deliberately share one later', async ({ page }) => {
   const owner = { id: 'visibility-owner', username: 'visibility-owner', displayName: 'visibility-owner', email: 'owner@example.test', emailVerified: true };
   const moments = [{

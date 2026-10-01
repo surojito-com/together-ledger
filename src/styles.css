@@ -430,6 +430,8 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .account-identity div { border-bottom: 1px solid var(--line); display: grid; gap: 3px; padding: 0 0 10px; }
 .account-identity dt { color: var(--muted); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
 .account-identity dd { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.display-name-form { display: grid; gap: 8px; margin: 14px 0 4px; }
+.display-name-form .button { justify-self: start; }
 .account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
 .billing-panel { display: grid; gap: 13px; }
 .billing-panel > hr { margin-bottom: 4px; }

@@ -267,6 +267,12 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return { data: { passwordChanged: true } };
   });
 
+  // Only ever the signed-in person's own name: nothing in the request says whose it is. Limited,
+  // because each change is written into every journey the person is in.
+  app.patch('/api/v1/account', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => ({
+    data: { user: await platform.changeDisplayName(request.auth.userId, request.body || {}) },
+  }));
+
   app.delete('/api/v1/account', { preHandler: protectMutation }, async (request, reply) => {
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
