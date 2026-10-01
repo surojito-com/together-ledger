@@ -1583,6 +1583,25 @@ export class PlatformService {
     }
   }
 
+  // The name journeyers see (#253). It is how people in a journey recognise each other, so a change
+  // is written into every journey the person is in, in the product's words: nobody can quietly
+  // take another journeyer's name. The private username never changes here.
+  async changeDisplayName(userId, input) {
+    const displayName = cleanText(input?.displayName, 'Your name', 80);
+    return withTransaction(this.pool, async (client) => {
+      const current = await client.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [userId]);
+      if (!current.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+      const before = current.rows[0].display_name;
+      if (before === displayName) return publicUser(current.rows[0]);
+      const updated = await client.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [displayName, userId]);
+      const journeys = await client.query('SELECT journey_id FROM journey_members WHERE user_id=$1 ORDER BY journey_id', [userId]);
+      for (const { journey_id: journeyId } of journeys.rows) {
+        await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_renamed', entityType: 'membership', entityId: userId, summary: `Changed their name from ${before} to ${displayName}`, before: { displayName: before }, after: { displayName } });
+      }
+      return publicUser(updated.rows[0]);
+    });
+  }
+
   // An account with a password confirms with it. One opened with Google or Apple has none to
   // give, so the typed DELETE confirmation the route already requires is the whole of it (#214),
   // and deleting stays within three taps.
