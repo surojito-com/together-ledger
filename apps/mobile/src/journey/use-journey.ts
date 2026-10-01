@@ -1,3 +1,4 @@
+import { useFocusEffect } from 'expo-router';
 import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { accountMessage } from '../auth/account-messages';
 import { useSession } from '../auth/session';
@@ -67,6 +68,9 @@ function useJourneyLoader() {
       : held?.forUser === userId ? held.state : { phase: 'loading' };
 
   const activeId = state.phase === 'ready' ? state.activeId : null;
+  const reload = useCallback(async () => {
+    if (userId) await load(userId, activeId);
+  }, [userId, activeId, load]);
 
   return {
     state,
@@ -91,9 +95,7 @@ function useJourneyLoader() {
       if (userId) load(userId, activeId);
     },
     /** Re-read quietly after a change this phone made, such as holding a moment. */
-    reload: async () => {
-      if (userId) await load(userId, activeId);
-    },
+    reload,
   };
 }
 
@@ -109,4 +111,16 @@ export function useJourney(): JourneyValue {
   const value = useContext(JourneyContext);
   if (!value) throw new Error('useJourney must be used inside JourneyProvider');
   return value;
+}
+
+/**
+ * Re-read quietly each time a screen comes into view. What other journeyers did since (a
+ * proposal to answer, a conversation started) is otherwise only seen after a pull on the
+ * ledger, and a question about someone's access should never be answered from a stale view.
+ */
+export function useReloadWhenShown() {
+  const { reload } = useJourney();
+  useFocusEffect(useCallback(() => {
+    reload();
+  }, [reload]));
 }
