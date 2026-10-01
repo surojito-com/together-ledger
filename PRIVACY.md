@@ -51,7 +51,7 @@ Paying for another person, another place, or an extra photo happens on the web t
 
 ## Server logs
 
-When your browser or phone talks to our service, our servers record the time, the request method and address, the response status and time taken, and the network address the request came from. We use these logs only to run, debug, and secure the service, and to re-apply account deletions if we ever restore from a backup. Passwords, cookies, and sign-in headers are removed from logs. Some request addresses, such as the one used to accept an invitation, contain a one-time code; those codes are recorded in the logs until that is changed, but each is single-use and expires. Logs rotate automatically on the server and older entries are overwritten; they are not sent to any analytics or logging company.
+When your browser or phone talks to our service, our servers record the time, the request method and address, the response status and time taken, and the network address the request came from. We use these logs only to run, debug, and secure the service, and to re-apply account deletions if we ever restore from a backup. Passwords, cookies, and sign-in headers are removed from logs, and so are the one-time codes in invitation, verification and recovery links. Logs rotate automatically on the server and older entries are overwritten; they are not sent to any analytics or logging company.
 
 ## Service providers
 

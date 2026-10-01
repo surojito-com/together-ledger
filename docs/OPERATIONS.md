@@ -38,7 +38,7 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 - Production `SMTP_URL` uses the authenticated Resend SMTPS relay. A standby relay path must be configured and independently tested before it is relied on during recovery.
 - PostgreSQL accepts private-network traffic only. The application role owns application tables; humans use separate audited administrative roles.
 - Backups are encrypted, copied to the other cloud, kept for 30 days and then deleted (see "Backup retention" below), and restored quarterly into an isolated database.
-- Application logs exclude cookies, authorization headers, passwords, raw tokens, expense notes, account labels, and concern details. Not yet true of invitation links: the invitation token is part of the accept address, and request addresses are logged (issue #208).
+- Application logs exclude cookies, authorization headers, passwords, raw tokens, expense notes, account labels, and concern details. Tokens in request addresses are masked before logging (`server/log-options.js`, #208).
 
 ## Production bundle
 
