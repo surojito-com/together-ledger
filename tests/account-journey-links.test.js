@@ -76,13 +76,14 @@ async function appAtItsOwnHome() {
   return { app, pool, sent };
 }
 
-// Whichever parts a message has are all read, so a link that drifts in only
-// one of them cannot pass unnoticed. The recovery message is plain text today;
-// the invitation and verification messages also carry a designed HTML part.
+// Every account email carries a plain-text part and a designed HTML part, and
+// both are read, so a link that drifts in only one of them cannot pass
+// unnoticed. A message missing either part fails here rather than being
+// quietly checked on the one part it has.
 function linksIn(message, key) {
   const found = [];
-  for (const part of [message.text || '', message.html || '']) {
-    if (!part) continue;
+  for (const [name, part] of [['text', message.text], ['HTML', message.html]]) {
+    assert.ok(part, `the ${key} message has no ${name} part`);
     const inThisPart = [];
     for (const candidate of part.match(/https?:\/\/[^\s"'<>]+/g) || []) {
       let url;
