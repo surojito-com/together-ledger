@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account Journey Acceptance Matrix</title>
+  <style>
+    body{margin:0;background:#fff9ef;color:#29233e;font:16px/1.55 system-ui,sans-serif}.page{max-width:1060px;margin:auto;padding:42px 24px}h1,h2{font-family:Georgia,serif}h1{font-size:3rem;margin:0 0 10px}h2{font-size:1.6rem;margin:38px 0 6px}.lead{max-width:760px;font-size:1.18rem}.matrix{width:100%;border-collapse:collapse;margin-top:28px;background:#fffdf8}.matrix th,.matrix td{padding:16px;text-align:left;vertical-align:top;border:1px solid #decfaf}.matrix th{background:#f2e6c6;font-size:.75rem;letter-spacing:.1em;text-transform:uppercase}.matrix td:first-child{font-weight:800;white-space:nowrap}.state{font-weight:800;color:#2d745a;white-space:nowrap}.state.open{color:#8a4354}.note{margin-top:24px;padding:18px;border-left:5px solid #8a4354;background:#f4ebd5}.how{margin-top:24px;padding:18px;border-left:5px solid #2d745a;background:#eef3ec}code{font:0.92em ui-monospace,SFMono-Regular,Menlo,monospace;background:#f2e6c6;padding:1px 5px;border-radius:3px}a{color:#355e9d;font-weight:700}@media(max-width:720px){.matrix{display:block;overflow-x:auto}h1{font-size:2.35rem}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p>TOGETHER LEDGER / ISSUE 108</p>
+    <h1>Account journey acceptance matrix</h1>
+    <p class="lead">The app has a home of its own. These checks walk the whole account lifecycle from that home with synthetic accounts, and record what each step proved. They are deliberately operational: no personal journey content is read, and no token, password, or private infrastructure identifier appears here.</p>
+
+    <h2>Checks against the live app home</h2>
+    <table class="matrix">
+      <thead><tr><th>Test case</th><th>What to prove</th><th>Expected result</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td>TC-10800</td><td>Open <code>https://app.together-ledger.com</code> and read its configuration.</td><td>HTTP 200 HTML naming <code>https://api.together-ledger.com</code> with accounts enabled.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10810</td><td>Load the application module from the app hostname.</td><td>HTTP 200 JavaScript served by the app deployment, not fetched from the company root.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10820</td><td>Open the company root while the app is live.</td><td>A different page with no app configuration; changing it does not change the app.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10830</td><td>Preflight the account API from the exact app origin.</td><td>HTTP 204 echoing the exact origin, credentials allowed, <code>Vary: Origin</code>.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10840</td><td>Preflight the same route from an origin the deployment does not know.</td><td>HTTP 403 with no allow-origin header returned.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10850</td><td>Register a synthetic account beginning at the app home.</td><td>HTTP 201, verification reported sent, session cookie HttpOnly, Secure, SameSite=Lax, and scoped to one hostname.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10860</td><td>Register the same email and username a second time.</td><td>HTTP 409 <code>account_exists</code>; a repeat never silently joins an existing account.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10870</td><td>Follow the verification link the synthetic address received.</td><td>The link returns to the app hostname and the account becomes verified.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10880</td><td>Sign in from the app hostname and read the session.</td><td>HTTP 200 and a session readable for that account at the app origin.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10890</td><td>Create a journey and a moment while signed in.</td><td>Both are held by the server and returned by the journey snapshot.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10900</td><td>Attempt a mutation from the app origin without its CSRF token.</td><td>HTTP 403 <code>invalid_csrf</code>; a correct origin alone cannot change an account.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10910</td><td>Invite a second synthetic account to the journey.</td><td>The invitation is delivered, its link returns to the app hostname, and the invited account joins the journey.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10920</td><td>Offer the invitation to the invited account before and after it verifies its email.</td><td>An unverified invitee is refused with <code>email_unverified</code>; the same account joins once verified.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10930</td><td>Request recovery, choose a new password, and sign in again.</td><td>The recovery link returns to the app hostname and restores access.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10940</td><td>Sign out at the app hostname.</td><td>The session stops being readable; the API answers 401 afterwards.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10950</td><td>Sign back in after signing out.</td><td>The journey and its moment are unchanged: sign-out hides records, it does not delete them.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10965</td><td>Take a digest of the page and module the app hostname serves.</td><td>A stable fingerprint that says which build is live, without naming any private deployment.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10960</td><td>Check app, company root, and API health and readiness separately.</td><td>Each hostname answers on its own; the API reports healthy and ready.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10970</td><td>In a real browser at the app home: hold a browser-only moment, sign in, sign out.</td><td>The hosted journey takes over the view and gives it back; the browser-only ledger is unchanged byte for byte throughout, and survives a reload.</td><td class="state">Passed</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Checks against the reviewed build</h2>
+    <p>The three link checks above need a mailbox. The same behaviour is also proved without one, against the reviewed code, so a regression cannot pass review unnoticed.</p>
+    <table class="matrix">
+      <thead><tr><th>Test case</th><th>What to prove</th><th>Expected result</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td>TC-10870<br>TC-10910<br>TC-10930</td><td>Compose a verification, invitation, and recovery message for a request that began at the app home, with the fallback account origin deliberately set to a different hostname.</td><td>Every link in every part of every message returns to the app hostname, and each token still completes its action.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10875</td><td>Repeat the same registration from the API origin, and then from an origin the deployment does not know.</td><td>A direct API client is answered at its own origin; an unknown origin is refused and causes no account email at all.</td><td class="state">Passed</td></tr>
+      </tbody>
+    </table>
+
+    <h2>How the emailed links were read</h2>
+    <p>The three links were read from the delivery provider's own record of what it sent, on 4 October 2026, against the deployment live that day. Each message was sent and delivered, and each link returned to <code>https://app.together-ledger.com/</code>. The tokens were then used against the production API: verification marked both accounts verified, recovery changed a password that then signed in, and the invitation was refused for an unverified invitee and accepted once that account had verified. No message content beyond the link was read, and no token appears in this record.</p>
+    <div class="how">
+      <p><strong>To repeat this without reading a mailbox by hand,</strong> export a delivery-provider read key in your own shell. The key is read from the environment, never printed, never written to the evidence record, and never committed:</p>
+      <p><code>RESEND_API_KEY=… node scripts/verify-account-journey.mjs --json=evidence.json</code></p>
+      <p>The harness then reads the messages it caused, checks each link's origin, completes verification, invitation and recovery, and reports the delivery state of each message. A mailbox that can be read another way can supply the same links through <code>--links=PATH</code> instead.</p>
+    </div>
+
+    <p class="note"><strong>One thing this run found:</strong> the recovery message carries no HTML part, while the invitation and verification messages each carry a designed one. The link is correct; the voice is missing. Recorded separately as issue 286 and deliberately not fixed here.</p>
+
+    <h2>Repeating this</h2>
+    <p>Registration is rate limited on purpose, so a repeated run meets the same wall a stranger would; the harness waits the window out rather than reporting a healthy deployment as broken. The browser check needs an existing synthetic account:</p>
+    <p><code>QA_BASE_URL=https://app.together-ledger.com QA_ACCOUNT_USERNAME=… QA_ACCOUNT_PASSWORD=… npx playwright test browser-account-journey</code></p>
+
+    <p class="note"><strong>Release boundary:</strong> this matrix records the account lifecycle at the app's own home. It does not reopen the hosting cutover completed in issue 52, enable billing, migrate browser-local data between hostnames, publish any credential or private deployment identifier, or claim wider launch readiness. Synthetic accounts created by these runs remain in place for inspection and are not real people.</p>
+  </main>
+</body>
+</html>
