@@ -25,12 +25,13 @@
         <tr><td>TC-10840</td><td>Preflight the same route from an origin the deployment does not know.</td><td>HTTP 403 with no allow-origin header returned.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10850</td><td>Register a synthetic account beginning at the app home.</td><td>HTTP 201, verification reported sent, session cookie HttpOnly, Secure, SameSite=Lax, and scoped to one hostname.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10860</td><td>Register the same email and username a second time.</td><td>HTTP 409 <code>account_exists</code>; a repeat never silently joins an existing account.</td><td class="state">Passed</td></tr>
-        <tr><td>TC-10870</td><td>Follow the verification link the synthetic address received.</td><td>The link returns to the app hostname and the account becomes verified.</td><td class="state open">Open — see below</td></tr>
+        <tr><td>TC-10870</td><td>Follow the verification link the synthetic address received.</td><td>The link returns to the app hostname and the account becomes verified.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10880</td><td>Sign in from the app hostname and read the session.</td><td>HTTP 200 and a session readable for that account at the app origin.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10890</td><td>Create a journey and a moment while signed in.</td><td>Both are held by the server and returned by the journey snapshot.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10900</td><td>Attempt a mutation from the app origin without its CSRF token.</td><td>HTTP 403 <code>invalid_csrf</code>; a correct origin alone cannot change an account.</td><td class="state">Passed</td></tr>
-        <tr><td>TC-10910</td><td>Invite a second synthetic account to the journey.</td><td>The invitation is accepted for delivery and its link returns to the app hostname.</td><td class="state open">Open — see below</td></tr>
-        <tr><td>TC-10930</td><td>Request recovery, choose a new password, and sign in again.</td><td>The recovery link returns to the app hostname and restores access.</td><td class="state open">Open — see below</td></tr>
+        <tr><td>TC-10910</td><td>Invite a second synthetic account to the journey.</td><td>The invitation is delivered, its link returns to the app hostname, and the invited account joins the journey.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10920</td><td>Offer the invitation to the invited account before and after it verifies its email.</td><td>An unverified invitee is refused with <code>email_unverified</code>; the same account joins once verified.</td><td class="state">Passed</td></tr>
+        <tr><td>TC-10930</td><td>Request recovery, choose a new password, and sign in again.</td><td>The recovery link returns to the app hostname and restores access.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10940</td><td>Sign out at the app hostname.</td><td>The session stops being readable; the API answers 401 afterwards.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10950</td><td>Sign back in after signing out.</td><td>The journey and its moment are unchanged: sign-out hides records, it does not delete them.</td><td class="state">Passed</td></tr>
         <tr><td>TC-10965</td><td>Take a digest of the page and module the app hostname serves.</td><td>A stable fingerprint that says which build is live, without naming any private deployment.</td><td class="state">Passed</td></tr>
@@ -49,13 +50,15 @@
       </tbody>
     </table>
 
-    <h2>What is still open</h2>
-    <p>The three link checks are open against the live deployment, not failed. The deployment reported each message as accepted for delivery, but no message reached the synthetic address <code>legal+…@together-ledger.com</code> in the hour after it was sent, so the delivered link could not be read and checked. Whether the address bounced or was never routed is a question for the delivery provider's own log, which also stores the message that was sent.</p>
+    <h2>How the emailed links were read</h2>
+    <p>The three links were read from the delivery provider's own record of what it sent, on 4 October 2026, against the deployment live that day. Each message was sent and delivered, and each link returned to <code>https://app.together-ledger.com/</code>. The tokens were then used against the production API: verification marked both accounts verified, recovery changed a password that then signed in, and the invitation was refused for an unverified invitee and accepted once that account had verified. No message content beyond the link was read, and no token appears in this record.</p>
     <div class="how">
-      <p><strong>To close them,</strong> run the harness with a delivery-provider read key exported in your own shell. The key is read from the environment, never printed, never written to the evidence record, and never committed:</p>
+      <p><strong>To repeat this without reading a mailbox by hand,</strong> export a delivery-provider read key in your own shell. The key is read from the environment, never printed, never written to the evidence record, and never committed:</p>
       <p><code>RESEND_API_KEY=… node scripts/verify-account-journey.mjs --json=evidence.json</code></p>
-      <p>The harness then reads the messages it caused, checks each link's origin, completes verification, invitation, and recovery, and reports the delivery state of each message. A mailbox that can be read another way can supply the same links through <code>--links=PATH</code> instead.</p>
+      <p>The harness then reads the messages it caused, checks each link's origin, completes verification, invitation and recovery, and reports the delivery state of each message. A mailbox that can be read another way can supply the same links through <code>--links=PATH</code> instead.</p>
     </div>
+
+    <p class="note"><strong>One thing this run found:</strong> the recovery message carries no HTML part, while the invitation and verification messages each carry a designed one. The link is correct; the voice is missing. Recorded separately as issue 286 and deliberately not fixed here.</p>
 
     <h2>Repeating this</h2>
     <p>Registration is rate limited on purpose, so a repeated run meets the same wall a stranger would; the harness waits the window out rather than reporting a healthy deployment as broken. The browser check needs an existing synthetic account:</p>
