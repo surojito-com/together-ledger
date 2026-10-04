@@ -74,4 +74,9 @@ mv "$temporary" "$target"
 trap - EXIT HUP INT TERM
 rm -f "$stream"
 sha256sum "$target" > "$target.sha256"
+
+# Keep thirty days of local encrypted backups (PRIVACY.md, docs/OPERATIONS.md). This runs only after
+# a new backup has been written and checksummed, so a failing job never prunes the last good copy.
+find "$backup_dir" -maxdepth 1 -type f \( -name 'together-ledger-*.dump.age' -o -name 'together-ledger-*.dump.age.sha256' \) -mtime +29 -delete
+
 printf '%s\n' "$target"

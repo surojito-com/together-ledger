@@ -2,6 +2,8 @@
 
 All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }` for success and `{ "error": { "code", "message" } }` for failure. Authenticated mutations require the `x-together-csrf` header returned by `GET /api/v1/session`.
 
+A request may authenticate in one of two ways. A browser sends the `tl_session` cookie, which it attaches automatically, and proves the request came from our own page with the origin check and the `x-together-csrf` header. A client without a browser — the phone app — sends `Authorization: Bearer <token>` instead, which it attaches deliberately. Neither the origin check nor the CSRF header applies to a bearer request, because both exist to stop a hostile page from spending a cookie the browser attached on its own; a native app cannot be navigated to by a page, and a page cannot send an `Authorization` or `X-Together-Client` header cross-origin without a preflight this service grants only to its own origins. Presenting an `Authorization` header is never a way around the cookie path's requirements: a request that carries one is judged as a token, and a token this service did not issue is refused.
+
 ## Authentication and account lifecycle
 
 | Method | Path | Purpose |
@@ -10,11 +12,38 @@ All endpoints are versioned under `/api/v1`. JSON responses use `{ "data": ... }
 | POST | `/auth/verify-email` | Consume the single-use email-verification token. |
 | POST | `/auth/resend-verification` | Revoke an older unused verification token and send a replacement. |
 | POST | `/auth/login` | Verify a private username or email plus Argon2id password, then rotate the session. |
-| POST | `/auth/logout` | Revoke the current session. |
-| GET | `/session` | Return the current account and session CSRF token. |
+| POST | `/auth/google`, `/auth/apple` | Verify a Google or Apple ID token and sign in, opening an account on the first sign-in. |
+| POST | `/auth/link` | Link a Google or Apple sign-in to the password account that already uses its email, after that password is entered once. |
+| POST | `/auth/refresh` | Spend a refresh token and return a rotated access and refresh pair. Bearer clients only. |
+| POST | `/auth/logout` | Revoke the current session, or the presented bearer token and everything issued with it. |
+| GET | `/session` | Return the current account, and the session CSRF token on the cookie path. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |
-| POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session. |
-| DELETE | `/account` | Reconfirm the password and permanently delete/pseudonymize the account. |
+| POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session and bearer token. |
+| DELETE | `/account` | Reconfirm the password (an account opened with Google or Apple has none, so the typed `DELETE` is the whole confirmation) and permanently delete/pseudonymize the account. |
+
+### Bearer tokens for a client without a browser
+
+`POST /auth/register` and `POST /auth/login` return a bearer token when the client asks for one by sending `X-Together-Client: app`. The reply then carries `token`, `tokenExpiresAt`, `refreshToken`, and `refreshTokenExpiresAt` alongside the user, and no session cookie or CSRF token is issued. Without that header both endpoints behave exactly as they always have: a `tl_session` cookie plus a `csrfToken`, and no bearer token in the body. The web client does not send the header and its flow is unchanged.
+
+The access token is short-lived (`ACCESS_TOKEN_MINUTES`, 30 by default). The refresh token lasts longer (`REFRESH_TOKEN_DAYS`, 30 by default) and is spent the first time it is used: `POST /auth/refresh` takes `{ "refreshToken": "…" }` and returns a new pair. Tokens issued together share a family. Signing out retires the whole family, so a copied access token cannot outlive the sign-out meant to end it, and presenting a refresh token that was already spent retires the family too — a second presentation means a copy is in circulation, and the safe reading is that neither holder should continue.
+
+`DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
+
+### Signing in with Google or Apple
+
+`POST /auth/google` and `POST /auth/apple` take `{ "idToken": "…", "displayName"?: "…" }`. The token's signature is checked against the provider's published keys, and its `iss`, `aud` and `exp` against what that provider documents. `aud` must be one of `GOOGLE_CLIENT_IDS` or `APPLE_CLIENT_IDS`; Apple's are the phone's App ID, `com.togetherledger.ledger`, and the web's Services ID, `com.togetherledger.ledger.web`. With no Google client ID configured, `POST /auth/google` answers `404 sign_in_unavailable`. A reply is exactly a password login's: a cookie plus `csrfToken`, or a bearer pair for `X-Together-Client: app`.
+
+An account is found by the provider's stable user id (`sub`), never by email. The first sign-in opens an account with the private username `journeyer-` plus eight characters of its id (the same shape migration 003 gave older accounts), the provider's name or the `displayName` sent, and no password. When the email already belongs to an account, nothing is signed in or merged (decided on #214, Sep 30, 2026):
+
+- If that account has a password, the answer is `409 link_required` with `details.email`. The client asks for that password once and sends `POST /auth/link` with `{ "provider", "idToken", "password" }`. A correct password links the provider to the account and signs in, and from then on the provider signs straight in. A wrong one is login's `401 invalid_credentials`.
+- If that account has no password, the answer is `409 email_in_use`: sign in the way you did before.
+- An Apple Hide My Email address never matches, so it always opens a new account.
+
+An account without a password can't sign in with one, and asking to recover it sends nothing, exactly as for an address with no account.
+
+`POST /auth/apple` also takes Apple's one-time `authorizationCode`, and so does `POST /auth/link` for Apple (#218). The server exchanges it at `https://appleid.apple.com/auth/token` with a client secret signed ES256 by the Sign in with Apple key, and keeps the refresh token AES-256-GCM encrypted against the identity. A code from the web (`aud` = `APPLE_SERVICES_ID`) is exchanged with `APPLE_WEB_REDIRECT_URI` as well. A new Apple account opens only once its code has exchanged: `400` with no code, `401 invalid_token` for an expired or someone else's code, `503 sign_in_unavailable` while Apple can't be reached or the two Apple secrets aren't set. Deleting the account moves the token, still encrypted, into `apple_revocations` inside the deletion's transaction and revokes it straight after; if Apple can't be reached the server retries every ten minutes, with backoff, for up to a week.
+
+`POST /auth/apple/notifications` takes Apple's server-to-server events, `{ "payload": "<JWT>" }` signed with Apple's ID-token keys. It needs no origin, cookie or token; an unverifiable payload is a `400`. `consent-revoked` signs the person out everywhere and drops the token. `account-deleted` deletes an account only Apple could open, through the same function and billing check as `DELETE /account`. That includes its refusals: while the person still owns a journey someone else is in, or has billing to settle, nothing changes and the refusal is logged, exactly as `DELETE /account` would refuse. The refusal is also kept on the Apple identity (`apple_account_deleted_at`, migration 026), because the container's log goes at the next release. The owner finishes it within 30 days with `server/finish-apple-account-deletion.js`, run in the app container. With no arguments it lists what is waiting. With `<accountId> --hand <journeyId>=<newOwnerId>` it hands each journey over through `transferOwnership`, then deletes through the billing check and `deleteAccount`. An account that also has a password or Google only loses its Apple identity and its sessions. `email-disabled` and `email-enabled` are acknowledged.
 
 ## Journeys, members, and sync
 

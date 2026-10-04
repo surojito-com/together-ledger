@@ -2,6 +2,7 @@ import { buildApp } from './app.js';
 import { createBillingService } from './billing.js';
 import { loadConfig } from './config.js';
 import { createPool, runMigrations } from './db.js';
+import { loggerOptions } from './log-options.js';
 import { ConsoleBlockedMailer, SmtpMailer } from './mailer.js';
 import { PlatformService } from './platform.js';
 
@@ -29,10 +30,20 @@ const app = await buildApp({
   platform,
   billing,
   config,
-  logger: { redact: ['req.headers.cookie', 'req.headers.authorization', 'req.headers.stripe-signature', 'req.body.password', 'req.body.token'] },
+  logger: loggerOptions,
 });
 
+// Apple revocations a deletion couldn't finish (Apple unreachable) are retried every ten minutes
+// (#218). A failure here is logged and left for the next round; it never stops the server.
+const appleRetry = setInterval(() => {
+  platform.drainAppleRevocations()
+    .then((tally) => { if (tally.revoked || tally.retrying || tally.dropped) app.log.info(tally, 'apple revocations'); })
+    .catch((error) => app.log.error({ err: { name: error?.name } }, 'apple revocations failed'));
+}, 10 * 60 * 1000);
+appleRetry.unref();
+
 async function shutdown(signal) {
+  clearInterval(appleRetry);
   app.log.info({ signal }, 'shutting down');
   await app.close();
   await pool.end();

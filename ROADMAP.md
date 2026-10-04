@@ -29,7 +29,7 @@
 - One portable container for an AWS primary and GCP cold standby
 - Threat model, API contract, and operations/restore gates
 
-PR#0003 remains a candidate until production secrets, SMTP, PostgreSQL, backup restore, security review, and the full release gate pass. GitHub Pages is still browser-only.
+PR#0003 remains a candidate until production secrets, SMTP, PostgreSQL, backup restore, security review, and the full release gate pass. The public app origin is still browser-only.
 
 ## Next — hardening and launch
 

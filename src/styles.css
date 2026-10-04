@@ -430,6 +430,8 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .account-identity div { border-bottom: 1px solid var(--line); display: grid; gap: 3px; padding: 0 0 10px; }
 .account-identity dt { color: var(--muted); font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
 .account-identity dd { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.display-name-form { display: grid; gap: 8px; margin: 14px 0 4px; }
+.display-name-form .button { justify-self: start; }
 .account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
 .billing-panel { display: grid; gap: 13px; }
 .billing-panel > hr { margin-bottom: 4px; }
@@ -478,10 +480,26 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 
 .journey-role, .invitation-status { border: 1px solid var(--line); border-radius: var(--radius-pill); flex: 0 0 auto; font-size: 12px; font-weight: 900; letter-spacing: .06em; padding: 5px 8px; text-transform: uppercase; }
 /* An invitation's state is told by the role that means it, not by the accent. Waiting should
-   not shout louder than done, which is what a solid accent on Pending was doing. */
-.invitation-status.accepted { border-color: var(--positive); color: var(--positive); }
-.invitation-status.pending { border-color: var(--caution); color: var(--caution); }
-.invitation-status.expired, .invitation-status.revoked { border-color: var(--line); color: var(--private); }
+   not shout louder than done, which is what a solid accent on Pending was doing.
+
+   A proposal's life has the same three tiers, and until now had none of them: five of its states
+   fell through to plain ink, so Waiting was the only coloured thing in the record while Agreed
+   and Declined were the same grey as each other.
+
+   Declining is somebody's considered answer, not a fault, so it never takes the destructive role.
+   It sits in the same receded tier as withdrawing and lapsing, which is what keeps time running
+   out from reading as a refusal. Which of the three it was is carried by the word. */
+.invitation-status.accepted,
+.invitation-status.agreed,
+.invitation-status.agree { border-color: var(--positive); color: var(--positive); }
+.invitation-status.pending,
+.invitation-status.open { border-color: var(--caution); color: var(--caution); }
+.invitation-status.expired,
+.invitation-status.revoked,
+.invitation-status.declined,
+.invitation-status.decline,
+.invitation-status.withdrawn,
+.invitation-status.lapsed { border-color: var(--line); color: var(--private); }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .concern-manager { align-items: center; background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-l); display: flex; justify-content: space-between; margin-top: 22px; padding: 17px; }
 .concern-manager h3, .event-list-section > h3 { font-family: Georgia, serif; font-size: 27px; font-weight: 500; margin: 0; }
@@ -580,6 +598,18 @@ footer { background: var(--spruce); color: var(--on-accent); padding: 42px clamp
 .footer-brand .brand-mark { color: var(--on-accent); }
 footer strong { font-family: Georgia, serif; font-size: 25px; }
 footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
+
+/* /privacy — PRIVACY.md rendered as a page (scripts/render-privacy-page.mjs). A reading column,
+   nothing interactive: the policy should read as a document, not as part of the workspace. */
+.policy-page { margin: 0 auto; max-width: 760px; padding: clamp(32px, 6vw, 72px) clamp(18px, 4vw, 40px) 80px; }
+.policy-page h1 { font-size: clamp(40px, 6vw, 64px); margin-bottom: 28px; }
+.policy-page h2 { font-size: clamp(26px, 3.4vw, 34px); line-height: 1.15; margin: 44px 0 12px; }
+.policy-page p, .policy-page li { color: var(--text-secondary); }
+.policy-page ul { padding-left: 1.2em; }
+.policy-page li + li { margin-top: 8px; }
+.policy-page code { background: var(--meta-bg); border: 1px solid var(--border); border-radius: var(--radius-xs); color: var(--fg); font-size: .9em; padding: 0 4px; }
+.policy-page a { color: var(--accent); }
+.policy-page .policy-contact { border-top: 1px solid var(--border); color: var(--fg); margin-top: 44px; padding-top: 20px; }
 
 @media (max-width: 900px) {
   .welcome-nav { display: none; }

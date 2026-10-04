@@ -1,0 +1,12 @@
+[Unit]
+Description=Reconcile Together Ledger billing state against Stripe
+Wants=network-online.target
+After=network-online.target docker.service
+OnFailure=together-ledger-alert@%n.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=TOGETHER_ENV_FILE=/etc/together-ledger/production.env
+ExecStart=/usr/local/lib/together-ledger/run-production-stripe-reconciliation.sh

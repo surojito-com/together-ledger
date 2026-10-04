@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Together Ledger",
+    "slug": "together-ledger",
+    "scheme": "togetherledger",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.togetherledger.ledger"
+    },
+    "android": {
+      "package": "com.togetherledger.ledger",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "./plugins/with-scene-life-cycle"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "owner": "together-ledger-digital-llc-company",
+    "extra": {
+      "eas": {
+        "projectId": "19a46534-9d76-4b26-b2e2-77fb3925a791"
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -179,11 +179,9 @@ test('release-probe deployer finds only the fixed public probe URL', () => {
 });
 
 test('release delivery workflows keep their explicit protected-main boundaries', () => {
-  const pages = readFileSync(join(root, '.github/workflows/pages.yml'), 'utf8');
   const worker = readFileSync(join(root, '.github/workflows/app-worker.yml'), 'utf8');
-  assert.match(pages, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
-  assert.doesNotMatch(pages, /actions\/upload-pages-artifact@/);
   assert.match(worker, /workflow_run:/);
+  assert.match(worker, /npm run build:public/);
   assert.match(worker, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.match(worker, /github\.event\.workflow_run\.event == 'push'/);
   assert.match(worker, /name: app/);
@@ -209,6 +207,17 @@ test('release delivery workflows keep their explicit protected-main boundaries',
   }
   assert.match(worker, /deploy-release-probe\.mjs/);
   assert.match(worker, /verify-release-probe\.mjs/);
+});
+
+test('no workflow deploys to GitHub Pages, which serves no Together Ledger address', () => {
+  const workflows = readdirSync(join(root, '.github/workflows'));
+  assert.ok(!workflows.includes('pages.yml'));
+  for (const workflowName of workflows) {
+    const workflow = readFileSync(join(root, '.github/workflows', workflowName), 'utf8');
+    assert.doesNotMatch(workflow, /actions\/configure-pages@/);
+    assert.doesNotMatch(workflow, /actions\/deploy-pages@/);
+    assert.doesNotMatch(workflow, /actions\/upload-pages-artifact@/);
+  }
 });
 
 test('the release marker is declared uncacheable at the edge', () => {

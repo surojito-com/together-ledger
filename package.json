@@ -4,19 +4,25 @@
   "private": false,
   "description": "A private shared journey workspace for two people to hold moments, return to what matters, and make room for repair.",
   "type": "module",
+  "workspaces": [
+    "apps/mobile"
+  ],
   "scripts": {
     "build:public": "node scripts/build-public-site.mjs",
     "dev": "node scripts/dev.mjs",
     "start": "node server/start.js",
+    "migrate": "node server/migrate.js",
     "test": "node --test",
     "test:postgres": "node --test tests/postgres-integration.test.js",
     "smoke:smtp": "node scripts/smoke-smtp.mjs",
     "configure:stripe-portal": "node --env-file-if-exists=.env scripts/configure-stripe-customer-portal.mjs",
     "reconcile:stripe": "node --env-file-if-exists=.env scripts/reconcile-stripe-billing.mjs",
+    "check:stripe-reconciliation-freshness": "node --env-file-if-exists=.env scripts/check-stripe-reconciliation-freshness.mjs",
     "verify:production-host": "./scripts/verify-production-host.sh",
     "test:browser": "playwright test",
     "check:themes": "node scripts/check-themes.mjs",
-    "check:server": "node --check server/app.js && node --check server/billing.js && node --check server/platform.js && node --check server/start.js && node --check scripts/configure-stripe-customer-portal.mjs && node --check scripts/reconcile-stripe-billing.mjs && node --check src/app.js",
+    "tokens:mobile": "node scripts/mobile-theme-tokens.mjs --write",
+    "check:server": "node --check server/app.js && node --check server/billing.js && node --check server/platform.js && node --check server/identity.js && node --check server/apple.js && node --check server/apple-deletion-followup.js && node --check server/finish-apple-account-deletion.js && node --check server/start.js && node --check server/reapply-account-deletions.js && node --check server/migrate.js && node --check server/log-options.js && node --check src/api.js && node --check scripts/configure-stripe-customer-portal.mjs && node --check scripts/reconcile-stripe-billing.mjs && node --check scripts/check-stripe-reconciliation-freshness.mjs && node --check src/app.js",
     "check": "node scripts/check-public-safety.mjs && npm run check:themes && npm run check:server && node scripts/smoke-http.mjs && npm test"
   },
   "keywords": [
@@ -62,6 +68,8 @@
     "wrangler": "4.130.0"
   },
   "overrides": {
-    "sharp": "0.35.4"
+    "sharp": "0.35.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
   }
 }

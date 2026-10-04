@@ -1,0 +1,12 @@
+[Unit]
+Description=Confirm Together Ledger Stripe reconciliation has run recently
+Wants=network-online.target
+After=network-online.target docker.service
+OnFailure=together-ledger-alert@%n.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=TOGETHER_ENV_FILE=/etc/together-ledger/production.env
+ExecStart=/usr/local/lib/together-ledger/check-production-stripe-reconciliation-freshness.sh

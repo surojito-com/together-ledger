@@ -332,6 +332,8 @@ function renderAccountState() {
   $$('[data-open-account]').forEach((button) => { button.textContent = signedIn ? 'Account settings' : accountsAvailable ? 'Sign in' : 'Accounts soon'; });
   $('#account-dialog-copy').textContent = accountsAvailable ? 'Passwords are never shared between journeyers.' : 'The private account service is not live on this public page yet.';
   $('#account-name').textContent = signedIn ? accountUser.displayName : '';
+  const nameInput = $('#display-name-form [name=displayName]');
+  if (document.activeElement !== nameInput) nameInput.value = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
@@ -407,8 +409,11 @@ function inviteProposalRow(proposal, trip) {
   // Whoever asked can stop asking, and so can the owner. Withdrawing settles the question
   // without recording a refusal against anybody who simply had not answered yet.
   const mayWithdraw = proposal.status === 'open' && (proposal.proposedByUserId === accountUser?.id || trip?.role === 'owner');
+  // Agreeing and declining carry the same weight on purpose. A solid primary on one of them is
+  // the product having an opinion about how somebody should answer a question about another
+  // person's access to everything this journey has shared. It does not get one.
   const buttons = [
-    proposal.viewerMayDecide ? `<button class="button primary" type="button" data-agree-proposal="${escapeHtml(proposal.id)}">Agree to add them</button>` : '',
+    proposal.viewerMayDecide ? `<button class="button quiet" type="button" data-agree-proposal="${escapeHtml(proposal.id)}">Agree to add them</button>` : '',
     proposal.viewerMayDecide ? `<button class="button quiet" type="button" data-decline-proposal="${escapeHtml(proposal.id)}">Decline</button>` : '',
     mayWithdraw ? `<button class="button quiet" type="button" data-withdraw-proposal="${escapeHtml(proposal.id)}">Withdraw</button>` : '',
   ].filter(Boolean).join('');
@@ -1515,6 +1520,22 @@ $('#resend-verification-button').addEventListener('click', async () => {
   }
 });
 
+$('#display-name-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const { displayName } = Object.fromEntries(new FormData(form));
+  try {
+    const { user } = await api.mutate('/account', 'PATCH', { displayName });
+    accountUser = user;
+    form.querySelector('[name=displayName]').blur();
+    renderAccountState();
+    if (isCloudJourney()) await refreshCloudState();
+    showToast('Name saved. Your journeyers see it now.');
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
+});
+
 $('#delete-account-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const input = Object.fromEntries(new FormData(event.currentTarget));
@@ -1781,7 +1802,7 @@ async function initializeAccount() {
       refreshBillingState().catch((error) => showStatus(accountMessage(error)));
       showLedgerSurface({ persist: true });
       if (params.has('invite')) {
-        await api.mutate(`/invitations/${encodeURIComponent(params.get('invite'))}/accept`, 'POST', {});
+        await api.acceptInvitation(params.get('invite'));
         await refreshCloudState({ announce: true });
       }
     } else if (params.has('invite')) {

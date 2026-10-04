@@ -14,6 +14,8 @@ const ConfigSchema = z.object({
   AUDIT_HMAC_KEY: z.string().min(32).default('development-audit-secret-change-me-00001'),
   SESSION_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
   TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
+  ACCESS_TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
+  REFRESH_TOKEN_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   COOKIE_SECURE: z.enum(['true', 'false']).default('false'),
   TRUST_PROXY: z.enum(['true', 'false']).default('false'),
   SMTP_URL: z.string().default(''),
@@ -35,6 +37,24 @@ const ConfigSchema = z.object({
   STRIPE_PORTAL_CONFIGURATION_ID: z.string().default(''),
   STRIPE_TAX_ENABLED: z.enum(['true', 'false']).default('false'),
   BILLING_GRACE_DAYS: z.coerce.number().int().min(0).max(90).default(7),
+  // Who a Google or Apple ID token may be issued to (its `aud`), comma-separated. These are
+  // public identifiers, not secrets (#214, #215). Apple's are the phone's App ID and the web's
+  // Services ID. Google's wait for Together Ledger's own OAuth clients; empty turns Google
+  // sign-in off rather than accepting a token for someone else's app.
+  GOOGLE_CLIENT_IDS: z.string().default(''),
+  APPLE_CLIENT_IDS: z.string().default('com.togetherledger.ledger,com.togetherledger.ledger.web'),
+  // Sign in with Apple's REST API (#218, server/apple.js): exchanging a sign-in's code for a
+  // refresh token, and revoking it when the account is deleted. The Team ID, the key's ID and the
+  // web's Return URL are public. The .p8 key (one line is fine) and the key that encrypts Apple's
+  // refresh tokens (32 random bytes, base64) are secrets, kept in Secrets Manager like the rest.
+  APPLE_TEAM_ID: z.string().default('769MBW6826'),
+  APPLE_SIGN_IN_KEY_ID: z.string().default('985BDXJP8S'),
+  APPLE_SIGN_IN_PRIVATE_KEY: z.string().default(''),
+  APPLE_TOKEN_ENCRYPTION_KEY: z.string().default(''),
+  // The web's Services ID and the Return URL Sign in with Apple JS is initialised with. A code the
+  // web asked for is exchanged with both; a code from the phone with neither.
+  APPLE_SERVICES_ID: z.string().default('com.togetherledger.ledger.web'),
+  APPLE_WEB_REDIRECT_URI: z.string().default('https://app.together-ledger.com/'),
 });
 
 function assertStripeConfiguration(config) {
@@ -89,9 +109,12 @@ export function loadConfig(overrides = {}) {
     if (!config.SMTP_URL) throw new Error('Production SMTP delivery must be configured.');
   }
   const appOrigins = [...new Set(config.APP_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean))];
+  const listOf = (value) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
   return {
     ...config,
     appOrigins,
+    googleClientIds: listOf(config.GOOGLE_CLIENT_IDS),
+    appleClientIds: listOf(config.APPLE_CLIENT_IDS),
     databaseSsl: config.DATABASE_SSL === 'true',
     cookieSecure: config.COOKIE_SECURE === 'true',
     trustProxy: config.TRUST_PROXY === 'true',

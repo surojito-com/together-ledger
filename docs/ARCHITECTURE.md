@@ -65,4 +65,4 @@ Deletion verifies the password and revokes sessions and account tokens. A sole-m
 
 The application is one portable container backed by standard PostgreSQL. AWS is the low-volume primary writer; GCP is a cold standby restored from separately encrypted cross-cloud backups. This avoids unsafe dual writes and keeps the system operable by one owner. See [OPERATIONS.md](OPERATIONS.md).
 
-The existing GitHub Pages build remains a static browser-only deployment until DNS is intentionally moved to the authenticated service. A PR merge alone must never be represented as activating private sync.
+The existing public build remains a static browser-only deployment until DNS is intentionally moved to the authenticated service. A PR merge alone must never be represented as activating private sync.

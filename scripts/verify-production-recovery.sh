@@ -7,6 +7,7 @@ recipient_file=${BACKUP_RECIPIENT_FILE:-/etc/together-ledger/backup-recipient.en
 runtime_file=${BACKUP_RUNTIME_FILE:-/etc/together-ledger/backup-runtime.env}
 backup_dir=${BACKUP_DIR:-/var/backups/together-ledger}
 receipt=${OFFSITE_RECEIPT_FILE:-/var/lib/together-ledger/last-offsite-backup.env}
+uploader_file=${BACKUP_UPLOADER_FILE:-/etc/together-ledger/backup-uploader.env}
 max_age_hours=${BACKUP_MAX_AGE_HOURS:-26}
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -37,6 +38,7 @@ require_root_file "$production_env_file" "production environment file"
 require_root_file "$recipient_file" "backup recipient file"
 require_root_file "$runtime_file" "backup runtime file"
 require_root_file "$receipt" "offsite backup receipt"
+require_root_file "$uploader_file" "backup uploader file"
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 command -v age >/dev/null || { echo "age is required" >&2; exit 1; }
 
@@ -62,6 +64,20 @@ expected_checksum=$(read_field BACKUP_SHA256 "$receipt")
 actual_checksum=$(sha256sum "$latest" | awk '{print $1}')
 if [ "$(basename "$latest")" != "$expected_file" ] || [ "$actual_checksum" != "$expected_checksum" ]; then
   echo "newest encrypted backup has no matching offsite upload receipt" >&2
+  exit 1
+fi
+
+# The receipt must name the bucket the uploader is configured for now (#254). After the uploader
+# file is pointed at a new bucket, this fails until a backup has actually reached it, so a release
+# can never lean on a copy that only exists in the old place.
+configured_bucket=$(read_field GCP_BACKUP_BUCKET "$uploader_file")
+if ! grep -q '^UPLOADED_TO=' "$receipt"; then
+  echo "offsite upload receipt does not say which bucket it went to; run one backup with the current uploader" >&2
+  exit 1
+fi
+uploaded_to=$(read_field UPLOADED_TO "$receipt")
+if [ "$uploaded_to" != "gs://$configured_bucket" ]; then
+  echo "newest offsite upload went to a different bucket than the uploader is configured for; run one backup to the configured bucket" >&2
   exit 1
 fi
 

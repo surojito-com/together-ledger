@@ -19,7 +19,7 @@ During the hostname rollout, the legacy app address and `https://app.together-le
 
 ## Safe order of work
 
-1. In GitHub Pages, assign and verify `together-ledger.com` as the custom domain before creating any DNS record. This prevents an unclaimed-domain takeover.
+1. Claim `together-ledger.com` in the account that will actually serve it before creating any DNS record. This prevents an unclaimed-domain takeover. The apex is served by the company site from the separate `together-ledger.com` repository, so the claim belongs there and not to this repository.
 2. In Cloudflare, add the `app` record for `app.together-ledger.com` to the same frontend deployment that serves the current app. Do not add a wildcard record.
 3. Wait for the new certificate, enable HTTPS enforcement, and verify the app loads at both the legacy app address and `app.together-ledger.com`.
 4. Set `PUBLIC_ORIGIN` and `ACCOUNT_ORIGIN` to `https://app.together-ledger.com`, and set `APP_ORIGINS` to the legacy app origin during the parallel phase. Verify the API accepts both exact origins with credentials.
@@ -31,7 +31,7 @@ During the hostname rollout, the legacy app address and `https://app.together-le
 
 ## Checks with care
 
-- The apex and `www` addresses resolve to the intended GitHub Pages site with HTTPS.
+- The apex and `www` addresses resolve to the company site with HTTPS, and the content served on the public DNS path is the company site's own — an HTTP 200 alone does not show which origin answered.
 - The old Surojito address continues to work until the new public address is confirmed.
 - API DNS is not created until private service readiness and synthetic account checks succeed.
 - PostgreSQL and the application port remain unpublished; only Caddy receives public web traffic.

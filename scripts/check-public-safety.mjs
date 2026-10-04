@@ -67,19 +67,22 @@ if (existsSync(touchIconPath)) {
     violations.push('Apple touch icon must be a 180 by 180 PNG');
   }
 }
-const pagesWorkflow = readFileSync(join(root, '.github/workflows/pages.yml'), 'utf8');
-if (!pagesWorkflow.includes('node scripts/build-public-site.mjs')) {
-  violations.push('Pages workflow does not use the shared public-site build');
-}
-if (!pagesWorkflow.includes('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a')) {
-  violations.push('Pages workflow does not use the reviewed immutable artifact action');
-}
-if (pagesWorkflow.includes('actions/upload-pages-artifact@')) {
-  violations.push('Pages workflow still uses the nested artifact action rejected by immutable-action policy');
+// The apex belongs to the separate company-site repository, which serves it through
+// Cloudflare. A Pages deployment from this repository would build a bundle no visitor
+// can reach and still report success, so nothing here may deploy to Pages again.
+const workflowsDirectory = join(root, '.github/workflows');
+for (const workflowName of readdirSync(workflowsDirectory)) {
+  const workflow = readFileSync(join(workflowsDirectory, workflowName), 'utf8');
+  for (const pagesDeployAction of ['actions/configure-pages@', 'actions/deploy-pages@', 'actions/upload-pages-artifact@']) {
+    if (workflow.includes(pagesDeployAction)) {
+      violations.push(`${workflowName} deploys to GitHub Pages, which no longer serves any Together Ledger address`);
+    }
+  }
 }
 const workerWorkflow = readFileSync(join(root, '.github/workflows/app-worker.yml'), 'utf8');
 for (const requiredWorkerDeliveryStep of [
   'workflow_run:',
+  'npm run build:public',
   'github.event.workflow_run.conclusion == \'success\'',
   'github.event.workflow_run.event == \'push\'',
   'TOGETHER_LEDGER_RELEASE_REVISION',

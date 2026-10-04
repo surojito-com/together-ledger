@@ -9,9 +9,11 @@ import fastifyStatic from '@fastify/static';
 import rawBody from 'fastify-raw-body';
 import { DisabledBillingService } from './billing.js';
 import { PlatformError } from './platform.js';
+import { bearerTokenFrom } from './security.js';
 
 const rootDirectory = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SESSION_COOKIE = 'tl_session';
+const APP_CLIENT_HEADER = 'x-together-client';
 
 export async function buildApp({ platform, config, billing = new DisabledBillingService(), logger = false }) {
   const app = Fastify({ logger, trustProxy: config.trustProxy, bodyLimit: 64 * 1024 });
@@ -25,7 +27,7 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (origin && allowedOrigins.has(origin)) {
       reply.header('Access-Control-Allow-Origin', origin);
       reply.header('Access-Control-Allow-Credentials', 'true');
-      reply.header('Access-Control-Allow-Headers', 'Content-Type, X-Together-CSRF, X-Together-Image-Name');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Together-Client, X-Together-CSRF, X-Together-Image-Name');
       reply.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
       reply.header('Vary', 'Origin');
     }
@@ -53,7 +55,7 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   ].filter(Boolean));
 
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message } });
+    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
     if (error.validation) return reply.code(400).send({ error: { code: 'invalid_input', message: 'The request is not valid.' } });
     if (error.statusCode === 429) return reply.code(429).send({ error: { code: 'rate_limit_exceeded', message: 'Too many requests. Wait and try again.' } });
     request.log.error({ err: { name: error.name, message: error.message } }, 'request failed');
@@ -68,18 +70,46 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (!allowedOrigins.has(request.headers.origin)) throw new PlatformError(403, 'invalid_origin', 'This request did not come from the Together Ledger app.');
   }
 
-  function accountOriginFor(request) {
+  function presentedToken(request) {
+    return bearerTokenFrom(request.headers.authorization);
+  }
+
+  // The origin check and the CSRF header both exist to stop a hostile page from spending a
+  // cookie the browser attaches on its own. A phone has neither a cookie nor a page, so it asks
+  // for a token with this header and carries one from then on. A browser cannot borrow the claim:
+  // a custom header or an Authorization header makes a cross-origin request preflight, and the
+  // OPTIONS handler above refuses an origin that is not ours.
+  //
+  // This says only which credential the caller wants issued. It is never what decides whether a
+  // check applies: asking for a token is a claim, and a claim is not a credential.
+  function asksForToken(request) {
+    return String(request.headers[APP_CLIENT_HEADER] || '').trim().toLowerCase() === 'app';
+  }
+
+  // A client with no browser has no origin to send, so a token it already holds stands in for
+  // one. Registering and signing in are the two places that have no token yet, and they say so
+  // explicitly rather than letting every caller opt out of the check by claiming to be an app.
+  function accountOriginFor(request, { issuingToken = false } = {}) {
+    if (issuingToken || presentedToken(request)) return config.ACCOUNT_ORIGIN || config.PUBLIC_ORIGIN;
     requireOrigin(request);
     return request.headers.origin;
   }
 
   async function authenticate(request) {
+    const presented = presentedToken(request);
+    if (presented) {
+      const holder = await platform.tokenHolder(presented);
+      if (!holder) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+      request.auth = holder;
+      return;
+    }
     const session = await platform.session(request.cookies[SESSION_COOKIE]);
     if (!session) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
     request.auth = session;
   }
 
   async function protectMutation(request) {
+    if (presentedToken(request)) return authenticate(request);
     requireOrigin(request);
     await authenticate(request);
     if (request.headers['x-together-csrf'] !== request.auth.csrfToken) throw new PlatformError(403, 'invalid_csrf', 'Refresh the page and try again.');
@@ -101,13 +131,19 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(hostedIndexMarkup));
 
   app.post('/api/v1/auth/register', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
-    const result = await platform.register(request.body || {}, accountOriginFor(request));
+    const wantsToken = asksForToken(request);
+    const result = await platform.register(request.body || {}, accountOriginFor(request, { issuingToken: wantsToken }), { issueSession: !wantsToken });
+    if (wantsToken) return reply.code(201).send({ data: { user: result.user, verificationSent: result.verificationSent, ...await platform.issueTokens(result.user.id) } });
     setSession(reply, result.session);
     return reply.code(201).send({ data: { user: result.user, csrfToken: result.session.csrfToken, verificationSent: result.verificationSent } });
   });
 
+  // The single-use token in the body is the credential here, and nothing ambient is spent or
+  // issued: no cookie is read and none is set. So the origin check guards nothing for a phone,
+  // which has no origin to send, and it is skipped for a client that says it is the app, as
+  // signing in does. A browser still has to be ours (TL-M-05, #180).
   app.post('/api/v1/auth/verify-email', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     return { data: { user: await platform.verifyEmail(request.body?.token) } };
   });
 
@@ -117,19 +153,85 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   });
 
   app.post('/api/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
-    const result = await platform.login(request.body || {});
+    // Signing in is one of the two places a token can be born, so the claim has to be honoured
+    // here or a phone could never get one. It costs nothing: a client asking for a token is not
+    // issued a cookie, so there is no ambient session for a hostile page to plant, and the
+    // password check and rate limit that actually guard this route are untouched.
+    const wantsToken = asksForToken(request);
+    if (!wantsToken) requireOrigin(request);
+    const result = await platform.login(request.body || {}, { issueSession: !wantsToken });
+    if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
     setSession(reply, result.session);
     return { data: { user: result.user, csrfToken: result.session.csrfToken } };
   });
 
+  // Google and Apple (#214). Like signing in with a password, these are places a credential is
+  // born, so a phone's claim to want a token is honoured and a browser must be ours. The ID token
+  // in the body is the credential; the reply is the same cookie + CSRF pair, or token pair, that
+  // a password login gives, so nothing downstream can tell how someone signed in.
+  async function socialReply(request, reply, signIn) {
+    const wantsToken = asksForToken(request);
+    if (!wantsToken) requireOrigin(request);
+    const result = await signIn({ issueSession: !wantsToken });
+    if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
+    setSession(reply, result.session);
+    return { data: { user: result.user, csrfToken: result.session.csrfToken } };
+  }
+
+  for (const provider of ['google', 'apple']) {
+    app.post(`/api/v1/auth/${provider}`, { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => (
+      socialReply(request, reply, (options) => platform.socialSignIn(provider, request.body || {}, options))
+    ));
+  }
+
+  // The answer to `link_required`: the same ID token, with the password of the account that
+  // already uses its email. It shares login's rate limit, since it is a password check too.
+  app.post('/api/v1/auth/link', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const provider = request.body?.provider;
+    if (provider !== 'google' && provider !== 'apple') throw new PlatformError(400, 'invalid_input', 'Choose Google or Apple.');
+    return socialReply(request, reply, (options) => platform.linkIdentity(provider, request.body || {}, options));
+  });
+
+  // Apple's server-to-server notifications (#250), set on the com.togetherledger.ledger App ID as
+  // https://api.together-ledger.com/api/v1/auth/apple/notifications. Apple's servers send them, so
+  // there is no origin, cookie or token to check: the signed payload is the credential, verified
+  // against Apple's keys. An account deleted this way goes through the same billing check as
+  // Delete account.
+  app.post('/api/v1/auth/apple/notifications', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const payload = request.body?.payload;
+    if (typeof payload !== 'string') throw new PlatformError(400, 'invalid_input', 'The request is not valid.');
+    const accepted = await platform.handleAppleNotification(payload, {
+      deleteAccount: async (userId) => {
+        await billing.assertAccountDeletable(userId);
+        await platform.deleteAccount(userId, null);
+      },
+    });
+    if (!accepted) throw new PlatformError(400, 'invalid_token', 'The notification could not be verified.');
+    return reply.code(200).send({ data: { accepted: true } });
+  });
+
+  // Rotation, not renewal: the refresh token presented here is spent, and the reply carries a
+  // fresh pair. Nothing is read from the URL, so neither token reaches a log or a history entry.
+  app.post('/api/v1/auth/refresh', { config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({
+    data: await platform.refreshTokens(request.body?.refreshToken),
+  }));
+
   app.post('/api/v1/auth/logout', { preHandler: protectMutation }, async (request, reply) => {
+    const presented = presentedToken(request);
+    if (presented) {
+      await platform.revokeToken(presented);
+      return reply.code(204).send();
+    }
     await platform.logout(request.cookies[SESSION_COOKIE]);
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.code(204).send();
   });
 
-  app.get('/api/v1/session', { preHandler: authenticate }, async (request) => ({ data: { user: request.auth.user, csrfToken: request.auth.csrfToken } }));
+  app.get('/api/v1/session', { preHandler: authenticate }, async (request) => (
+    request.auth.bearer
+      ? { data: { user: request.auth.user } }
+      : { data: { user: request.auth.user, csrfToken: request.auth.csrfToken } }
+  ));
 
   app.get('/api/v1/journeys/:journeyId/billing', { preHandler: authenticate }, async (request) => ({ data: await billing.status(request.auth.userId, request.params.journeyId) }));
   app.post('/api/v1/journeys/:journeyId/billing/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
@@ -148,21 +250,33 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(200).send(result);
   });
 
+  // Someone who has forgotten their password has no token yet, so a phone asking for a recovery
+  // link is one of the places a credential is still to come, like registering. The link it sends
+  // goes to the account origin, never to an address the caller chose.
   app.post('/api/v1/recovery/request', { config: { rateLimit: { max: 5, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    await platform.requestRecovery(request.body?.email, accountOriginFor(request));
+    await platform.requestRecovery(request.body?.email, accountOriginFor(request, { issuingToken: asksForToken(request) }));
     return reply.code(202).send({ data: { accepted: true } });
   });
 
+  // As with verifying an email, the recovery token in the body is the credential, and a new
+  // password revokes every session and token the account holds, phones included.
   app.post('/api/v1/recovery/confirm', { config: { rateLimit: { max: 10, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     await platform.confirmRecovery(request.body || {});
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return { data: { passwordChanged: true } };
   });
 
+  // Only ever the signed-in person's own name: nothing in the request says whose it is. Limited,
+  // because each change is written into every journey the person is in.
+  app.patch('/api/v1/account', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => ({
+    data: { user: await platform.changeDisplayName(request.auth.userId, request.body || {}) },
+  }));
+
   app.delete('/api/v1/account', { preHandler: protectMutation }, async (request, reply) => {
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
+    // deleteAccount logs the `account deleted` line a restore from backup relies on.
     await platform.deleteAccount(request.auth.userId, request.body?.password);
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.code(204).send();
@@ -195,6 +309,12 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.delete('/api/v1/journeys/:journeyId/invite-proposals/:proposalId', { preHandler: protectMutation }, async (request, reply) => {
     await platform.withdrawInviteProposal(request.auth.userId, request.params.journeyId, request.params.proposalId);
     return reply.code(204).send();
+  });
+  // The token travels in the body, which the log never records (issue #208). The path form below
+  // stays for clients that haven't updated; server/log-options.js masks its token in the log.
+  app.post('/api/v1/invitations/accept', { preHandler: protectMutation }, async (request) => {
+    const token = typeof request.body?.token === 'string' ? request.body.token : '';
+    return { data: { journeyId: await platform.acceptInvitation(request.auth.userId, token) } };
   });
   app.post('/api/v1/invitations/:token/accept', { preHandler: protectMutation }, async (request) => ({ data: { journeyId: await platform.acceptInvitation(request.auth.userId, request.params.token) } }));
   app.delete('/api/v1/journeys/:journeyId/members/:userId', { preHandler: protectMutation }, async (request, reply) => {
