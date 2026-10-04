@@ -24,6 +24,12 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,
+  expect: {
+    // A screenshot proves layout. An OS update can redraw a few isolated pixels on text and
+    // icon edges (9 at most, #287), while a real layout change moves hundreds. The per-pixel
+    // threshold is left alone; colour is asserted against tokens, not photographed.
+    toHaveScreenshot: { maxDiffPixels: 30 },
+  },
   use: {
     baseURL: process.env.QA_BASE_URL || localURL,
     browserName: 'chromium',
