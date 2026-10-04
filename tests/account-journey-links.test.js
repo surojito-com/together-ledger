@@ -36,6 +36,13 @@ const MIGRATIONS = [
   '017_keep-one-removed-photo-per-moment.sql',
   '018_allow-ninety-nine-paid-journey-places.sql',
   '019_let-moments-carry-their-own-atmosphere.sql',
+  '020_let-entitlements-hold-ninety-nine-places.sql',
+  '021_let-unpaid-capacity-rest-without-losing-history.sql',
+  '022_agree-together-before-adding-someone.sql',
+  '023_let-a-phone-carry-its-own-key.sql',
+  '024_let-google-and-apple-open-an-account.sql',
+  '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
+  '026_remember-a-refused-apple-deletion.sql',
 ];
 
 async function appAtItsOwnHome() {
