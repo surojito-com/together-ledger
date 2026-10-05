@@ -10,13 +10,15 @@ substance.
 
 What that first run covered: a verified current backup, a build from a clean checkout, the
 migrations rehearsed against a restored copy and then applied to production ahead of the image
-swap, and confirmation from outside. What it did not cover, and why, is tracked in #225 — no
-image has been pushed to the registry, so the release is still pinned by tag and the rollback
-anchor is a local build.
+swap, and confirmation from outside. What it did not cover, and why, is tracked in #225 — the
+released revision was never pushed to the registry, so the release is still pinned by tag and the
+rollback anchor is a local build.
 
-**The API is deployed, and has been since 2026-09-14.** It runs on a single EC2 host in
-`<AWS_REGION>` from `compose.production.yaml`, behind Caddy, with a healthy daily encrypted
-backup timer. Issue #198 was filed against this repository's own documentation, which said no
+**The API is deployed, and has been since 2026-09-14.** It runs on a single **Amazon Lightsail**
+instance in `<AWS_REGION>` from `compose.production.yaml`, behind Caddy, with a healthy daily
+encrypted backup timer. It is Lightsail, not EC2 — an earlier version of this document said EC2,
+and the difference matters: a Lightsail instance cannot have an IAM role or instance profile
+attached, so the host's route to the registry cannot be an instance role (see #101). Issue #198 was filed against this repository's own documentation, which said no
 registry was configured and left every Deployment box unticked. The documentation was behind the
 machine, not the other way round.
 
@@ -25,10 +27,15 @@ What the survey found, and what this document now assumes:
 - **A procedure already exists, and it lives in one person's habit.** The host holds a clone of
   this repository at `<REPO_DIR>`. An image is built there, tagged with the registry address, and
   started with `docker compose up -d`. Nothing is written down, and nothing is recorded after.
-- **The ECR repository is named but has never been used.** `TOGETHER_IMAGE` points at a registry
+- **The host has never used the ECR repository.** `TOGETHER_IMAGE` points at a registry
   address, but the image behind it was built on the host: it carries no registry digest, and the
-  AWS CLI is not installed there, so nothing has been pushed or pulled. The registry address is
-  decoration.
+  AWS CLI is not installed there, so the host has pushed and pulled nothing. From the host's side
+  the registry address is decoration.
+- **The registry is not empty, though.** A later read of the registry (2026-09-29) found 26
+  images pushed between 2026-08-18 and 2026-09-13 from outside the host. Their tags are
+  inconsistent — short SHAs, one `release-<sha>-amd64` — some are OCI indexes (built without
+  `--provenance=false`), and 10 are untagged leftovers. None is what production runs, and none
+  carries the architecture in a consistent way. That mix is the drift #100 exists to stop.
 - **Images are pinned by tag, not by digest.** The rollback path below depends on immutable
   digests. Until a build is genuinely pushed and pinned by digest, that rollback is a plan and
   not a capability.
@@ -167,8 +174,15 @@ happen.
 Give the host an IAM principal that can pull from this one repository and nothing else
 (`ecr:GetAuthorizationToken`, plus `ecr:BatchGetImage` and
 `ecr:GetDownloadUrlForLayer` on this repository's ARN). It must not be able to push, delete, or
-read any other repository. Keep its credential in a root-owned mode-0600 file on the host, as
-the backup uploader's credential already is.
+read any other repository.
+
+How the host holds that permission was decided on 2026-09-29 in #101: **Systems Manager hybrid
+activation**, not a stored access key. Because the host is Lightsail it cannot carry an instance
+role, and a pull-only access key in a mode-0600 file — this document's earlier sketch — is the
+long-lived stored credential #101 asks to avoid. Registered as an SSM managed node under a role
+with only the permissions above, the host gets short-lived credentials that the SSM agent
+rotates. Until that is set up and shown to work from the host's AWS CLI, the host has no pull path,
+and the steps below that pull describe the intended state rather than a performed one.
 
 ### 2. Create the production environment file
 
@@ -289,6 +303,17 @@ cd <REPO_DIR> && ./scripts/verify-production-host.sh
 
 Read-only. It deploys nothing and opens no port.
 
+Record the host's architecture once, from the host itself, rather than inferring it from the
+instance type:
+
+```sh
+uname -m    # expect x86_64, which Docker calls amd64 — the platform every build below targets
+```
+
+If it ever reads anything else, stop: every `--platform linux/amd64` in this document is wrong
+for that host, and `scripts/verify-image-architecture.sh` will refuse the images until they are
+rebuilt for it.
+
 ## Releasing
 
 ### 1. Start from a clean reviewed checkout
@@ -308,7 +333,10 @@ npm ci && npm run check
 Build for the host's architecture explicitly. `--provenance=false --sbom=false` keeps buildx
 from publishing an OCI image index around a single-platform image, which is what makes ECR Basic
 scanning unable to scan it directly — the caveat `OPERATIONS.md` describes. With these flags
-there is one manifest and one digest:
+there is one manifest and one digest.
+
+The tag names both the full commit and the architecture, so a tag can never be read as fitting a
+machine it was not built for, and the repository's immutable tags mean that name is permanent:
 
 ```sh
 COMMIT=$(git rev-parse HEAD)
@@ -319,7 +347,7 @@ docker buildx build \
   --platform linux/amd64 \
   --provenance=false \
   --sbom=false \
-  --tag <REGISTRY>/<ECR_REPOSITORY>:"$COMMIT" \
+  --tag <REGISTRY>/<ECR_REPOSITORY>:"$COMMIT-amd64" \
   --metadata-file /tmp/together-ledger-image.json \
   --push .
 
@@ -336,7 +364,7 @@ own report is a claim; the registry is the thing the host will pull from:
 aws ecr describe-images \
   --repository-name <ECR_REPOSITORY> \
   --region <AWS_REGION> \
-  --image-ids imageTag="$COMMIT" \
+  --image-ids imageTag="$COMMIT-amd64" \
   --query 'imageDetails[0].imageDigest' --output text
 ```
 
@@ -411,13 +439,16 @@ sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<E
 sudo grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env
 ```
 
-Pull, apply migrations as their own visible step, then start:
+Pull, confirm the image fits this machine, apply migrations as their own visible step, then
+start. The architecture check comes before the migrations on purpose: an image that cannot run
+here must be refused before it has touched the only database, not discovered after:
 
 ```sh
 cd <REPO_DIR>
 export COMPOSE="docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml"
 
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
+./scripts/verify-image-architecture.sh <REGISTRY>/<ECR_REPOSITORY>@<DIGEST>
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE run --rm app node server/migrate.js
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d
 ```
@@ -525,6 +556,7 @@ sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<E
 # 3. Start that image. PostgreSQL keeps running; only the app container is replaced.
 cd <REPO_DIR>
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
+./scripts/verify-image-architecture.sh <REGISTRY>/<ECR_REPOSITORY>@<PREVIOUS_DIGEST>
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d app
 
 # 4. Verify privately, then from outside, then one synthetic account flow.

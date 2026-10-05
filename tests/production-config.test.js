@@ -154,6 +154,32 @@ test('the API has a written deploy path, and it is deliberately manual', async (
   assert.doesNotMatch(draft, /appleboy\/ssh-action|ssh -/);
 });
 
+test('a release image names its architecture and is checked against the host before it starts', async () => {
+  const [deploy, draft] = await Promise.all([
+    readFile(new URL('../docs/SERVER_DEPLOY.md', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/server-image.yml.draft', import.meta.url), 'utf8'),
+  ]);
+
+  // The tag carries the architecture, in the runbook and in the drafted build alike.
+  assert.match(deploy, /--platform linux\/amd64/);
+  assert.match(deploy, /<ECR_REPOSITORY>:"\$COMMIT-amd64"/);
+  assert.match(deploy, /imageTag="\$COMMIT-amd64"/);
+  assert.match(draft, /--platform linux\/amd64/);
+  assert.match(draft, /\$\{\{ inputs\.revision \}\}-amd64/);
+  assert.doesNotMatch(draft, /:\$\{\{ inputs\.revision \}\}"/);
+  assert.doesNotMatch(draft, /imageTag="\$\{\{ inputs\.revision \}\}"/);
+
+  // The check sits between pull and migrate on the way forward, and after pull on the way back.
+  const forward = deploy.indexOf('verify-image-architecture.sh <REGISTRY>/<ECR_REPOSITORY>@<DIGEST>');
+  assert.ok(forward > deploy.indexOf('$COMPOSE pull app'));
+  assert.ok(forward < deploy.indexOf('$COMPOSE run --rm app node server/migrate.js'));
+  assert.match(deploy, /verify-image-architecture\.sh <REGISTRY>\/<ECR_REPOSITORY>@<PREVIOUS_DIGEST>/);
+
+  // The host is Lightsail. Saying EC2 is what hid that it cannot carry an instance role.
+  assert.doesNotMatch(deploy, /single EC2 host/);
+  assert.match(deploy, /Amazon Lightsail/);
+});
+
 test('the drafted image workflow stays inert until someone renames it on purpose', async () => {
   // GitHub Actions reads only .yml and .yaml here. A draft that ships as either one is live,
   // whatever its comments say, so adopting it has to be a visible rename in a pull request.

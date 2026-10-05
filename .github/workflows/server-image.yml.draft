@@ -82,7 +82,7 @@ jobs:
             --platform linux/amd64 \
             --provenance=false \
             --sbom=false \
-            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.revision }}" \
+            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:${{ inputs.revision }}-amd64" \
             --metadata-file image.json \
             --push .
           digest=$(jq -r '."containerimage.digest"' image.json)
@@ -98,7 +98,7 @@ jobs:
           stored=$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --region "$AWS_REGION" \
-            --image-ids imageTag="${{ inputs.revision }}" \
+            --image-ids imageTag="${{ inputs.revision }}-amd64" \
             --query 'imageDetails[0].imageDigest' --output text)
           if [ "$stored" != "${{ steps.build.outputs.digest }}" ]; then
             echo "The registry holds a different image than the build reported."
