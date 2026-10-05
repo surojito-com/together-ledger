@@ -103,6 +103,10 @@ function actionUrl(accountOrigin, action, token) {
   return url.toString();
 }
 
+// One footer for every account email, so the three cannot drift apart (#292). It says "people",
+// as the invitation's own body does, rather than "two people".
+const ACCOUNT_EMAIL_FOOTER = 'Together Ledger is a private shared journey workspace for people to hold what happened and return to what matters.';
+
 function email0010Text(invitationUrl) {
   return `Together Ledger\n\nYou have been invited to a shared journey.\n\nTogether Ledger is a private place for people to hold what happened, return to what matters, and make room for repair.\n\nOpen your invitation: ${invitationUrl}\n\nSign in with your own account to accept. This short-lived link works once.\n\nDid not expect this? You can safely ignore this email.\n\nTogether Ledger`;
 }
@@ -154,7 +158,7 @@ function email0010Invitation(invitationUrl) {
               </td>
             </tr>
             <tr>
-              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">Together Ledger is a private shared journey workspace for two people.</td>
+              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">${ACCOUNT_EMAIL_FOOTER}</td>
             </tr>
           </table>
         </td>
@@ -214,7 +218,7 @@ function email0020Verification(verificationUrl) {
               </td>
             </tr>
             <tr>
-              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">Together Ledger is a private shared journey workspace for two people.</td>
+              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">${ACCOUNT_EMAIL_FOOTER}</td>
             </tr>
           </table>
         </td>
@@ -274,7 +278,7 @@ function email0030Recovery(recoveryUrl) {
               </td>
             </tr>
             <tr>
-              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">Together Ledger is a private shared journey workspace for two people.</td>
+              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">${ACCOUNT_EMAIL_FOOTER}</td>
             </tr>
           </table>
         </td>
