@@ -3,16 +3,25 @@ import { router, Stack } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider } from '../src/auth/session';
 import { ShellOverlays } from '../src/components/dialogs';
-import { JourneyProvider } from '../src/journey/use-journey';
+import { awaitingYourAnswer } from '../src/journey/sharing-view';
+import { JourneyProvider, useJourney } from '../src/journey/use-journey';
 import { ShellProvider } from '../src/shell/shell-provider';
 import { fontSources, targetSize, ThemeProvider, useTheme } from '../src/theme';
 
 /** Settings from the ledger's header, at the 44-point minimum like everything else. */
 function SettingsButton() {
   const { theme } = useTheme();
+  const journey = useJourney();
+  // Seen from the ledger, where people actually are, and spelled out in full one screen in.
+  const waiting = awaitingYourAnswer(journey.state.phase === 'ready' ? journey.state.snapshot : null);
   return (
-    <Pressable accessibilityRole="button" onPress={() => router.push('/settings')} style={({ pressed }) => [styles.headerButton, targetSize, { opacity: pressed ? 0.7 : 1 }]}>
-      <Text style={[styles.headerButtonText, { color: theme.colors.accent }]}>Settings</Text>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={waiting ? `Settings, ${waiting} to answer` : 'Settings'}
+      onPress={() => router.push('/settings')}
+      style={({ pressed }) => [styles.headerButton, targetSize, { opacity: pressed ? 0.7 : 1 }]}
+    >
+      <Text style={[styles.headerButtonText, { color: theme.colors.accent }]}>Settings{waiting ? ` · ${waiting}` : ''}</Text>
     </Pressable>
   );
 }

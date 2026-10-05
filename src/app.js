@@ -601,6 +601,19 @@ function render() {
   renderSharedJourney(trip, moments, isEmptyStart);
 }
 
+// A proposal is a question put to this person about another person, and until now it was only
+// visible inside Journey settings — so somebody could be asked and never know. It is shown on the
+// control that already leads there rather than announced: a count beside a label is seen whenever
+// the ledger is, and it waits instead of interrupting. Nothing is added to the chrome, so there is
+// no new thing to dismiss and nothing to grow louder the longer it is left.
+function awaitingYourAnswer(trip) {
+  return (trip?.inviteProposalRecords || []).filter((proposal) => proposal.viewerMayDecide).length;
+}
+
+function waitingSuffix(count) {
+  return count ? ` · ${count} to answer` : '';
+}
+
 function renderJourneyControls(trip) {
   $('#journey-select').innerHTML = state.trips.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
   $('#journey-select').value = trip.id;
@@ -608,6 +621,7 @@ function renderJourneyControls(trip) {
   $('#actor-select').innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
   $('#actor-select').value = actor;
   $('#event-count').textContent = `(${state.events.filter((event) => event.tripId === trip.id).length})`;
+  $('#settings-button').textContent = `Journey settings${waitingSuffix(awaitingYourAnswer(trip))}`;
   const accountWithoutJourney = Boolean(accountUser && !isCloudJourney(trip));
   $$('[data-open-moment]').forEach((button) => { button.disabled = false; });
   $('#edit-journey-button').disabled = accountWithoutJourney;

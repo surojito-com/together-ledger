@@ -168,3 +168,27 @@ test('a folded record reads as a control in this system', async ({ page }) => {
   expect(summary.colour).not.toBe(summary.ink);
   expect(summary.height, 'a summary is something people press').toBeGreaterThanOrEqual(44);
 });
+
+// Being asked whether another person may join is a question put to this person, and it lived only
+// inside Journey settings — so somebody could be asked and never know they had been. It is now
+// carried on the control that already leads there: seen whenever the ledger is, and waiting rather
+// than interrupting.
+test('a waiting answer is visible from the ledger without demanding anything', async ({ page }) => {
+  await openJourneySettings(page);
+  await page.keyboard.press('Escape');
+
+  // One of the fixture's proposals is still this person's to answer; the others are not.
+  const entry = page.locator('#settings-button');
+  await expect(entry).toHaveText('Journey settings · 1 to answer');
+
+  // Nothing is pushed at them: no dialog raised by itself, no toast, no problem banner.
+  await expect(page.locator('#settings-dialog')).not.toBeVisible();
+  await expect(page.locator('#status-banner')).toBeHidden();
+  await expect(page.locator('.toast.show')).toHaveCount(0);
+
+  // It is the ordinary way in, not a new control to dismiss, and still a full-sized target.
+  const box = await entry.boundingBox();
+  expect(box.height, 'the way in keeps its target').toBeGreaterThanOrEqual(44);
+  await entry.click();
+  await expect(page.locator('#invite-proposal-list')).toContainText('newcomer@example.test');
+});

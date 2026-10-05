@@ -45,7 +45,9 @@ export type Moment = {
 
 export type Concern = { id: string; title: string; detail?: string | null; status: string };
 
-export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[] };
+// inviteProposals is what the service already sends and the sharing screen already reads; naming
+// it here lets the ledger's chrome count what is waiting without casting the whole snapshot.
+export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[]; inviteProposals?: { viewerMayDecide?: boolean }[] };
 
 /** A moment as the list draws it: its photos, and its removed photos, already attached. */
 export type ShownMoment = Moment & { images: MomentImage[]; removedImages: MomentImage[] };
