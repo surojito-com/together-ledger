@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState, type ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { Choices } from '../src/components/choices';
@@ -28,6 +28,7 @@ import {
   restModeCopy,
   restQueue,
   sharingCopy,
+  splitMembers,
   showsUnpaidCapacityRest,
   type BillingStatus,
   type InviteProposal,
@@ -35,6 +36,7 @@ import {
 } from '../src/journey/sharing-view';
 import { useJourney, useReloadWhenShown } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
+import { targetSize } from '../src/theme/metrics';
 import { useTheme } from '../src/theme';
 
 /**
@@ -155,19 +157,28 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
       ) : null}
 
       <Section title="Journey record">
-        {snapshot.members.length ? snapshot.members.map((member) => {
-          const row = memberRow(member, { creatorId: creator.userId, createdAt: creator.createdAt, viewerId });
+        {snapshot.members.length ? (() => {
+          const { inView, folded } = splitMembers(snapshot.members, { viewerId });
+          const memberCard = (member: typeof snapshot.members[number]) => {
+            const row = memberRow(member, { creatorId: creator.userId, createdAt: creator.createdAt, viewerId });
+            return (
+              <Row key={member.id} title={row.description} meta={[row.timing]} tag={row.role}>
+                {mayManageMember(member, { journeyRole: role, viewerId }) ? (
+                  <>
+                    <Button kind="quiet" label="Make owner" pending={pending === `transfer-${member.id}`} onPress={() => transfer(member.id, member.displayName)} />
+                    <Button kind="destructive" label="Remove" pending={pending === `remove-${member.id}`} onPress={() => remove(member.id, member.displayName)} />
+                  </>
+                ) : null}
+              </Row>
+            );
+          };
           return (
-            <Row key={member.id} title={row.description} meta={[row.timing]} tag={row.role}>
-              {mayManageMember(member, { journeyRole: role, viewerId }) ? (
-                <>
-                  <Button kind="quiet" label="Make owner" pending={pending === `transfer-${member.id}`} onPress={() => transfer(member.id, member.displayName)} />
-                  <Button kind="destructive" label="Remove" pending={pending === `remove-${member.id}`} onPress={() => remove(member.id, member.displayName)} />
-                </>
-              ) : null}
-            </Row>
+            <>
+              {inView.map(memberCard)}
+              {folded.length ? <MemberFold count={folded.length}>{folded.map(memberCard)}</MemberFold> : null}
+            </>
           );
-        }) : <Body>The people in this journey appear here once the account service answers.</Body>}
+        })() : <Body>The people in this journey appear here once the account service answers.</Body>}
       </Section>
 
       {proposals.length ? (
@@ -285,6 +296,22 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/** Nobody is hidden: the rest of a large journey is one press away, and says how many it holds. */
+function MemberFold({ count, children }: { count: number; children: ReactNode }) {
+  const { theme } = useTheme();
+  const [open, setOpen] = useState(false);
+  const label = `Show the other ${count} ${count === 1 ? 'person' : 'people'}`;
+  return (
+    <View>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen((value) => !value)} style={[targetSize, styles.foldHead]}>
+        <Text style={[styles.foldLabel, { color: theme.colors.muted }]}>{label}</Text>
+        <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.foldToggle, { color: theme.colors.accent }]}>{open ? '−' : '＋'}</Text>
+      </Pressable>
+      {open ? <View style={styles.foldBody}>{children}</View> : null}
+    </View>
+  );
+}
+
 function Row({ title, meta = [], tag, children }: { title: string; meta?: string[]; tag?: string; children?: ReactNode }) {
   const { theme } = useTheme();
   return (
@@ -308,5 +335,9 @@ const styles = StyleSheet.create({
   tag: { fontSize: 13, fontWeight: '700' },
   meta: { fontSize: 14, lineHeight: 20 },
   rowActions: { gap: 8, marginTop: 8 },
+  foldHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  foldLabel: { fontSize: 14, fontWeight: '700' },
+  foldToggle: { fontSize: 16, fontWeight: '700' },
+  foldBody: { gap: 10 },
   body: { fontSize: 16, lineHeight: 23 },
 });

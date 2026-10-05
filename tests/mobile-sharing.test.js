@@ -203,3 +203,37 @@ test('sharing and history re-read the journey when they come into view, and can 
   // reload is memoised, so the focus effect runs once per arrival rather than on every render.
   assert.match(loader, /const reload = useCallback\(async \(\) => \{/);
 });
+
+// A journey can hold 101 people. The web folds that list; before this the phone did not, on the
+// smaller screen of the two. Both now fold at the same size, by the same rule, and the rule is
+// read back out of the web's own source so the two cannot drift apart unnoticed.
+test('a large journey folds on the phone exactly as it folds on the web', () => {
+  const webFold = Number(/const MEMBERS_SHOWN_BEFORE_FOLDING = (\d+);/.exec(web)?.[1]);
+  assert.ok(Number.isInteger(webFold), 'the web still names a fold size');
+  assert.equal(view.MEMBERS_SHOWN_BEFORE_FOLDING, webFold);
+
+  const member = (id, role = 'member') => ({ id, displayName: id, role, joinedAt: '2026-09-07T15:00:00.000Z' });
+  const viewerId = 'me';
+
+  // At or below the fold size nothing is hidden, so a small journey reads as it always has.
+  const small = [member('owner', 'owner'), member('me'), member('b')];
+  assert.deepEqual(view.splitMembers(small, { viewerId }), { inView: small, folded: [] });
+
+  const atTheLimit = [member('owner', 'owner'), ...Array.from({ length: webFold - 1 }, (_, index) => member(`m${index}`))];
+  assert.equal(view.splitMembers(atTheLimit, { viewerId }).folded.length, 0);
+
+  // Past it, what stays in view answers who holds the journey and where the viewer stands.
+  const large = [member('owner', 'owner'), member('me'), ...Array.from({ length: webFold }, (_, index) => member(`m${index}`))];
+  const { inView, folded } = view.splitMembers(large, { viewerId });
+  assert.deepEqual(inView.map((entry) => entry.id), ['owner', 'me']);
+  assert.equal(folded.length, webFold);
+  // Nobody is dropped: the two halves still account for every person in the journey.
+  assert.deepEqual([...inView, ...folded].map((entry) => entry.id).sort(), large.map((entry) => entry.id).sort());
+
+  // A viewer who is not a member of a large journey still sees who holds it.
+  assert.deepEqual(view.splitMembers(large, { viewerId: null }).inView.map((entry) => entry.id), ['owner']);
+
+  // And the phone actually uses it, rather than only exporting it.
+  assert.match(screens.sharing, /splitMembers\(snapshot\.members, \{ viewerId \}\)/);
+  assert.match(screens.sharing, /Show the other \$\{count\} \$\{count === 1 \? 'person' : 'people'\}/);
+});
