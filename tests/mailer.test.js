@@ -68,6 +68,42 @@ test('EMail-0020 verification provides a polished HTML message and accessible te
   assert.match(message.html, /https:\/\/accounts\.example\.test\/\?verify=verify_token/);
 });
 
+test('EMail-0030 recovery provides a polished HTML message and accessible text alternative', async () => {
+  const messages = [];
+  const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };
+  const mailer = new SmtpMailer({ transport, from: 'Together Ledger <no-reply@example.test>', accountOrigin: 'https://accounts.example.test' });
+
+  await mailer.sendRecovery({ to: 'alex@example.test', token: 'recovery_token' });
+
+  const [message] = messages;
+  assert.equal(message.subject, 'Reset your Together Ledger password');
+  assert.match(message.text, /Choose a new password\./);
+  assert.match(message.text, /short-lived link works once/);
+  assert.match(message.text, /Your password stays as it is unless this link is used\./);
+  assert.match(message.text, /https:\/\/accounts\.example\.test\/\?recovery=recovery_token/);
+  assert.match(message.html, /Choose a new password/);
+  assert.match(message.html, /short-lived link works once/);
+  assert.match(message.html, /If the button does not open, copy this link into your browser/);
+  assert.match(message.html, /Your password stays as it is unless this link is used\./);
+  assert.match(message.html, /href="https:\/\/accounts\.example\.test\/\?recovery=recovery_token"/);
+});
+
+test('each account email carries both a text and an HTML part', async () => {
+  const messages = [];
+  const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };
+  const mailer = new SmtpMailer({ transport, from: 'Together Ledger <no-reply@example.test>', accountOrigin: 'https://accounts.example.test' });
+
+  await mailer.sendInvitation({ to: 'alex@example.test', token: 'invite_token' });
+  await mailer.sendVerification({ to: 'alex@example.test', token: 'verify_token' });
+  await mailer.sendRecovery({ to: 'alex@example.test', token: 'recovery_token' });
+
+  for (const message of messages) {
+    assert.ok(message.text, `${message.subject} has no text part`);
+    assert.ok(message.html, `${message.subject} has no HTML part`);
+    assert.match(message.html, /Together Ledger<\/td>/, `${message.subject} is missing the shared header`);
+  }
+});
+
 test('each account email uses its purpose-specific sender', async () => {
   const messages = [];
   const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };

@@ -80,7 +80,8 @@ export class SmtpMailer {
       from: this.recoveryFrom,
       to,
       subject: 'Reset your Together Ledger password',
-      text: `Reset your password: ${recoveryUrl}\n\nThis short-lived link works once. If you did not request it, ignore this message.`,
+      text: email0030Text(recoveryUrl),
+      html: email0030Recovery(recoveryUrl),
     });
   }
 
@@ -210,6 +211,66 @@ function email0020Verification(verificationUrl) {
                 <p style="margin:0 0 28px;font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;"><a href="${safeUrl}" style="color:#5b355f;text-decoration:underline;">${safeUrl}</a></p>
                 <hr style="border:0;border-top:1px solid #e9e1dd;margin:0 0 20px;" />
                 <p style="margin:0;color:#665a63;font-size:13px;line-height:1.5;">Did not create an account? You can safely ignore this email. It will not make changes to an account on its own.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 36px;background:#f8f4f1;color:#766a72;font-size:12px;line-height:1.5;">Together Ledger is a private shared journey workspace for two people.</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function email0030Text(recoveryUrl) {
+  return `Together Ledger\n\nChoose a new password.\n\nSomeone asked to reset the password for the Together Ledger account that uses this email address.\n\nChoose a new password: ${recoveryUrl}\n\nThis short-lived link works once. If you did not ask for this, you can safely ignore this email. Your password stays as it is unless this link is used.\n\nTogether Ledger`;
+}
+
+function email0030Recovery(recoveryUrl) {
+  const safeUrl = escapeHtml(recoveryUrl);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <title>Reset your Together Ledger password</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f5f1ee;color:#2c2531;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+    <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">A short-lived link to choose a new Together Ledger password.</span>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f1ee;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#fffdfb;border:1px solid #e5dcd8;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="padding:30px 36px 24px;background:#3b2c3e;color:#fffdfb;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td style="width:40px;height:40px;border-radius:12px;background:#d7b9e7;color:#302536;text-align:center;font-size:17px;font-weight:700;line-height:40px;">TL</td>
+                    <td style="padding-left:12px;font-size:19px;font-weight:700;letter-spacing:-0.2px;">Together Ledger</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:38px 36px 32px;">
+                <p style="margin:0 0 12px;color:#816469;font-size:13px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;">Reset your password</p>
+                <h1 style="margin:0 0 18px;color:#2c2531;font-size:30px;line-height:1.18;letter-spacing:-0.6px;">Choose a new password.</h1>
+                <p style="margin:0 0 28px;color:#4b404a;font-size:17px;line-height:1.55;">Someone asked to reset the password for the Together Ledger account that uses this email address.</p>
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
+                  <tr>
+                    <td bgcolor="#5b355f" style="border-radius:9px;">
+                      <a href="${safeUrl}" style="display:inline-block;padding:14px 20px;color:#ffffff;font-size:16px;font-weight:700;line-height:20px;text-decoration:none;">Choose a new password</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 24px;color:#665a63;font-size:14px;line-height:1.55;">This short-lived link works once.</p>
+                <p style="margin:0 0 8px;color:#665a63;font-size:13px;line-height:1.5;">If the button does not open, copy this link into your browser:</p>
+                <p style="margin:0 0 28px;font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;"><a href="${safeUrl}" style="color:#5b355f;text-decoration:underline;">${safeUrl}</a></p>
+                <hr style="border:0;border-top:1px solid #e9e1dd;margin:0 0 20px;" />
+                <p style="margin:0;color:#665a63;font-size:13px;line-height:1.5;">Did not ask for this? You can safely ignore this email. Your password stays as it is unless this link is used.</p>
               </td>
             </tr>
             <tr>

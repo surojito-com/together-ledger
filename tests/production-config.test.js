@@ -47,6 +47,9 @@ test('production deployment bundle keeps the database private and requires delib
   assert.match(backup, /production Compose file is missing/);
   assert.match(backup, /mkfifo/);
   assert.match(backup, /wait "\$dump_pid"/);
+  assert.match(compose, /max-size: "10m"/, 'request logs rotate, as PRIVACY.md says');
+  assert.match(backup, /-mtime \+29 -delete/, 'local backups are kept for thirty days, as PRIVACY.md says');
+  assert.ok(backup.indexOf('-delete') > backup.indexOf('sha256sum "$target"'), 'pruning runs only after a new backup is written');
   assert.match(backupRunner, /GCP_BACKUP_BUCKET/);
   assert.match(backupRunner, /GOOGLE_APPLICATION_CREDENTIALS/);
   assert.match(backupRunner, /GCP_BACKUP_SERVICE_ACCOUNT/);
@@ -158,4 +161,36 @@ test('the drafted image workflow stays inert until someone renames it on purpose
   assert.ok(workflows.includes('server-image.yml.draft'));
   assert.ok(!workflows.includes('server-image.yml'));
   assert.ok(!workflows.includes('server-image.yaml'));
+});
+
+test('backups go only to the company project, and a restore drill can prove one (#254)', async () => {
+  const [runner, recoveryCheck, drill, operations] = await Promise.all([
+    readFile(new URL('../scripts/run-production-backup.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/verify-production-recovery.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../scripts/restore-backup-drill.sh', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/OPERATIONS.md', import.meta.url), 'utf8'),
+  ]);
+  // The uploader names its project, and a key from any other project is refused before upload.
+  assert.match(runner, /GCP_BACKUP_PROJECT:\?/);
+  assert.match(runner, /\*@"\$GCP_BACKUP_PROJECT"\.iam\.gserviceaccount\.com\)/);
+  assert.ok(runner.indexOf('does not belong to GCP_BACKUP_PROJECT') < runner.indexOf('gcloud storage cp'));
+  // The receipt names the bucket, and the preflight only accepts the bucket configured now.
+  assert.match(runner, /UPLOADED_TO=%s/);
+  assert.match(recoveryCheck, /backup-uploader\.env/);
+  assert.match(recoveryCheck, /require_root_file "\$uploader_file"/);
+  assert.match(recoveryCheck, /different bucket than the uploader is configured for/);
+  assert.ok(recoveryCheck.indexOf('different bucket') < recoveryCheck.indexOf('Recovery preflight passed'));
+  // The drill checks the hash first, restores into a throwaway database, and prints counts only.
+  assert.ok(drill.indexOf('does not match its .sha256 file') < drill.indexOf('age -d'));
+  assert.match(drill, /postgres:16-alpine/);
+  assert.match(drill, /docker rm -f/);
+  assert.match(drill, /must point at an empty database/);
+  assert.match(drill, /--exit-on-error/);
+  assert.doesNotMatch(drill, /SELECT \* FROM/i);
+  // The bucket's settings and the order of the move are written down.
+  assert.match(operations, /GCP_BACKUP_PROJECT=togetherledger-app/);
+  assert.match(operations, /public-access-prevention/);
+  assert.match(operations, /--soft-delete-duration=0/);
+  assert.match(operations, /roles\/storage\.objectCreator/);
+  assert.match(operations, /restore-backup-drill\.sh/);
 });

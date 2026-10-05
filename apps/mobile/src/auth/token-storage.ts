@@ -1,22 +1,29 @@
 import * as SecureStore from 'expo-secure-store';
+import type { Tokens, TokenStore } from '../api/client';
 
 /**
- * Stub for the auth token storage that #179 (bearer auth) and #180 (auth
- * screens) will build on. No tokens exist yet — this only fixes where they
- * go once they do: the platform keychain (iOS Keychain via
- * `expo-secure-store`, EncryptedSharedPreferences on Android), never
- * `AsyncStorage`, `UserDefaults`, or plain `SharedPreferences`.
+ * Where the phone keeps its sign-in tokens: the platform keychain (iOS Keychain; Android
+ * Keystore-backed encrypted storage, through expo-secure-store). Never AsyncStorage, never
+ * plain preferences. THIS_DEVICE_ONLY keeps them out of backups restored onto another phone.
  */
-const ACCESS_TOKEN_KEY = 'together-ledger.access-token';
+const KEY = 'together-ledger.tokens';
+const OPTIONS = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
 
-export async function getStoredAccessToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
-}
-
-export async function setStoredAccessToken(token: string): Promise<void> {
-  await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
-}
-
-export async function clearStoredAccessToken(): Promise<void> {
-  await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-}
+export const secureTokenStore: TokenStore = {
+  async read() {
+    const stored = await SecureStore.getItemAsync(KEY, OPTIONS);
+    if (!stored) return null;
+    try {
+      const parsed = JSON.parse(stored) as Tokens;
+      return parsed.token && parsed.refreshToken ? parsed : null;
+    } catch {
+      return null;
+    }
+  },
+  async write(tokens) {
+    await SecureStore.setItemAsync(KEY, JSON.stringify(tokens), OPTIONS);
+  },
+  async clear() {
+    await SecureStore.deleteItemAsync(KEY, OPTIONS);
+  },
+};

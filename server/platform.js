@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction } from './db.js';
+import { identityVerifierFor } from './identity.js';
+import { appleEventFrom, appleSignInFor } from './apple.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
 import {
   assertPassword,
@@ -13,10 +15,13 @@ import {
 } from './security.js';
 
 export class PlatformError extends Error {
-  constructor(status, code, message) {
+  // `details` carries the few facts a client needs to act on an error, such as the email an
+  // existing account uses when a sign-in has to be linked first. Most errors have none.
+  constructor(status, code, message, details = null) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -38,6 +43,9 @@ const MAX_JOURNEY_CAPACITY = 101;
 // accident, bounded so that nobody is left indefinitely holding a question they did not ask for.
 const INVITE_PROPOSAL_DAYS = 30;
 const INVITE_DECISIONS = new Set(['agree', 'decline']);
+// A revocation Apple never accepted is retried for a week, which outlasts any outage; past that,
+// the failure is our configuration, and the log line is there to surface it.
+const APPLE_REVOCATION_GIVE_UP_MS = 7 * 24 * 60 * 60 * 1000;
 
 function cleanText(value, label, max) {
   const text = String(value || '').trim();
@@ -325,11 +333,13 @@ function publicEvent(row) {
 }
 
 export class PlatformService {
-  constructor({ pool, config, mailer, now = () => new Date(), onDeliveryFailure = () => {} }) {
+  constructor({ pool, config, mailer, now = () => new Date(), onDeliveryFailure = () => {}, identity = identityVerifierFor(config), apple = appleSignInFor(config) }) {
     this.pool = pool;
     this.config = config;
     this.mailer = mailer;
     this.now = now;
+    this.identity = identity;
+    this.apple = apple;
     this.onDeliveryFailure = onDeliveryFailure;
     this.dummyPasswordHash = hashPassword('invalid-login-padding'.padEnd(20, 'x'));
   }
@@ -497,6 +507,268 @@ export class PlatformService {
     return { user: publicUser(found.rows[0]), session };
   }
 
+  // Google and Apple (#214). A known identity signs straight in. An unknown one whose email
+  // already belongs to an account is never signed in or merged because the addresses match
+  // (decided Sep 30, 2026, for all three apps): a password account answers `link_required`, and
+  // the client asks for that password once and calls linkIdentity(); an account without a
+  // password answers `email_in_use`. An Apple Hide My Email address never matches, so it always
+  // opens a new account. Anything else opens one.
+  async verifiedIdentity(provider, idToken) {
+    if (!this.identity.configured(provider)) throw new PlatformError(404, 'sign_in_unavailable', 'This way of signing in is not available yet.');
+    let identity;
+    try {
+      identity = await this.identity.verify(provider, idToken);
+    } catch {
+      throw new PlatformError(503, 'sign_in_unavailable', 'Signing in this way is not working right now. Try again soon.');
+    }
+    if (!identity) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
+    return identity;
+  }
+
+  async userForIdentity(client, identity) {
+    const found = await client.query(
+      `SELECT u.*, i.apple_refresh_token FROM user_identities i JOIN users u ON u.id=i.user_id
+       WHERE i.provider=$1 AND i.subject=$2 AND u.deleted_at IS NULL`,
+      [identity.provider, identity.subject],
+    );
+    return found.rows[0] || null;
+  }
+
+  // Trades an Apple sign-in's one-time code for a refresh token and seals it (#218). The code is
+  // exchanged with the client it was issued to, the ID token's `aud`, and bound to the person:
+  // the ID token Apple returns must carry the same `sub` as the one already checked.
+  async sealedAppleToken(identity, authorizationCode) {
+    if (!this.apple.configured()) {
+      throw new PlatformError(503, 'sign_in_unavailable', 'Signing in with Apple is not working right now. Try again soon.');
+    }
+    if (!authorizationCode) throw new PlatformError(400, 'invalid_input', 'Sign in with Apple again to continue.');
+    const clientId = identity.audience;
+    const webFlow = clientId === this.config.APPLE_SERVICES_ID;
+    // A key that is set but malformed throws while signing the client secret. That is our
+    // configuration, not the person's, so it answers like any other unavailable Apple.
+    const exchanged = await this.apple.exchangeCode({ code: authorizationCode, clientId, webFlow })
+      .catch(() => ({ ok: false, reason: 'misconfigured', error: 'client_secret_unsigned' }));
+    if (!exchanged.ok) {
+      if (exchanged.reason === 'invalid_grant') throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
+      if (exchanged.reason === 'misconfigured') process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple token exchange refused', error: exchanged.error || 'unknown' })}\n`);
+      throw new PlatformError(503, 'sign_in_unavailable', 'Signing in with Apple is not working right now. Try again soon.');
+    }
+    const claims = await this.identity.verifiedClaims('apple', exchanged.idToken, [clientId]).catch(() => null);
+    if (!claims || claims.sub !== identity.subject) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
+    return { clientId, sealed: this.apple.sealSecret(exchanged.refreshToken) };
+  }
+
+  async insertIdentity(client, identity, userId, appleToken) {
+    await client.query(
+      'INSERT INTO user_identities (provider,subject,user_id,apple_client_id,apple_refresh_token,created_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      [identity.provider, identity.subject, userId, appleToken?.clientId || null, appleToken?.sealed || null, this.now()],
+    );
+  }
+
+  async socialSignIn(provider, { idToken, displayName, authorizationCode } = {}, { issueSession = true } = {}) {
+    const identity = await this.verifiedIdentity(provider, idToken);
+    let known = await this.userForIdentity(this.pool, identity);
+    if (known) {
+      // Apple sends the person's name only on the very first authorization. An account that
+      // opened without one still carries its fallback name, the same as its username; if a name
+      // turns up now (a client resending the one it kept), it is saved, and never over a name
+      // the account already has (decided Sep 30, 2026).
+      const offered = cleanOptionalText(displayName, 80);
+      if (offered && known.display_name === known.username && known.username.startsWith('journeyer-')) {
+        const renamed = await this.pool.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [offered, known.id]);
+        known = { ...renamed.rows[0], apple_refresh_token: known.apple_refresh_token };
+      }
+      // An Apple account from before #218 has no refresh token yet: this sign-in's code fills it
+      // in. Failing that never stops the sign-in.
+      if (provider === 'apple' && authorizationCode && !known.apple_refresh_token) {
+        try {
+          const token = await this.sealedAppleToken(identity, authorizationCode);
+          await this.pool.query(
+            `UPDATE user_identities SET apple_client_id=$1, apple_refresh_token=$2 WHERE provider='apple' AND subject=$3`,
+            [token.clientId, token.sealed, identity.subject],
+          );
+        } catch { /* signed in all the same */ }
+      }
+      return withTransaction(this.pool, async (client) => ({ user: publicUser(known), session: issueSession ? await this.createSession(client, known.id) : null }));
+    }
+
+    let email = null;
+    if (identity.email) {
+      try { email = normalizeEmail(identity.email); } catch { email = null; }
+    }
+    if (email && !identity.isPrivateEmail) {
+      const holder = await this.pool.query('SELECT id,password_hash FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [email]);
+      if (holder.rowCount) {
+        if (holder.rows[0].password_hash) {
+          throw new PlatformError(409, 'link_required', 'You already have an account with this email. Enter its password once to connect it.', { email });
+        }
+        throw new PlatformError(409, 'email_in_use', 'An account already uses this email. Sign in the way you did before.');
+      }
+    }
+    // A new Apple account is opened only once its code has exchanged (#218): an account whose
+    // Apple tokens can't be revoked at deletion is one App Review would refuse. The exchange runs
+    // after every refusal above, so Apple never holds a grant for an account that wasn't opened.
+    const appleToken = provider === 'apple' ? await this.sealedAppleToken(identity, authorizationCode) : null;
+
+    return withTransaction(this.pool, async (client) => {
+      // Apple leaves the email out after the first sign-in, and a relay address could in principle
+      // already be taken. Either way the account still needs an address the column can hold, so it
+      // gets one built from its own id that can never be a real inbox.
+      const userId = randomUUID();
+      if (email) {
+        const taken = await client.query('SELECT 1 FROM users WHERE email_normalized=$1', [email]);
+        if (taken.rowCount) email = null;
+      }
+      // The same private sign-in name migration 003 gave accounts that predate usernames. It is
+      // also the display name only as a fallback: the name Apple sends on the first sign-in (the
+      // client passes it as displayName; Apple never sends it again), or Google's, comes first.
+      const username = `journeyer-${userId.slice(0, 8)}`;
+      const name = cleanOptionalText(displayName || identity.name, 80) || username;
+      const created = await client.query(
+        `INSERT INTO users (id,email_normalized,username,display_name,password_hash,email_verified_at)
+         VALUES ($1,$2,$3,$4,NULL,$5) RETURNING *`,
+        [userId, email || `${provider}-${userId}@no-email.invalid`, username, name, email && (identity.emailVerified || provider === 'apple') ? this.now() : null],
+      );
+      await this.insertIdentity(client, identity, userId, appleToken);
+      return { user: publicUser(created.rows[0]), session: issueSession ? await this.createSession(client, userId) : null };
+    });
+  }
+
+  // The second half of the #214 decision. The same ID token comes back with the password of the
+  // account that uses its email. The check is login's own: the same argon2 work whether or not
+  // there is a real hash to compare, and the same single `invalid_credentials` for every miss.
+  // For Apple, the same one-time code comes back too, and is exchanged only once the password
+  // has been accepted.
+  async linkIdentity(provider, { idToken, password, authorizationCode } = {}, { issueSession = true } = {}) {
+    const identity = await this.verifiedIdentity(provider, idToken);
+    let email = null;
+    if (identity.email && !identity.isPrivateEmail) {
+      try { email = normalizeEmail(identity.email); } catch { email = null; }
+    }
+    const found = email
+      ? await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [email])
+      : { rowCount: 0, rows: [] };
+    const candidateHash = found.rows[0]?.password_hash || await this.dummyPasswordHash;
+    const passwordMatches = await verifyPassword(candidateHash, password);
+    if (!found.rowCount || !found.rows[0].password_hash || !passwordMatches) {
+      throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+    }
+    const user = found.rows[0];
+    const known = await this.userForIdentity(this.pool, identity);
+    if (known && known.id !== user.id) throw new PlatformError(409, 'identity_in_use', 'That sign-in already belongs to another account.');
+    const appleToken = !known && provider === 'apple' ? await this.sealedAppleToken(identity, authorizationCode) : null;
+    return withTransaction(this.pool, async (client) => {
+      if (!known) await this.insertIdentity(client, identity, user.id, appleToken);
+      return { user: publicUser(user), session: issueSession ? await this.createSession(client, user.id) : null };
+    });
+  }
+
+  // Revocations still owed to Apple (#218, migration 025). Called straight after a deletion for
+  // its own rows, and on a timer for anything left (server/start.js). A failure only means another
+  // try later, with backoff; after a week of failing a row is dropped and the log says so.
+  async drainAppleRevocations({ onlyIds = null, limit = 20 } = {}) {
+    const now = this.now();
+    let rows;
+    if (onlyIds) {
+      rows = [];
+      for (const id of onlyIds) rows.push(...(await this.pool.query('SELECT * FROM apple_revocations WHERE id=$1', [id])).rows);
+    } else {
+      rows = (await this.pool.query('SELECT * FROM apple_revocations WHERE next_attempt_at <= $1 ORDER BY next_attempt_at LIMIT $2', [now, limit])).rows;
+    }
+    const tally = { revoked: 0, retrying: 0, dropped: 0 };
+    for (const row of rows) {
+      if (now.getTime() - new Date(row.created_at).getTime() > APPLE_REVOCATION_GIVE_UP_MS) {
+        process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple revocation dropped after a week of failing', lastError: row.last_error })}\n`);
+        await this.pool.query('DELETE FROM apple_revocations WHERE id=$1', [row.id]);
+        tally.dropped += 1;
+        continue;
+      }
+      let outcome = 'misconfigured';
+      if (this.apple.configured()) {
+        try {
+          outcome = await this.apple.revoke({ refreshToken: this.apple.openSecret(row.refresh_token), clientId: row.client_id });
+        } catch {
+          outcome = 'misconfigured';
+        }
+      }
+      if (outcome === 'revoked') {
+        await this.pool.query('DELETE FROM apple_revocations WHERE id=$1', [row.id]);
+        tally.revoked += 1;
+      } else {
+        const next = new Date(now.getTime() + Math.min(6 * 60 * 60 * 1000, 2 * 60 * 1000 * 2 ** row.attempts));
+        await this.pool.query('UPDATE apple_revocations SET attempts=attempts+1, next_attempt_at=$1, last_error=$2 WHERE id=$3', [next, outcome, row.id]);
+        tally.retrying += 1;
+      }
+    }
+    return tally;
+  }
+
+  // Apple's server-to-server notifications (#250). `deleteAccount` is the caller's, because
+  // deleting also has to clear billing, which the platform doesn't own. Returns false only for a
+  // payload Apple didn't sign.
+  async handleAppleNotification(payload, { deleteAccount }) {
+    const claims = await this.identity.verifiedClaims('apple', payload, this.config.appleClientIds).catch(() => null);
+    if (!claims) return false;
+    const event = appleEventFrom(claims);
+    if (!event) return true;
+    const found = await this.pool.query(
+      `SELECT i.user_id FROM user_identities i JOIN users u ON u.id=i.user_id
+       WHERE i.provider='apple' AND i.subject=$1 AND u.deleted_at IS NULL`,
+      [event.subject],
+    );
+    if (!found.rowCount) return true;
+    const userId = found.rows[0].user_id;
+    const signOut = async (client) => {
+      await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
+    };
+
+    if (event.type === 'consent-revoked') {
+      // They stopped using their Apple ID with Together Ledger. Apple has voided the token already;
+      // Apple's guidance is to treat it as signing out. The account stays.
+      await withTransaction(this.pool, async (client) => {
+        await client.query(`UPDATE user_identities SET apple_client_id=NULL, apple_refresh_token=NULL WHERE provider='apple' AND subject=$1`, [event.subject]);
+        await signOut(client);
+      });
+    } else if (event.type === 'account-deleted') {
+      const others = await this.pool.query(
+        `SELECT (SELECT count(*) FROM user_identities WHERE user_id=$1 AND NOT (provider='apple' AND subject=$2))
+              + (SELECT count(*) FROM users WHERE id=$1 AND password_hash IS NOT NULL) AS n`,
+        [userId, event.subject],
+      );
+      if (Number(others.rows[0].n) === 0) {
+        // Apple was the only way in, so the account is deleted exactly as Delete account would
+        // delete it, through the same function and the same billing check (owner, Sep 30, 2026).
+        // That includes refusing: while the person still owns a journey someone else is in, or has
+        // billing to settle, Delete account asks them to hand the journey over first, and so does
+        // this. Nothing is changed, and the log says why, for the owner to follow up by hand.
+        try {
+          await deleteAccount(userId);
+        } catch (error) {
+          // Remembered on the identity, not only in the log, because the log goes with the
+          // container at the next release. The account id is a random UUID, nothing personal.
+          await this.pool.query(
+            `UPDATE user_identities SET apple_account_deleted_at=COALESCE(apple_account_deleted_at, $1)
+             WHERE provider='apple' AND subject=$2`,
+            [this.now(), event.subject],
+          );
+          process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple account-deleted: deletion refused, as Delete account would refuse it', code: error?.code || 'error', userId, followUp: 'node server/finish-apple-account-deletion.js' })}\n`);
+        }
+      } else {
+        // There is still a password or a Google identity: the Apple identity goes, the account
+        // stays, and its sessions end so nothing signed in through Apple lingers.
+        await withTransaction(this.pool, async (client) => {
+          await client.query(`DELETE FROM user_identities WHERE provider='apple' AND subject=$1`, [event.subject]);
+          await signOut(client);
+        });
+      }
+    }
+    // email-disabled and email-enabled: a Hide My Email relay stopped or restarted forwarding.
+    // Apple itself drops mail to a disabled relay, and nothing Together Ledger sends is lost that
+    // the person could act on, so there is nothing to change here.
+    return true;
+  }
+
   async session(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
@@ -520,7 +792,9 @@ export class PlatformService {
     let normalizedEmail;
     try { normalizedEmail = normalizeEmail(email); } catch { return; }
     const user = await this.pool.query('SELECT * FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', [normalizedEmail]);
-    if (!user.rowCount) return;
+    // An account opened with Google or Apple has no password to recover, and adding one is out of
+    // scope for now (#213). It answers exactly as an unknown address does.
+    if (!user.rowCount || !user.rows[0].password_hash) return;
     const token = opaqueToken();
     await withTransaction(this.pool, async (client) => {
       await client.query(`UPDATE account_tokens SET consumed_at=$1 WHERE user_id=$2 AND purpose='password_recovery' AND consumed_at IS NULL`, [this.now(), user.rows[0].id]);
@@ -1309,10 +1583,43 @@ export class PlatformService {
     }
   }
 
+  // The name journeyers see (#253). It is how people in a journey recognise each other, so a change
+  // is written into every journey the person is in, in the product's words: nobody can quietly
+  // take another journeyer's name. The private username never changes here.
+  async changeDisplayName(userId, input) {
+    const displayName = cleanText(input?.displayName, 'Your name', 80);
+    return withTransaction(this.pool, async (client) => {
+      const current = await client.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [userId]);
+      if (!current.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+      const before = current.rows[0].display_name;
+      if (before === displayName) return publicUser(current.rows[0]);
+      const updated = await client.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [displayName, userId]);
+      const journeys = await client.query('SELECT journey_id FROM journey_members WHERE user_id=$1 ORDER BY journey_id', [userId]);
+      for (const { journey_id: journeyId } of journeys.rows) {
+        await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_renamed', entityType: 'membership', entityId: userId, summary: `Changed their name from ${before} to ${displayName}`, before: { displayName: before }, after: { displayName } });
+      }
+      return publicUser(updated.rows[0]);
+    });
+  }
+
+  // An account with a password confirms with it. One opened with Google or Apple has none to
+  // give, so the typed DELETE confirmation the route already requires is the whole of it (#214),
+  // and deleting stays within three taps.
   async deleteAccount(userId, password) {
     const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
-    if (!user.rowCount || !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
-    await withTransaction(this.pool, async (client) => {
+    if (!user.rowCount) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    if (user.rows[0].password_hash && !await verifyPassword(user.rows[0].password_hash, password)) throw new PlatformError(401, 'invalid_credentials', 'Password confirmation failed.');
+    await this.eraseAccount(userId);
+  }
+
+  // Everything account deletion does once the password is confirmed. It stands apart so a database
+  // restored from backup can have the deletions made after that backup applied again before it
+  // serves anyone (server/reapply-account-deletions.js, docs/OPERATIONS.md). Returns false when the
+  // account was already deleted, so re-applying the same list twice is harmless.
+  async eraseAccount(userId) {
+    const user = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    if (!user.rowCount) return false;
+    const revocationIds = await withTransaction(this.pool, async (client) => {
       const memberships = await client.query('SELECT jm.*,j.owner_user_id FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.user_id=$1', [userId]);
       for (const membership of memberships.rows) {
         if (membership.owner_user_id !== userId) continue;
@@ -1346,12 +1653,42 @@ export class PlatformService {
       await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM account_tokens WHERE user_id=$1', [userId]);
+      // Apple's tokens are revoked (#218), but never inside this transaction: a call to Apple must
+      // not be able to hold up or undo a deletion. Each token moves, still sealed, into the queue in
+      // the same transaction that removes the identity, so it is either queued or nothing happened.
+      const appleTokens = await client.query(
+        `SELECT apple_client_id, apple_refresh_token FROM user_identities
+         WHERE user_id=$1 AND provider='apple' AND apple_refresh_token IS NOT NULL AND apple_client_id IS NOT NULL`,
+        [userId],
+      );
+      const queued = [];
+      for (const token of appleTokens.rows) {
+        const id = randomUUID();
+        queued.push(id);
+        await client.query(
+          'INSERT INTO apple_revocations (id,client_id,refresh_token,created_at,next_attempt_at) VALUES ($1,$2,$3,$4,$4)',
+          [id, token.apple_client_id, token.apple_refresh_token, this.now()],
+        );
+      }
+      await client.query('DELETE FROM user_identities WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM invitations WHERE invited_by_user_id=$1', [userId]);
       await client.query('UPDATE invitations SET revoked_at=$1 WHERE email_normalized=$2 AND accepted_at IS NULL AND revoked_at IS NULL', [this.now(), user.rows[0].email_normalized]);
       await client.query(
         'UPDATE users SET email_normalized=$1,username=$2,display_name=$3,password_hash=$4,deleted_at=$5 WHERE id=$6',
         [`deleted-${userId}@invalid.local`, `deleted-${userId.slice(0, 8)}`, 'Deleted account', 'deleted', this.now(), userId],
       );
+      return queued;
     });
+    // The account id, never the email. Written here rather than by one route, so a deletion
+    // Apple asked for is found too: this line is what lets a restore from backup re-apply it
+    // (docs/OPERATIONS.md, "Re-applying deletions after a restore").
+    process.stderr.write(`${JSON.stringify({ level: 'info', message: 'account deleted', deletedAccountId: userId })}\n`);
+    // The deletion has committed. A failure from here on only leaves the rows for the retry timer.
+    if (revocationIds.length) {
+      await this.drainAppleRevocations({ onlyIds: revocationIds }).catch((error) => {
+        process.stderr.write(`${JSON.stringify({ level: 'error', message: 'apple revocation after deletion failed; it will be retried', errorName: error?.name || 'Error' })}\n`);
+      });
+    }
+    return true;
   }
 }

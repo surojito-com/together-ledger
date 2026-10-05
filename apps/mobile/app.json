@@ -23,10 +23,18 @@
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "./plugins/with-scene-life-cycle",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "owner": "together-ledger-digital-llc-company",
+    "extra": {
+      "eas": {
+        "projectId": "19a46534-9d76-4b26-b2e2-77fb3925a791"
+      }
     }
   }
 }

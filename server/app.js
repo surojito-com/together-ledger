@@ -55,7 +55,7 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   ].filter(Boolean));
 
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message } });
+    if (error instanceof PlatformError) return reply.code(error.status).send({ error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
     if (error.validation) return reply.code(400).send({ error: { code: 'invalid_input', message: 'The request is not valid.' } });
     if (error.statusCode === 429) return reply.code(429).send({ error: { code: 'rate_limit_exceeded', message: 'Too many requests. Wait and try again.' } });
     request.log.error({ err: { name: error.name, message: error.message } }, 'request failed');
@@ -138,8 +138,12 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(201).send({ data: { user: result.user, csrfToken: result.session.csrfToken, verificationSent: result.verificationSent } });
   });
 
+  // The single-use token in the body is the credential here, and nothing ambient is spent or
+  // issued: no cookie is read and none is set. So the origin check guards nothing for a phone,
+  // which has no origin to send, and it is skipped for a client that says it is the app, as
+  // signing in does. A browser still has to be ours (TL-M-05, #180).
   app.post('/api/v1/auth/verify-email', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     return { data: { user: await platform.verifyEmail(request.body?.token) } };
   });
 
@@ -159,6 +163,51 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
     setSession(reply, result.session);
     return { data: { user: result.user, csrfToken: result.session.csrfToken } };
+  });
+
+  // Google and Apple (#214). Like signing in with a password, these are places a credential is
+  // born, so a phone's claim to want a token is honoured and a browser must be ours. The ID token
+  // in the body is the credential; the reply is the same cookie + CSRF pair, or token pair, that
+  // a password login gives, so nothing downstream can tell how someone signed in.
+  async function socialReply(request, reply, signIn) {
+    const wantsToken = asksForToken(request);
+    if (!wantsToken) requireOrigin(request);
+    const result = await signIn({ issueSession: !wantsToken });
+    if (wantsToken) return { data: { user: result.user, ...await platform.issueTokens(result.user.id) } };
+    setSession(reply, result.session);
+    return { data: { user: result.user, csrfToken: result.session.csrfToken } };
+  }
+
+  for (const provider of ['google', 'apple']) {
+    app.post(`/api/v1/auth/${provider}`, { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => (
+      socialReply(request, reply, (options) => platform.socialSignIn(provider, request.body || {}, options))
+    ));
+  }
+
+  // The answer to `link_required`: the same ID token, with the password of the account that
+  // already uses its email. It shares login's rate limit, since it is a password check too.
+  app.post('/api/v1/auth/link', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    const provider = request.body?.provider;
+    if (provider !== 'google' && provider !== 'apple') throw new PlatformError(400, 'invalid_input', 'Choose Google or Apple.');
+    return socialReply(request, reply, (options) => platform.linkIdentity(provider, request.body || {}, options));
+  });
+
+  // Apple's server-to-server notifications (#250), set on the com.togetherledger.ledger App ID as
+  // https://api.together-ledger.com/api/v1/auth/apple/notifications. Apple's servers send them, so
+  // there is no origin, cookie or token to check: the signed payload is the credential, verified
+  // against Apple's keys. An account deleted this way goes through the same billing check as
+  // Delete account.
+  app.post('/api/v1/auth/apple/notifications', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const payload = request.body?.payload;
+    if (typeof payload !== 'string') throw new PlatformError(400, 'invalid_input', 'The request is not valid.');
+    const accepted = await platform.handleAppleNotification(payload, {
+      deleteAccount: async (userId) => {
+        await billing.assertAccountDeletable(userId);
+        await platform.deleteAccount(userId, null);
+      },
+    });
+    if (!accepted) throw new PlatformError(400, 'invalid_token', 'The notification could not be verified.');
+    return reply.code(200).send({ data: { accepted: true } });
   });
 
   // Rotation, not renewal: the refresh token presented here is spent, and the reply carries a
@@ -201,21 +250,33 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(200).send(result);
   });
 
+  // Someone who has forgotten their password has no token yet, so a phone asking for a recovery
+  // link is one of the places a credential is still to come, like registering. The link it sends
+  // goes to the account origin, never to an address the caller chose.
   app.post('/api/v1/recovery/request', { config: { rateLimit: { max: 5, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    await platform.requestRecovery(request.body?.email, accountOriginFor(request));
+    await platform.requestRecovery(request.body?.email, accountOriginFor(request, { issuingToken: asksForToken(request) }));
     return reply.code(202).send({ data: { accepted: true } });
   });
 
+  // As with verifying an email, the recovery token in the body is the credential, and a new
+  // password revokes every session and token the account holds, phones included.
   app.post('/api/v1/recovery/confirm', { config: { rateLimit: { max: 10, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    requireOrigin(request);
+    if (!asksForToken(request)) requireOrigin(request);
     await platform.confirmRecovery(request.body || {});
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return { data: { passwordChanged: true } };
   });
 
+  // Only ever the signed-in person's own name: nothing in the request says whose it is. Limited,
+  // because each change is written into every journey the person is in.
+  app.patch('/api/v1/account', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => ({
+    data: { user: await platform.changeDisplayName(request.auth.userId, request.body || {}) },
+  }));
+
   app.delete('/api/v1/account', { preHandler: protectMutation }, async (request, reply) => {
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
+    // deleteAccount logs the `account deleted` line a restore from backup relies on.
     await platform.deleteAccount(request.auth.userId, request.body?.password);
     reply.clearCookie(SESSION_COOKIE, cookieOptions());
     return reply.code(204).send();

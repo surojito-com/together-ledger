@@ -11,10 +11,13 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@expo-google-fonts/gelasio": "0.4.1",
     "@expo/metro-runtime": "57.0.16",
+    "@react-native-community/datetimepicker": "9.1.0",
     "expo": "57.0.24",
     "expo-constants": "57.0.19",
     "expo-dev-client": "57.0.19",
+    "expo-font": "57.0.3",
     "expo-linking": "57.0.10",
     "expo-router": "57.0.22",
     "expo-secure-store": "57.0.4",
