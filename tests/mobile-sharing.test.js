@@ -266,3 +266,10 @@ test('a waiting answer is counted the same on the phone as on the web', () => {
   assert.doesNotMatch(web, /showToast\([^)]*to answer/);
   assert.doesNotMatch(web, /showStatus\([^)]*to answer/);
 });
+
+test('a full journey says where room comes from on the phone, with no price and nowhere to buy it (#268)', () => {
+  assert.match(screens.sharing, /\{canPropose \? \([\s\S]*?\) : <Body>\{ROOM_IS_THE_JOURNEYS\}<\/Body>\}/, 'shown in place of the proposal form, only when there is no room');
+  assert.match(view.ROOM_IS_THE_JOURNEYS, /belongs to the journey, so it is the same on every device/);
+  assert.doesNotMatch(view.ROOM_IS_THE_JOURNEYS, /\$|\d|month|price|pay|buy|purchase|upgrade|unlock|web|site|browser|seat|slot|licen[cs]e/i);
+  assert.ok(web.includes("'There is no open place right now.'"), 'the web\'s own words are unchanged');
+});

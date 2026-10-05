@@ -1,12 +1,26 @@
 /**
  * What the phone says about accounts, in the web's words (src/app.js). The copy is careful on
  * purpose, so it is carried over, not rewritten. Server errors already carry their own message;
- * accountMessage() shows it, exactly as the web does.
+ * accountMessage() shows it, exactly as the web does, with one exception below.
  */
 export const ACCOUNT_FALLBACK_MESSAGE = 'The account service could not complete that request.';
 
+/**
+ * The one place the phone does not use the server's words. When a moment has no room for another
+ * place or photo, the web's message points at a monthly add-on paid on the web. The app must never
+ * point to a web payment (#268; Apple 3.1.1 and 3.1.3). Until it can take a store purchase itself
+ * (TL-P-05 onward, #267), it says only what stays true: room belongs to the journey, the same on
+ * every device. When store purchase arrives, this is where it is offered.
+ */
+export const NO_ROOM_ADDED_HERE: Record<string, string> = {
+  location_payment_required: 'This moment has no room for another place. Room belongs to the journey, and is the same on every device. Remove a place to save the moment.',
+  image_payment_required: 'This moment has no room for another photo. Room belongs to the journey, and is the same on every device.',
+  not_from_the_app: 'That cannot be done from the app.',
+};
+
 export function accountMessage(error: unknown): string {
   if (error && typeof error === 'object' && 'code' in error && 'message' in error && typeof error.message === 'string') {
+    if (typeof error.code === 'string' && Object.hasOwn(NO_ROOM_ADDED_HERE, error.code)) return NO_ROOM_ADDED_HERE[error.code];
     return error.message;
   }
   return ACCOUNT_FALLBACK_MESSAGE;

@@ -80,6 +80,8 @@ Stripe billing is disabled unless the server has an explicit, mode-matched confi
 | POST | `/journeys/:journeyId/billing/portal-sessions` | For the verified journey owner with the mapped Customer and non-terminal journey subscription, create a Stripe-hosted Portal Session. The server first verifies that the allow-listed configuration permits invoice history, payment-method updates, and cancel-at-renewal only. |
 | POST | `/billing/webhooks/stripe` | Verify Stripe's signature over the raw body, reject the wrong environment, and idempotently project supported events into billing records and entitlements. This route uses Stripe authentication rather than a browser session. |
 
+Every route that opens Stripe (journey Checkout, the Portal, and the image and place Checkouts under `/moments/:momentId/`) refuses the phone app's credential with `403 not_from_the_app`, before any Stripe session is made. The app reads where capacity stands from `GET /journeys/:journeyId/billing` and never starts a web purchase; phones pay through Apple and Google instead (#267, #268). A browser session is unaffected.
+
 The Checkout success redirect never grants access. Verified provider events update the entitlement ledger. See [STRIPE.md](STRIPE.md) for setup, event coverage, and remaining release boundaries.
 
 Account deletion returns `409 billing_subscription_active` while the person pays for, or owns a journey with, a non-terminal web subscription. The billing relationship must be resolved before deletion; the service never silently leaves a recurring charge behind. Portal cancellation takes effect at renewal and does not remove an existing person, shared history, or a valid invitation reservation.
