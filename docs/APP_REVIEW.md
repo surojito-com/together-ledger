@@ -78,18 +78,29 @@ then does the submission count as checked.
 
 ## Paying, for a reviewer
 
-The phones launch with no purchase screen (#203, option A, decided 1 October 2026). Later they will take payment
-through Apple and Google, never Stripe (#267). Until then the app shows where a journey's capacity stands, read
-only, with no price and no link to pay elsewhere (#268). The sample journey has two people, which every journey
-includes, so it holds no paid capacity and there is no sandbox purchase to make.
+The app is free to download, and **the first version offers in-app purchase**, through the App Store and Google
+Play. Stripe is the web's alone and never appears in the app (#267, #268). Both stores test purchases directly:
+Apple's reviewers buy with a sandbox account, Google's with a licence-tester account. Both press Restore
+Purchases (#275). So the sample journey has to let a reviewer reach every purchase the app offers, and see what
+paid capacity looks like once it is held:
 
-This holds only while web billing is not live. Apple 3.1.3(b) lets the app honour capacity bought on the web only
-if the same capacity can also be bought in the app. That is why in-app purchase has to ship before web billing
-does (#267).
+- **Another person.** Sam owns the sample journey, so Sam can reach the purchase for room for another person.
+- **Another photo or another place on a moment.** These come one moment at a time, so the sample moments are where they are offered.
+- **Paid capacity already held.** The entitlement ledger accepts a `promotion` source as well as `apple`, `google` and `stripe` (`008_stripe_web_billing.sql`). So the sample journey can hold paid capacity honestly, granted by us rather than through a faked store receipt, and the paid screens have something to show before a reviewer buys anything. How many people a journey has room for already counts an entitlement from any source (`capacityFor()` in `server/platform.js`). The billing panel and Stripe reconciliation have not yet been checked against a `promotion` grant; do that when it is built.
 
-When in-app purchase arrives (TL-P-05 onward), this section, the reviewer notes below and the sample journey all
-change with it. Reviewers test the purchase and Restore Purchases paths (#275), so the sample journey will need a
-way to show both, through a sandbox account.
+**Not built yet, and it blocks the first submission.** The phone has no store purchase today. It shows capacity
+read only, because the work that adds it (TL-P-02 to TL-P-08 under #267, and the tier decision in #203) has not
+landed. When it does, this script grows with it:
+
+1. It grants the sample journey some `promotion` capacity, so a reviewer sees a paid state without buying.
+2. It leaves room for a sandbox purchase to succeed, so a reviewer can also buy and restore.
+
+What is granted, and how much, is decided then, against the products as they are created in both consoles (TL-P-04).
+
+Two store rules shape this:
+
+- **Apple 3.1.3(b).** The app may honour capacity bought on the web only if the same capacity can also be bought in the app. That is why store purchase ships before web billing goes live.
+- **Restore Purchases.** It must be easy to find. A restore that finds a purchase tied to a different Together Ledger account refuses and explains, rather than moving capacity (#275).
 
 ## Notes for the reviewer
 
@@ -105,4 +116,6 @@ Paste this into the review notes field of each store:
 > Sam's private moment will not be there. Journey settings shows who is in the journey and how someone new is
 > added: everyone already in it has to agree first. History and conversations holds the journey's record.
 >
-> This version contains no purchase, subscription or payment link. Capacity is shown read only.
+> *In-app purchases (to be written once the products exist, TL-P-04):* what each one adds (room for another
+> person, another photo, another place), that it belongs to the journey and works on every device, where to
+> find each purchase starting from Sam's account, and where Restore Purchases is.
