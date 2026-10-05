@@ -362,14 +362,16 @@ function renderAccountState() {
     const memberActions = (member) => trip.role === 'owner' && member.id !== accountUser.id
       ? `<div class="journey-member-actions"><button class="button quiet" type="button" data-transfer-owner="${escapeHtml(member.id)}" data-member-name="${escapeHtml(member.displayName)}">Make owner</button><button class="button danger" type="button" data-remove-member="${escapeHtml(member.id)}" data-member-name="${escapeHtml(member.displayName)}">Remove</button></div>`
       : '';
-    $('#member-list').innerHTML = members.map((member) => {
+    const memberRow = (member) => {
       const createdJourney = member.id === trip.createdByUserId;
       const timestamp = createdJourney ? trip.createdAt : member.joinedAt;
       const description = createdJourney ? `Created by ${escapeHtml(member.displayName)}` : `${escapeHtml(member.displayName)} joined the journey`;
       const timing = createdJourney ? 'Created' : 'Joined';
       const role = member.role === 'owner' ? 'Owner' : createdJourney ? 'Creator' : 'Journeyer';
       return `<div class="journey-record-row"><div><strong>${description}</strong><small>${timing} <time datetime="${escapeHtml(timestamp)}">${escapeHtml(dateTimeLabel(timestamp))}</time></small>${memberActions(member)}</div><span class="journey-role">${role}${member.id === accountUser.id ? ' · You' : ''}</span></div>`;
-    }).join('') || emptyState('No one is listed yet', 'The people in this journey appear here once the account service answers.', { compact: true });
+    };
+    $('#member-list').innerHTML = memberListMarkup(members, memberRow)
+      || emptyState('No one is listed yet', 'The people in this journey appear here once the account service answers.', { compact: true });
     const proposals = trip.inviteProposalRecords || [];
     $('#invite-proposals').hidden = !proposals.length;
     $('#invite-proposal-list').innerHTML = proposals.map((proposal) => inviteProposalRow(proposal, trip)).join('');
@@ -398,6 +400,25 @@ function dateTimeLabel(value) {
   const date = new Date(value);
   if (!value || Number.isNaN(date.getTime())) return 'Time not recorded';
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+// A journey can hold a hundred and one people. Every one of them is a named row, deliberately —
+// the visual-token idea is parked in #155 — but a hundred and one named rows is about twenty
+// screens of list, and everything below membership was being pushed under it.
+//
+// So a small journey reads exactly as it did, and a large one keeps in view the two rows that
+// answer the questions actually being asked of this list: who holds this journey, and where do I
+// stand in it. The rest opens when somebody wants it, which is also when the removal and
+// ownership controls inside it are wanted.
+const MEMBERS_SHOWN_BEFORE_FOLDING = 8;
+
+function memberListMarkup(members, memberRow) {
+  if (members.length <= MEMBERS_SHOWN_BEFORE_FOLDING) return members.map(memberRow).join('');
+  const inView = members.filter((member) => member.role === 'owner' || member.id === accountUser?.id);
+  const folded = members.filter((member) => !inView.includes(member));
+  if (!folded.length) return members.map(memberRow).join('');
+  const people = folded.length === 1 ? 'person' : 'people';
+  return `${inView.map(memberRow).join('')}<details class="member-overflow"><summary>Show the other ${folded.length} ${people}</summary>${folded.map(memberRow).join('')}</details>`;
 }
 
 // The times on both sides of a decision are kept in the record: when somebody was asked, and

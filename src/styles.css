@@ -733,6 +733,16 @@ footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
 
 /* The record of who was asked and what they decided folds away to keep the journey screen calm.
    Folding it away is a choice about reading, never about what is kept. */
+/* A membership folded away is still reachable, and a summary is something people press, so it
+   carries the minimum target and the muted role rather than a section heading's padding. The
+   neighbouring .proposal-detail block asks for --text-muted and --space-2, which this system has
+   never declared; that is left to its own change rather than widened into this one. */
+.member-overflow { margin-top: 8px; }
+.member-overflow > summary { align-items: center; color: var(--muted); display: flex; font-size: 14px; font-weight: 800; justify-content: start; min-height: 44px; padding: 0; }
+.member-overflow > summary::after { content: ' +'; }
+.member-overflow[open] > summary::after { content: ' \2212'; }
+.member-overflow[open] > summary { margin-bottom: 8px; }
+
 .proposal-detail {
   margin-top: var(--space-2, 0.5rem);
 }
