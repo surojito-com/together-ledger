@@ -84,12 +84,22 @@ export function findViolations() {
   const workflowsDirectory = join(root, '.github/workflows');
   for (const workflowName of readdirSync(workflowsDirectory)) {
     const workflow = readFileSync(join(workflowsDirectory, workflowName), 'utf8');
+    // Re-recording on a runner would swap the reviewed baseline for whatever that machine draws.
+    if (workflow.includes('--update-snapshots')) {
+      violations.push(`${workflowName} re-records the visual snapshots; they are reviewed on one machine and compared, never regenerated in CI`);
+    }
     for (const pagesDeployAction of ['actions/configure-pages@', 'actions/deploy-pages@', 'actions/upload-pages-artifact@']) {
       if (workflow.includes(pagesDeployAction)) {
         violations.push(`${workflowName} deploys to GitHub Pages, which no longer serves any Together Ledger address`);
       }
     }
   }
+  // The browser gate runs in CI, and runs there without comparing images it cannot match (#315).
+  const ciWorkflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
+  if (!ciWorkflow.includes('playwright test --ignore-snapshots')) {
+    violations.push('ci.yml must run the browser suite as `playwright test --ignore-snapshots`; the committed images only match the machine that recorded them');
+  }
+
   const workerWorkflow = readFileSync(join(root, '.github/workflows/app-worker.yml'), 'utf8');
   for (const requiredWorkerDeliveryStep of [
     'workflow_run:',
