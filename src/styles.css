@@ -731,28 +731,16 @@ footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
   .moment-theme-options label:has(input:checked) { outline: 2px solid Highlight; }
 }
 
-/* The record of who was asked and what they decided folds away to keep the journey screen calm.
-   Folding it away is a choice about reading, never about what is kept. */
-/* A membership folded away is still reachable, and a summary is something people press, so it
-   carries the minimum target and the muted role rather than a section heading's padding. The
-   neighbouring .proposal-detail block asks for --text-muted and --space-2, which this system has
-   never declared; that is left to its own change rather than widened into this one. */
-.member-overflow { margin-top: 8px; }
-.member-overflow > summary { align-items: center; color: var(--muted); display: flex; font-size: 14px; font-weight: 800; justify-content: start; min-height: 44px; padding: 0; }
-.member-overflow > summary::after { content: ' +'; }
-.member-overflow[open] > summary::after { content: ' \2212'; }
-.member-overflow[open] > summary { margin-bottom: 8px; }
+/* A record of who was asked and what they decided, and a membership too long to sit open, are the
+   same control: something folded away to keep the screen calm, never a choice about what is kept.
+   One rule, so they cannot be right in one place and wrong in the other.
 
-.proposal-detail {
-  margin-top: var(--space-2, 0.5rem);
-}
-
-.proposal-detail > summary {
-  cursor: pointer;
-  color: var(--text-muted, inherit);
-  font-size: 0.875rem;
-}
-
-.proposal-detail[open] > summary {
-  margin-bottom: var(--space-2, 0.5rem);
-}
+   The proposal half used to ask for --text-muted and --space-2, which this system has never
+   declared. The fallbacks carried it, so the summary written to recede inherited full ink instead,
+   and kept summary's own 25px 28px — a section heading's padding on a line of small print. A
+   summary is pressed, so it also takes the minimum target. */
+.proposal-detail, .member-overflow { margin-top: 8px; }
+.proposal-detail > summary, .member-overflow > summary { align-items: center; color: var(--muted); display: flex; font-size: 14px; font-weight: 800; justify-content: start; min-height: 44px; padding: 0; }
+.proposal-detail > summary::after, .member-overflow > summary::after { content: ' +'; }
+.proposal-detail[open] > summary::after, .member-overflow[open] > summary::after { content: ' \2212'; }
+.proposal-detail[open] > summary, .member-overflow[open] > summary { margin-bottom: 8px; }

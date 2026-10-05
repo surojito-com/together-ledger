@@ -156,17 +156,35 @@ test('a journey at its ceiling stays readable, and a small one is untouched', as
 
 // The fold is a control, so it is held to the same floor as every other one: the muted role so it
 // recedes behind the names it hides, and a pressable target rather than a line of text.
-test('a folded record reads as a control in this system', async ({ page }) => {
+// Both folds are the same control and are styled by one rule. The proposal record used to miss it:
+// it asked for --text-muted and --space-2, which this system never declared, so it inherited full
+// ink and a section heading's 25px 28px padding — 72px tall, and not receding at all (#306).
+test('a folded record reads as a control in this system, wherever it is folded', async ({ page }) => {
   await openJourneySettings(page, 101);
-  const summary = await page.evaluate(() => {
+  const measured = await page.evaluate(() => {
     const read = (name) => { const probe = document.createElement('span'); probe.style.color = `var(${name})`; document.body.appendChild(probe); const value = getComputedStyle(probe).color; probe.remove(); return value; };
-    const element = document.querySelector('#member-list details.member-overflow > summary');
-    const style = getComputedStyle(element);
-    return { colour: style.color, muted: read('--muted'), ink: read('--ink'), height: Math.round(element.getBoundingClientRect().height) };
+    const grab = (selector) => {
+      const element = document.querySelector(selector);
+      const style = getComputedStyle(element);
+      return { colour: style.color, padding: style.padding, height: Math.round(element.getBoundingClientRect().height) };
+    };
+    return {
+      muted: read('--muted'),
+      ink: read('--ink'),
+      membership: grab('#member-list details.member-overflow > summary'),
+      record: grab('#invite-proposal-list details.proposal-detail > summary'),
+    };
   });
-  expect(summary.colour, 'the summary recedes').toBe(summary.muted);
-  expect(summary.colour).not.toBe(summary.ink);
-  expect(summary.height, 'a summary is something people press').toBeGreaterThanOrEqual(44);
+
+  for (const [where, summary] of [['membership', measured.membership], ['the proposal record', measured.record]]) {
+    expect(summary.colour, `${where}: the summary recedes`).toBe(measured.muted);
+    expect(summary.colour, `${where}: and is not the row's own ink`).not.toBe(measured.ink);
+    expect(summary.height, `${where}: a summary is something people press`).toBeGreaterThanOrEqual(44);
+    expect(summary.padding, `${where}: not a section heading's padding`).toBe('0px');
+  }
+
+  // One rule, so the two cannot be right in one place and wrong in the other.
+  expect(measured.record).toEqual(measured.membership);
 });
 
 // Being asked whether another person may join is a question put to this person, and it lived only
