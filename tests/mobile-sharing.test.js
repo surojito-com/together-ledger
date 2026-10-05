@@ -237,3 +237,32 @@ test('a large journey folds on the phone exactly as it folds on the web', () => 
   assert.match(screens.sharing, /splitMembers\(snapshot\.members, \{ viewerId \}\)/);
   assert.match(screens.sharing, /Show the other \$\{count\} \$\{count === 1 \? 'person' : 'people'\}/);
 });
+
+// A proposal is a question put to this person about another person, and it used to be visible
+// only inside journey sharing — two screens in on the phone. Both surfaces now carry the count on
+// the controls that already lead there, in the same words, read out of the web's own source.
+test('a waiting answer is counted the same on the phone as on the web', () => {
+  const webCount = webFunction('awaitingYourAnswer');
+  const webSuffix = webFunction('waitingSuffix');
+
+  const proposal = (viewerMayDecide) => ({ id: `p${Math.random()}`, viewerMayDecide });
+  for (const proposals of [[], [proposal(false)], [proposal(true)], [proposal(true), proposal(false), proposal(true)]]) {
+    // The web reads them off the trip, the phone off the snapshot; the answer must not differ.
+    assert.equal(view.awaitingYourAnswer({ inviteProposals: proposals }), webCount({ inviteProposalRecords: proposals }));
+  }
+  // Only what this person can still answer counts: decided and closed proposals are not chores.
+  assert.equal(view.awaitingYourAnswer({ inviteProposals: [proposal(false), proposal(false)] }), 0);
+  assert.equal(view.awaitingYourAnswer(null), 0);
+  assert.equal(view.awaitingYourAnswer({}), 0);
+
+  for (const count of [0, 1, 2, 7]) assert.equal(view.waitingSuffix(count), webSuffix(count));
+  assert.equal(view.waitingSuffix(0), '');
+  assert.equal(view.waitingSuffix(1), ' · 1 to answer');
+
+  // It is shown where people already are, rather than announced at them.
+  assert.match(web, /\$\('#settings-button'\)\.textContent = `Journey settings\$\{waitingSuffix\(awaitingYourAnswer\(trip\)\)\}`/);
+  assert.match(screens.sharing, /splitMembers/);
+  // Nothing is pushed: no toast, no status banner, no dialog raised for a waiting answer.
+  assert.doesNotMatch(web, /showToast\([^)]*to answer/);
+  assert.doesNotMatch(web, /showStatus\([^)]*to answer/);
+});

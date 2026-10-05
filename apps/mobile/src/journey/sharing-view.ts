@@ -128,6 +128,22 @@ export function memberRow(member: Member, { creatorId, createdAt, viewerId }: { 
 }
 
 /**
+ * A proposal is a question put to this person about another person, and it lived only inside
+ * journey sharing — two screens in on the phone — so somebody could be asked and never know. The
+ * count rides the controls that already lead there, so it is seen without interrupting and has
+ * nothing to dismiss. Same rule and same words as the web's awaitingYourAnswer in src/app.js.
+ */
+// Typed by what it needs rather than by the whole sharing snapshot, so the ledger's narrower
+// Snapshot can be passed without the unchecked cast the sharing screen has to make.
+export function awaitingYourAnswer(snapshot: { inviteProposals?: { viewerMayDecide?: boolean }[] } | null | undefined) {
+  return (snapshot?.inviteProposals || []).filter((proposal) => proposal.viewerMayDecide).length;
+}
+
+export function waitingSuffix(count: number) {
+  return count ? ` · ${count} to answer` : '';
+}
+
+/**
  * A journey can hold 101 people, and each is a named row by decision (#155 parks the alternative).
  * Unbounded, the ceiling buries the proposals and invitations below it — on a phone far sooner
  * than on a desktop. Above the fold size the rows that answer "who holds this journey" and "where
