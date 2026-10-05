@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '../src/auth/session';
 import { Choices } from '../src/components/choices';
+import { DateField } from '../src/components/date-field';
 import { MomentCard } from '../src/components/moment-card';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import { MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, VISIBILITY_CUES, visibilityRole, type ShownMoment } from '../src/journey/journey-view';
@@ -104,7 +105,7 @@ export default function MomentScreen() {
         <Choices label="Kind of moment" options={MOMENT_TYPES as [string, string][]} selected={draft.kind} onSelect={(value) => set({ kind: value })} />
       </Section>
       {draft.kind === 'other' ? <Field label="Name this kind of moment" value={draft.kindLabel} onChangeText={(value) => set({ kindLabel: value })} maxLength={60} placeholder="e.g. A small win" /> : null}
-      <Field label="When" hint="Year, month and day, such as 2026-09-30." value={draft.occurredOn} onChangeText={(value) => set({ occurredOn: value })} autoCorrect={false} autoCapitalize="none" maxLength={10} />
+      <DateField label="When" hint="Year, month and day, such as 2026-09-30." value={draft.occurredOn} onChange={(value) => set({ occurredOn: value })} />
       <Field label="A short name" value={draft.title} onChangeText={(value) => set({ title: value })} maxLength={120} placeholder="e.g. A quiet apology after dinner" />
       <Field label="What would you like to hold? (Optional)" value={draft.detail} onChangeText={(value) => set({ detail: value })} maxLength={1200} multiline placeholder="Use your own words. Keep it simple and kind." style={styles.detail} />
 

@@ -24,7 +24,8 @@
     },
     "plugins": [
       "expo-router",
-      "./plugins/with-scene-life-cycle"
+      "./plugins/with-scene-life-cycle",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

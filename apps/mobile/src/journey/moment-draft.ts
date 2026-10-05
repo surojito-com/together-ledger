@@ -66,6 +66,18 @@ export function draftFrom(moment: EditableMoment | null, { kind = '', now = new 
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The calendar (#248) works in UTC, so a day is a day wherever the phone is: it opens on noon
+ * UTC of the day in the field (or today), and what it picks is read back as that UTC day.
+ */
+export function calendarDate(day: string, now = new Date()) {
+  return new Date(`${realDate(day) ? day : today(now)}T12:00:00Z`);
+}
+
+export function dayFrom(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
 function realDate(value: string) {
   if (!DATE_PATTERN.test(value)) return false;
   const date = new Date(`${value}T12:00:00Z`);
