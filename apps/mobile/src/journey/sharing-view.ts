@@ -127,6 +127,23 @@ export function memberRow(member: Member, { creatorId, createdAt, viewerId }: { 
   };
 }
 
+/**
+ * A journey can hold 101 people, and each is a named row by decision (#155 parks the alternative).
+ * Unbounded, the ceiling buries the proposals and invitations below it — on a phone far sooner
+ * than on a desktop. Above the fold size the rows that answer "who holds this journey" and "where
+ * do I stand" stay in view and the rest opens on request. Same size and same rule as the web's
+ * memberListMarkup in src/app.js, so the two surfaces cannot drift apart.
+ */
+export const MEMBERS_SHOWN_BEFORE_FOLDING = 8;
+
+export function splitMembers(members: Member[], { viewerId }: { viewerId: string | null }) {
+  const whole = { inView: members, folded: [] as Member[] };
+  if (members.length <= MEMBERS_SHOWN_BEFORE_FOLDING) return whole;
+  const inView = members.filter((member) => member.role === 'owner' || member.id === viewerId);
+  const folded = members.filter((member) => !inView.includes(member));
+  return folded.length ? { inView, folded } : whole;
+}
+
 /** Only the owner hands the journey on or removes someone, and never themselves. */
 export function mayManageMember(member: Member, { journeyRole, viewerId }: { journeyRole?: string; viewerId: string | null }) {
   return journeyRole === 'owner' && member.id !== viewerId;
