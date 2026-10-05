@@ -42,7 +42,15 @@ const invitations = [
   { id: 'i4', email: 'i4@example.test', invitedByDisplayName: 'consent-owner', sentAt: '2026-09-05T09:00:00.000Z', expiresAt: '2026-09-06T09:00:00.000Z', status: 'revoked' },
 ];
 
-async function openJourneySettings(page) {
+function manyMembers(count) {
+  const list = [members[0]];
+  for (let index = 1; index < count; index += 1) {
+    list.push({ id: `member-${index}`, displayName: `journeyer-${index}`, role: 'member', joinedAt: '2026-09-07T15:00:00.000Z' });
+  }
+  return list;
+}
+
+async function openJourneySettings(page, memberCount = 3) {
   await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }),
   }));
@@ -52,8 +60,8 @@ async function openJourneySettings(page) {
   await page.route('https://api.together-ledger.com/api/v1/journeys/consent-journey/snapshot', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify({ data: {
       journey: { id: 'consent-journey', name: 'A journey held together', location: '', startDate: '', startDateStatus: 'unknown', endDate: '', endDateStatus: 'forever', budgetCents: 0, version: 1, role: 'owner', createdAt: '2026-09-07T14:00:00.000Z', updatedAt: '2026-09-08T09:00:00.000Z' },
-      members, invitations, inviteProposals: proposals, expenses: [], moments: [], concerns: [], milestones: [], events: [], eventChainValid: true,
-      capacity: { peopleHere: 3, openInvitations: 0, canInvite: true, mode: 'test-groups' },
+      members: manyMembers(memberCount), invitations, inviteProposals: proposals, expenses: [], moments: [], concerns: [], milestones: [], events: [], eventChainValid: true,
+      capacity: { peopleHere: memberCount, openInvitations: 0, canInvite: true, mode: 'test-groups' },
     } }),
   }));
   await page.goto('/');
@@ -114,4 +122,49 @@ test('the product does not lean on how a journeyer answers', async ({ page }) =>
   expect(decision.agree.color).toBe(decision.decline.color);
   expect(decision.agree.height).toBe(decision.decline.height);
   expect(decision.agree.height, 'both remain full-sized targets').toBeGreaterThanOrEqual(44);
+});
+
+// A journey can hold a hundred and one people, and every one of them is a named row by decision
+// (#155 parks the visual-token alternative). Before this, the ceiling rendered 13,679px of list
+// inside a 662px dialog, burying the proposals and invitations underneath it.
+test('a journey at its ceiling stays readable, and a small one is untouched', async ({ page }) => {
+  await openJourneySettings(page, 3);
+  const small = page.locator('#member-list');
+  await expect(small.locator('details.member-overflow'), 'a small journey folds nothing').toHaveCount(0);
+  await expect(small.locator('.journey-record-row')).toHaveCount(3);
+
+  await openJourneySettings(page, 101);
+  const list = page.locator('#member-list');
+  const fold = list.locator('details.member-overflow');
+  await expect(fold, 'the ceiling folds').toHaveCount(1);
+
+  // What stays in view answers the two questions this list is actually asked: who holds this
+  // journey, and where do I stand in it. Here those are the same person, so one row.
+  await expect(list.locator('> .journey-record-row')).toHaveCount(1);
+  await expect(list.locator('> .journey-record-row')).toContainText('Owner');
+  await expect(fold.locator('summary')).toHaveText(/Show the other 100 people/);
+  await expect(fold).not.toHaveAttribute('open', '');
+
+  // Folded, the list no longer buries what sits beneath it.
+  const folded = await list.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+  expect(folded, 'a closed ceiling is not twenty screens of list').toBeLessThan(400);
+
+  // Everyone is still there, and reachable, rather than truncated away.
+  await fold.locator('summary').click();
+  await expect(list.locator('.journey-record-row')).toHaveCount(101);
+});
+
+// The fold is a control, so it is held to the same floor as every other one: the muted role so it
+// recedes behind the names it hides, and a pressable target rather than a line of text.
+test('a folded record reads as a control in this system', async ({ page }) => {
+  await openJourneySettings(page, 101);
+  const summary = await page.evaluate(() => {
+    const read = (name) => { const probe = document.createElement('span'); probe.style.color = `var(${name})`; document.body.appendChild(probe); const value = getComputedStyle(probe).color; probe.remove(); return value; };
+    const element = document.querySelector('#member-list details.member-overflow > summary');
+    const style = getComputedStyle(element);
+    return { colour: style.color, muted: read('--muted'), ink: read('--ink'), height: Math.round(element.getBoundingClientRect().height) };
+  });
+  expect(summary.colour, 'the summary recedes').toBe(summary.muted);
+  expect(summary.colour).not.toBe(summary.ink);
+  expect(summary.height, 'a summary is something people press').toBeGreaterThanOrEqual(44);
 });
