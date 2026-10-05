@@ -115,3 +115,19 @@ test('places are typed, never taken from the phone: no location permission is as
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(Object.hasOwn(pkg.dependencies, 'expo-location'), false);
 });
+
+test('the calendar picks a day, not a moment in time: what is chosen is what is stored (#248)', async () => {
+  for (const day of ['2026-01-01', '2026-02-28', '2026-09-30', '2026-12-31', '2024-02-29']) {
+    assert.equal(draft.dayFrom(draft.calendarDate(day)), day, `${day} survives the round trip`);
+  }
+  assert.equal(draft.dayFrom(draft.calendarDate('not a date', new Date('2026-10-05T23:30:00Z'))), '2026-10-05', 'an unreadable field opens on today');
+  assert.equal(draft.dayFrom(draft.calendarDate('2026-02-30', new Date('2026-10-05T00:10:00Z'))), '2026-10-05', 'so does a day that does not exist');
+  const field = await read('src/components/date-field.tsx');
+  assert.equal((field.match(/timeZoneName(=|: )['"]UTC['"]/g) || []).length, 2, 'both platforms\' calendars work in UTC, so the phone\'s own zone never shifts the day');
+  assert.match(field, /mode(=|: )['"]date['"]/);
+  assert.match(field, /<Field label=\{label\}[^>]*onChangeText=\{onChange\}/, 'typing the day still works');
+  assert.match(await read('app/moment.tsx'), /<DateField label="When"/);
+  const app = JSON.parse(await read('app.json'));
+  assert.ok(app.expo.plugins.includes('@react-native-community/datetimepicker'));
+  assert.doesNotMatch(JSON.stringify(app), /permission/i, 'a date picker asks for no permission');
+});
