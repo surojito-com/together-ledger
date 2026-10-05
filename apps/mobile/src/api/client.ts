@@ -232,7 +232,7 @@ export function createAccountClient({ base, fetch, tokens }: {
     async setUnpaidCapacityRest(journeyId: string, input: { mode?: string; restOrder?: string[] }) {
       return request(`/journeys/${encodeURIComponent(journeyId)}/unpaid-capacity`, { method: 'PATCH', body: input, signedIn: true });
     },
-    /** Where this journey's paid capacity stands. Read only: the phone never starts a purchase (#203). */
+    /** Where this journey's paid capacity stands. The phone never starts a web purchase; it sells through the App Store and Google Play (#267). */
     async billingStatus<B>(journeyId: string) {
       return request<B>(`/journeys/${encodeURIComponent(journeyId)}/billing`, { signedIn: true });
     },

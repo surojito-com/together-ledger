@@ -318,10 +318,10 @@ export type BillingStatus = {
 };
 
 /**
- * The billing panel, read-only on the phone (#184, and the owner's payments decision of
- * 1 Oct 2026, #203 option A): it says where this journey's capacity stands, and names no price,
- * offers no purchase and links to no payment. Waiting and settled have their own tone, and
- * neither is a failure, so neither takes the destructive role.
+ * The billing panel's summary on the phone (#184): it says where this journey's capacity stands.
+ * It never names a web price or links to a web payment (#268). The phone sells capacity through
+ * the App Store and Google Play (#267), offered beside this once built. Waiting and settled have
+ * their own tone, and neither is a failure, so neither takes the destructive role.
  */
 export function billingSummary(status: BillingStatus): { tone: '' | 'settled' | 'waiting'; message: string } {
   const entitlement = status.entitlement;

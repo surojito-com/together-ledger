@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 // No build of the phone app can reach a Stripe checkout (#268). Both stores refuse an app that
 // sends people to a web page to pay for something used inside it (Apple 3.1.1 and 3.1.3), and the
-// phones launch free with no purchase screen (#267). A comment saying so would not survive the
+// phones sell through the App Store and Google Play instead (#267). A comment saying so would not survive the
 // purchase work that follows (TL-P-05 onward), so this reads everything the phone's bundle can
 // reach: every file under app/ and src/, and every file outside the app that they import, all the
 // way down. In-app purchase is not forbidden here; Stripe, a web checkout and a price are.

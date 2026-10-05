@@ -152,7 +152,7 @@ test('history is newest first, attributed, and lists only what changed, as the w
   assert.deepEqual(events[1].changes, [{ key: 'title', before: undefined, after: 't' }]);
 });
 
-test('the billing panel is read only: it names no price and offers no purchase (#203, option A)', () => {
+test('the billing summary names no web price and offers no web purchase (#268)', () => {
   const states = [
     { journey: { name: 'Ours' } },
     { journey: { name: 'Ours' }, entitlement: { state: 'active', quantity: 2 } },

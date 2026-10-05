@@ -8,9 +8,9 @@ export const ACCOUNT_FALLBACK_MESSAGE = 'The account service could not complete 
 /**
  * The one place the phone does not use the server's words. When a moment has no room for another
  * place or photo, the web's message points at a monthly add-on paid on the web. The app must never
- * point to a web payment (#268; Apple 3.1.1 and 3.1.3). Until it can take a store purchase itself
- * (TL-P-05 onward, #267), it says only what stays true: room belongs to the journey, the same on
- * every device. When store purchase arrives, this is where it is offered.
+ * point to a web payment (#268; Apple 3.1.1 and 3.1.3). The phone sells room through the App Store
+ * and Google Play (#267); until that is built (TL-P-05 onward), it says only what stays true: room
+ * belongs to the journey, the same on every device. Once built, this is where it is offered.
  */
 export const NO_ROOM_ADDED_HERE: Record<string, string> = {
   location_payment_required: 'This moment has no room for another place. Room belongs to the journey, and is the same on every device. Remove a place to save the moment.',
