@@ -13,7 +13,7 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 type ThemeProviderProps = {
-  /** A previously saved theme id, retired ids included. Saving it is TL-M-10 (#185). */
+  /** The saved theme id, already settled from a retired one (src/storage/ledger-store.ts, #185). */
   initialChoice?: string | null;
   onChoiceChange?: (themeId: string | null) => void;
   children: ReactNode;

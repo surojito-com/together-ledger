@@ -55,7 +55,7 @@ type ShellContextValue = {
 const ShellContext = createContext<ShellContextValue | null>(null);
 
 type ShellProviderProps = {
-  /** Saved by TL-M-10 (#185); until then it lasts as long as the app is open. */
+  /** Kept in the phone's own ledger, preferences.onboardingComplete, as on the web (#185). */
   initialOnboardingComplete?: boolean;
   onOnboardingComplete?: () => void;
   children: ReactNode;

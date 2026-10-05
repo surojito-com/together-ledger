@@ -1,11 +1,13 @@
 import { useFonts } from 'expo-font';
 import { router, Stack } from 'expo-router';
+import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider } from '../src/auth/session';
 import { ShellOverlays } from '../src/components/dialogs';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
-import { ShellProvider } from '../src/shell/shell-provider';
+import { ShellProvider, useShell } from '../src/shell/shell-provider';
+import { useStoredPreferences, type SaveFailure } from '../src/storage/use-stored-preferences';
 import { fontSources, targetSize, ThemeProvider, useTheme } from '../src/theme';
 
 /** Settings from the ledger's header, at the 44-point minimum like everything else. */
@@ -54,18 +56,30 @@ function ThemedStack() {
   );
 }
 
+/** A change the phone could not save is said in the status region, never as a crash. */
+function SaveFailureNotice({ failure }: { failure: SaveFailure }) {
+  const { showStatus } = useShell();
+  useEffect(() => {
+    if (failure) showStatus(failure.message, { tone: 'caution', source: 'storage' });
+  }, [failure, showStatus]);
+  return null;
+}
+
 export default function RootLayout() {
   // The serif ships inside the app (#177), so nothing is fetched at runtime.
   const [fontsLoaded] = useFonts(fontSources);
-  if (!fontsLoaded) return null;
+  // What the phone remembers (#185), read before the first screen so the saved theme is the first one drawn.
+  const { stored, failure, saveTheme, completeOnboarding } = useStoredPreferences();
+  if (!fontsLoaded || !stored) return null;
   return (
-    <ThemeProvider>
+    <ThemeProvider initialChoice={stored.theme} onChoiceChange={saveTheme}>
       <SessionProvider>
-        <ShellProvider>
+        <ShellProvider initialOnboardingComplete={stored.onboardingComplete} onOnboardingComplete={completeOnboarding}>
           <JourneyProvider>
             <ThemedStack />
           </JourneyProvider>
           <ShellOverlays />
+          <SaveFailureNotice failure={failure} />
         </ShellProvider>
       </SessionProvider>
     </ThemeProvider>
