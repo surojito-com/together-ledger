@@ -104,16 +104,22 @@ export function hueDistance(first, second) {
 
 // A var() that names a custom property nothing ever defines renders as nothing. That is how
 // `--soft-red` went unnoticed: the declaration parses, the paint silently does not happen.
+// A fallback used to be exempt outright, which is how three properties this system never declared
+// sat in the stylesheet unnoticed: --text-muted fell back to `inherit`, so a summary written to
+// recede rendered in full ink, and the intent was visible in the code and invisible on screen
+// (#306). A fallback is still allowed — the moment themes rely on it — but only behind a property
+// the system actually declares somewhere, which is what tells a deliberate fallback apart from a
+// dead name. The two cases are reported differently because they fail differently.
 export function undefinedVariables(css) {
   const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map(([, name]) => name));
   const referenced = new Map();
   for (const match of css.matchAll(/var\(\s*(--[\w-]+)\s*([,)])/g)) {
     const [, name, next] = match;
-    if (defined.has(name) || next === ',') continue;
+    if (defined.has(name)) continue;
     const line = css.slice(0, match.index).split('\n').length;
-    if (!referenced.has(name)) referenced.set(name, line);
+    if (!referenced.has(name)) referenced.set(name, { line, hasFallback: next === ',' });
   }
-  return [...referenced].map(([name, line]) => ({ name, line }));
+  return [...referenced].map(([name, { line, hasFallback }]) => ({ name, line, hasFallback }));
 }
 
 export function auditThemes({ css, themes, momentThemes }) {
@@ -218,8 +224,10 @@ export function auditThemes({ css, themes, momentThemes }) {
   }
   if (momentThemes.length !== 4) problems.push(`expected 4 approved moment themes, found ${momentThemes.length}`);
 
-  for (const { name, line } of undefinedVariables(css)) {
-    problems.push(`${name} is used at styles.css:${line} but never defined; it paints nothing`);
+  for (const { name, line, hasFallback } of undefinedVariables(css)) {
+    problems.push(hasFallback
+      ? `${name} is used at styles.css:${line} but never defined; its fallback is doing all the work, so what the rule says it wants never happens`
+      : `${name} is used at styles.css:${line} but never defined; it paints nothing`);
   }
 
   return {

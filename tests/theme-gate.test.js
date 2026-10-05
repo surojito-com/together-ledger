@@ -141,12 +141,27 @@ test('a moment theme that drifts from its named page theme is rejected', () => {
 
 test('a custom property that nothing defines is reported with its line', () => {
   const found = undefinedVariables(':root { --real: #FFF; }\n.a { color: var(--ghost); }');
-  assert.deepEqual(found, [{ name: '--ghost', line: 2 }]);
+  assert.deepEqual(found, [{ name: '--ghost', line: 2, hasFallback: false }]);
 });
 
-test('a defined property, and a fallback, are both left alone', () => {
+test('a declared property is left alone, with or without a fallback', () => {
   assert.deepEqual(undefinedVariables(':root { --real: #FFF; }\n.a { color: var(--real); }'), []);
-  assert.deepEqual(undefinedVariables('.a { color: var(--ghost, #FFF); }'), []);
+  // The moment themes depend on this shape: a declared property, with somewhere to fall back to.
+  assert.deepEqual(undefinedVariables(':root { --real: #FFF; }\n.a { color: var(--real, #000); }'), []);
+});
+
+// A fallback used to be exempt outright, which is how --text-muted and --space-2 lived in the
+// stylesheet undeclared (#306): the summary written to recede inherited full ink instead, and the
+// intent was visible in the code and invisible on screen. A fallback is only deliberate if the
+// property behind it exists.
+test('a fallback behind a property nothing declares is reported rather than excused', () => {
+  const [found, ...rest] = undefinedVariables('.a { color: var(--ghost, inherit); }');
+  assert.deepEqual(rest, []);
+  assert.equal(found.name, '--ghost');
+  assert.equal(found.hasFallback, true);
+  // And it is not confused with a property that paints nothing at all.
+  const [bare] = undefinedVariables('.a { color: var(--nowhere); }');
+  assert.equal(bare.hasFallback, false);
 });
 
 test('the dead custom properties that shipped to production would now fail the gate', () => {
