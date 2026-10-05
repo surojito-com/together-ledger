@@ -101,6 +101,8 @@ test('each account email carries both a text and an HTML part', async () => {
     assert.ok(message.text, `${message.subject} has no text part`);
     assert.ok(message.html, `${message.subject} has no HTML part`);
     assert.match(message.html, /Together Ledger<\/td>/, `${message.subject} is missing the shared header`);
+    assert.match(message.html, />Together Ledger is a private shared journey workspace for people to hold what happened and return to what matters\.<\/td>/, `${message.subject} is missing the shared footer`);
+    assert.doesNotMatch(message.html, /for two people/, `${message.subject} still says "for two people"`);
   }
 });
 
