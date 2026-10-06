@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-test.js';
 
 // Adding a person is now held among the people already here (#169). These are the surfaces that
 // decision is made on, and two of their properties are ethical rather than cosmetic: the product
@@ -63,6 +63,12 @@ async function openJourneySettings(page, memberCount = 3) {
       members: manyMembers(memberCount), invitations, inviteProposals: proposals, expenses: [], moments: [], concerns: [], milestones: [], events: [], eventChainValid: true,
       capacity: { peopleHere: memberCount, openInvitations: 0, canInvite: true, mode: 'test-groups' },
     } }),
+  }));
+  // Opening settings also asks where paid capacity stands. Answered as production does with
+  // billing switched off (DisabledBillingService.status() in server/billing.js), never left to reach
+  // production, where its failure raised the unreachable banner at a different moment on every machine.
+  await page.route('https://api.together-ledger.com/api/v1/journeys/consent-journey/billing', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ data: { enabled: false, portalEnabled: false, environment: 'test', offers: [], entitlement: null, subscription: null, invoices: [] } }),
   }));
   await page.goto('/');
   await page.getByRole('button', { name: 'Journey settings' }).click();
