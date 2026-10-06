@@ -8,7 +8,7 @@ import { MomentCard } from '../src/components/moment-card';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import { MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, VISIBILITY_CUES, visibilityRole, type ShownMoment } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
-import { addPlace, CURRENCIES, draftFrom, draftProblem, placeNote, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
+import { addPlace, CURRENCIES, draftFrom, draftProblem, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
 import { fonts, getTheme, targetSize, useTheme } from '../src/theme';
@@ -132,14 +132,15 @@ export default function MomentScreen() {
         </View>
       </Section>
 
-      <Section title="Places (Optional)" help="Add only what helps tell the story. First place included · each additional place is $1/month.">
+      {/* No web price and no web add-on here, unlike the web's form (#268). If a moment has no
+          room for another place, the save says so in the phone's own words. */}
+      <Section title="Places (Optional)" help="Add only what helps tell the story.">
         <Field label="Enter a place" value={place} onChangeText={setPlace} maxLength={120} placeholder="Enter a place in your own words" onSubmitEditing={() => addTyped()} returnKeyType="done" />
         <Button kind="quiet" label="Add place" onPress={addTyped} />
         {draft.locations.map((location, index) => (
           <View key={`${index}-${location.label}`} style={[styles.place, { borderColor: colors.border, borderRadius: theme.radius.s }]}>
             <View style={styles.placeCopy}>
               <Text style={[styles.placeLabel, { color: colors.fg }]}>{location.label}</Text>
-              <Text style={[styles.placeNote, { color: colors.muted }]}>{placeNote(index)}</Text>
             </View>
             <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${location.label}`} onPress={() => set({ locations: removePlace(draft.locations, index) })} style={[styles.remove, targetSize, { borderColor: colors.border, borderRadius: theme.radius.pill }]}>
               <Text style={[styles.removeText, { color: colors.fg }]}>Remove</Text>
@@ -228,7 +229,6 @@ const styles = StyleSheet.create({
   place: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, padding: 10 },
   placeCopy: { flex: 1, gap: 2 },
   placeLabel: { fontSize: 16, fontWeight: '700' },
-  placeNote: { fontSize: 13 },
   remove: { borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center' },
   removeText: { fontSize: 14, fontWeight: '800' },
 });
