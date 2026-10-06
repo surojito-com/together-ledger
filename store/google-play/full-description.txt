@@ -1,0 +1,34 @@
+Together Ledger is a private journal that the people in a journey keep together. Hold the moments, plans and memories you want to come back to, without the noise of a feed.
+
+Hold a moment
+Write down what happened while it's still fresh: a promise, a memory, a heart-to-heart, a boundary, a repair request, a practical matter, or a kind of moment you name yourself. Give it a date, a few words and as much detail as you want. You can edit or delete it later.
+
+Choose who sees it
+Every moment carries its visibility, shown in a shape, a word and a border:
+- Private stays with you.
+- Share later waits until you deliberately share it.
+- Shared now opens it to everyone in the journey.
+A shared moment can't be made private again, so nothing is quietly taken back.
+
+Return to it together
+The ledger shows your recent moments and what wants care. Start a return-to conversation about a moment and come back to it when you're ready. The journey keeps a history that is only ever added to: what changed, who changed it, and when.
+
+Grow when you choose
+A journey holds two people to begin with. Someone new joins only when everyone already in the journey agrees.
+
+Private by design
+- No advertising, no analytics trackers and no crash reporting. We don't sell your information.
+- The app doesn't ask for your location, contacts, camera, microphone or photos.
+- Your sign-in is kept in your phone's secure storage.
+- No scores and no feed. Money can be noted as context, never counted as a score.
+- Delete your account from inside the app at any time.
+
+Make it yours
+Choose Light, Dark, Green or Flexoki. Your theme changes only your own view.
+
+Good to know
+- You'll need a Together Ledger account. For now, a journey is started on the web at together-ledger.com, and it appears in the app once it exists.
+- Adding photos and exporting your journeys happen on the web for now.
+- Together Ledger is for adults aged 18 and over. It isn't therapy, financial advice or a substitute for professional support.
+
+Privacy policy: https://app.together-ledger.com/privacy
