@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-test.js';
 import AxeBuilder from '@axe-core/playwright';
 
 const responsiveCases = [
@@ -32,6 +32,14 @@ test('the welcome stays contained at every agreed responsive boundary', async ({
 });
 
 test('the first laptop viewport contains the complete welcome decision', async ({ page }) => {
+  // A first visit is signed out, so the session check answers as it does for a visitor. Left to
+  // reach production, its failure put the unreachable banner above the welcome and pushed the
+  // decision below the fold on some machines and not others.
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'authentication_required', message: 'Sign in to continue.' } }),
+  }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
 

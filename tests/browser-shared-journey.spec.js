@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-test.js';
 import AxeBuilder from '@axe-core/playwright';
 
 async function beginBrowserLedger(page, { closeMoment = false } = {}) {
