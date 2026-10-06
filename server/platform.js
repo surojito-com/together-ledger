@@ -1602,6 +1602,31 @@ export class PlatformService {
     });
   }
 
+  // The values a phone sends to Apple or Google when it starts a purchase, so the purchase comes
+  // back tied to this account and this journey (#269, migration 027). The same person and journey
+  // always get the same values, on any device, so asking twice is harmless and a restore on a new
+  // phone resolves to the same place. Only someone signed in, verified and in the journey is
+  // given them: a purchase that cannot be tied to anyone is worse than one that never started,
+  // because the person is charged and nothing can be honoured. Resting does not stop it; paying
+  // may be how a journey's capacity comes back.
+  async storePurchaseIdentity(userId, journeyId) {
+    return withTransaction(this.pool, async (client) => {
+      const user = await client.query('SELECT email_verified_at FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+      if (!user.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+      if (!user.rows[0].email_verified_at) throw new PlatformError(403, 'email_unverified', 'Verify your email before buying anything, so what you buy can always be found again.');
+      await this.requireMember(client, userId, journeyId, { reading: true });
+      await client.query('INSERT INTO billing_store_accounts (user_id,account_token,created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [userId, randomUUID(), this.now()]);
+      await client.query('INSERT INTO billing_store_journeys (journey_token,user_id,journey_id,created_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [randomUUID(), userId, journeyId, this.now()]);
+      const account = await client.query('SELECT account_token FROM billing_store_accounts WHERE user_id=$1', [userId]);
+      const journey = await client.query('SELECT journey_token FROM billing_store_journeys WHERE user_id=$1 AND journey_id=$2', [userId, journeyId]);
+      return {
+        appAccountToken: journey.rows[0].journey_token,
+        obfuscatedAccountId: account.rows[0].account_token,
+        obfuscatedProfileId: journey.rows[0].journey_token,
+      };
+    });
+  }
+
   // An account with a password confirms with it. One opened with Google or Apple has none to
   // give, so the typed DELETE confirmation the route already requires is the whole of it (#214),
   // and deleting stays within three taps.

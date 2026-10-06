@@ -236,6 +236,14 @@ export function createAccountClient({ base, fetch, tokens }: {
     async billingStatus<B>(journeyId: string) {
       return request<B>(`/journeys/${encodeURIComponent(journeyId)}/billing`, { signedIn: true });
     },
+    /**
+     * What Apple or Google must carry through a purchase for this journey, so it comes back tied
+     * to this account (#269). Signed in only: nothing is bought while signed out. Use it through
+     * purchaseOptions() in src/billing/store-purchase.ts, never directly.
+     */
+    async storePurchaseIdentity(journeyId: string) {
+      return request<{ appAccountToken: string; obfuscatedAccountId: string; obfuscatedProfileId: string }>(`/journeys/${encodeURIComponent(journeyId)}/billing/store-identity`, { method: 'POST', body: {}, signedIn: true });
+    },
     async createConcern(journeyId: string, concern: { title: string; detail: string; status: string }) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/concerns`, { method: 'POST', body: concern, signedIn: true });
     },
