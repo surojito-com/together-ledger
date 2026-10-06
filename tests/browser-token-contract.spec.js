@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-test.js';
 
 // The theme gate proves the token values are right. A screenshot proves the layout is right.
 // Neither proves a component reads the token that carries its meaning, and a screenshot cannot:
