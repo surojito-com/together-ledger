@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Google Play app icon, 512 × 512. Rendered to ../icon-512.png by render.mjs.
+
+  Play applies its own rounded mask and shadow, so this is a full square with
+  no corners and no shadow baked in. The mark is the knot from
+  public/favicon.svg and index.html (#knot-mark): two overlapping rounded
+  squares, same geometry, set a little smaller so Play's mask never clips it.
+
+  Colours are the knot's own, exactly as the favicon and the social card
+  draw it: #8C3A3A behind, #F3EFE6 for the knot. The owner chose these
+  original brand colours on Oct 6 over the Light theme's accent. The hex is
+  also the in-app destructive role; that rule governs interface colour, and
+  this is the brand mark.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { width: 512px; height: 512px; overflow: hidden; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#8C3A3A"/>
+  <g transform="translate(9.6 9.6) scale(.7)" fill="none" stroke="#F3EFE6" stroke-width="6.5">
+    <rect x="6.5" y="6.5" width="35" height="35" rx="10"/>
+    <rect x="22.5" y="22.5" width="35" height="35" rx="10"/>
+  </g>
+</svg>
+</body>
+</html>
