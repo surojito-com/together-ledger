@@ -64,6 +64,24 @@ async function openJourneySettings(page, memberCount = 3) {
       capacity: { peopleHere: memberCount, openInvitations: 0, canInvite: true, mode: 'test-groups' },
     } }),
   }));
+  // Loading a journey also asks for its billing state. Unanswered, that request fails and raises
+  // "Private sync is temporarily unreachable." in the status region — which made the test below
+  // assert the absence of a banner while an unrelated one was on its way. Alone it won the race;
+  // in a full run it did not.
+  await page.route('https://api.together-ledger.com/api/v1/journeys/consent-journey/billing', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: {
+      enabled: false,
+      portalEnabled: false,
+      environment: 'test',
+      journey: { id: 'consent-journey', name: 'A journey held together' },
+      offers: [],
+      entitlement: null,
+      subscription: null,
+      invoices: [],
+    } }),
+  }));
+
   await page.goto('/');
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#invite-proposal-list')).toContainText('newcomer@example.test');
