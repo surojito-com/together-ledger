@@ -10,6 +10,7 @@ import {
   dateLabel,
   dateRange,
   groupDayByCategory,
+  isValidState,
   money,
   MOMENT_TYPES,
   normalizeConcern,
@@ -140,7 +141,15 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
 
 function saveWorkingState() {
-  if (!accountUser) saveState(state);
+  if (accountUser) return;
+  try {
+    saveState(state);
+  } catch (error) {
+    // Invalid data is a bug and stays loud. A full or blocked store is said in the status
+    // region instead, and the change still shows (#185).
+    if (!isValidState(state)) throw error;
+    showStatus('This browser could not save that change. It shows for now, but may not be here the next time this page opens.', { tone: 'caution', source: 'storage' });
+  }
 }
 
 function isCloudJourney(trip = activeTrip(state)) {
