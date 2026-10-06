@@ -798,6 +798,65 @@ test('the Portal route preserves the authenticated journey boundary', async (t) 
   assert.deepEqual(received, { receivedUserId: userId, receivedJourneyId: journeyId });
 });
 
+test('a phone\'s credential never opens Stripe, and the browser\'s checkout is unchanged (#268)', async (t) => {
+  const config = loadConfig({
+    NODE_ENV: 'test',
+    PUBLIC_ORIGIN: 'http://127.0.0.1:4174',
+    SESSION_SECRET: 's'.repeat(32),
+    AUDIT_HMAC_KEY: 'a'.repeat(32),
+  });
+  const momentId = '33333333-3333-4333-8333-333333333333';
+  const opened = [];
+  const platform = {
+    async session(token) {
+      return token === 'session-token' ? { userId, csrfToken: 'csrf-token', user: { id: userId } } : null;
+    },
+    async tokenHolder(token) {
+      return token === 'phone-token' ? { id: 'access', userId, bearer: true, user: { id: userId } } : null;
+    },
+  };
+  const session = (kind) => async () => {
+    opened.push(kind);
+    return { url: 'https://checkout.stripe.com/c/pay/test', environment: 'test', journeyId };
+  };
+  const billing = {
+    createCheckoutSession: session('capacity'),
+    createPortalSession: session('portal'),
+    createImageCheckoutSession: session('image'),
+    createLocationCheckoutSession: session('place'),
+  };
+  const app = await buildApp({ platform, billing, config });
+  t.after(async () => app.close());
+  const routes = [
+    `/api/v1/journeys/${journeyId}/billing/checkout-sessions`,
+    `/api/v1/journeys/${journeyId}/billing/portal-sessions`,
+    `/api/v1/journeys/${journeyId}/moments/${momentId}/image-slots/checkout-sessions`,
+    `/api/v1/journeys/${journeyId}/moments/${momentId}/location-slots/checkout-sessions`,
+  ];
+  const requestId = '44444444-4444-4444-8444-444444444444';
+  for (const url of routes) {
+    const phone = await app.inject({ method: 'POST', url, headers: { authorization: 'Bearer phone-token', 'x-together-client': 'app' }, payload: { requestId } });
+    assert.equal(phone.statusCode, 403, `${url} ${phone.body}`);
+    assert.equal(phone.json().error.code, 'not_from_the_app');
+    assert.doesNotMatch(phone.body, /stripe\.com/);
+  }
+  assert.deepEqual(opened, [], 'no Stripe session was created for the phone');
+
+  const unknown = await app.inject({ method: 'POST', url: routes[0], headers: { authorization: 'Bearer not-a-token' }, payload: { requestId } });
+  assert.equal(unknown.statusCode, 401, 'a bad token is still a sign-in problem, not a refusal that confirms anything');
+
+  for (const url of routes) {
+    const browser = await app.inject({
+      method: 'POST',
+      url,
+      headers: { origin: 'http://127.0.0.1:4174', cookie: 'tl_session=session-token', 'x-together-csrf': 'csrf-token' },
+      payload: { requestId },
+    });
+    assert.equal(browser.statusCode, 201, `${url} ${browser.body}`);
+  }
+  assert.deepEqual(opened, ['capacity', 'portal', 'image', 'place'], 'the browser reaches every Stripe route exactly as before');
+});
+
 test('the official Stripe SDK verifies the exact raw payload signature', async (t) => {
   const pool = await billingPool();
   t.after(async () => pool.end());
