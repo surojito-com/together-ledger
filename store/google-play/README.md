@@ -3,16 +3,17 @@
 Draft of the Play Console **Main store listing** for Together Ledger
 (`com.togetherledger.ledger`), the "Store assets" part of Step 3 in the Google
 Play guide. The wording follows `CLAUDE.md` ("Language", "Design system") and
-`docs/PRODUCT_PRINCIPLES.md`, and describes the **phone app** as it is on
-`main`, not the web app.
+`docs/PRODUCT_PRINCIPLES.md`. It describes **Together Ledger as one
+product**, web and phone together, as the owner asked on Oct 6. The web has
+the most features today, and they are being brought to the phone.
 
 | Play Console field | File | Limit | Now |
 |---|---|---|---|
 | App name | `title.txt` | 30 | 15 |
-| Short description | `short-description.txt` | 80 | 66 |
-| Full description | `full-description.txt` | 4,000 | 2,052 |
+| Short description | `short-description.txt` | 80 | 52 |
+| Full description | `full-description.txt` | 4,000 | 2,010 |
 | App icon (512 × 512 PNG, opaque) | `icon-512.png` | 1 MB | 11 KB |
-| Feature graphic (1024 × 500 PNG) | `feature-graphic-1024x500.png` | 15 MB | 52 KB |
+| Feature graphic (1024 × 500 PNG) | `feature-graphic-1024x500.png` | 15 MB | 53 KB |
 
 Store settings to enter alongside them:
 
@@ -30,39 +31,34 @@ node store/google-play/check-listing.mjs
 
 It checks the three lengths, emoji, superlatives and other brands' names, the
 capacity words `CLAUDE.md` rules out (seats, licenses, slots, "removed"),
-claims the phone can't back yet, and that the lines keeping the listing
-honest are still there.
+claims nothing in Together Ledger backs yet, and that "A journey of two is
+free" and the agreement rule for adding people are still there.
 
 ## What every claim rests on
 
 | Claim | Where it's true |
 |---|---|
-| Kinds of moment, a date, a name, detail, your own kind; edit or delete | `apps/mobile/app/moment.tsx`, `src/model.js` |
-| Private / Share later / Shared now, in shape, word and border | `apps/mobile/app/moment.tsx`, the privacy cue language in `CLAUDE.md` |
+| Kinds of moment, a date, a place in your own words, a photo, detail, your own kind; edit or delete | `index.html` and `src/` (web), `apps/mobile/app/moment.tsx`, `src/model.js` |
+| Private / Share later / Shared now, in shape, word and border | both clients; the privacy cue language in `CLAUDE.md` |
 | A shared moment can't be made private again | `PRIVACY.md` |
-| Recent moments and what wants care | `apps/mobile/app/ledger.tsx` |
-| Return-to conversations; a history that is only ever added to | `apps/mobile/app/history.tsx` (append-only, #184) |
-| Two people to begin with; someone new joins only when everyone agrees | `TERMS.md`, `apps/mobile/app/journey-settings.tsx` |
-| No ads, no analytics, no crash reporting, nothing sold | `PRIVACY.md`, `README.md`, no SDK in `apps/mobile/package.json` |
-| Doesn't ask for location, contacts, camera, microphone or photos | No such module in `apps/mobile/package.json` |
-| Sign-in kept in the phone's secure storage | `PRIVACY.md`, `expo-secure-store` |
-| No scores; money is context, never a score | `apps/mobile/app/moment.tsx` ("never counted as a score"), `ROADMAP.md` |
-| Delete your account in the app | `apps/mobile/app/delete-account.tsx` |
-| Light, Dark, Green, Flexoki; your theme is only your view | the welcome screen, `apps/mobile/src/theme/` |
-| A journey is started on the web for now | `apps/mobile/app/ledger.tsx` empty state |
-| Photos and export are on the web for now | #187; `PRIVACY.md` (export is in browser Settings) |
+| A check-in asks one question at a time and saves nothing written | `README.md` ("bounded one-prompt-at-a-time check-in with no saved written answers") |
+| Recent moments and what wants care; return-to conversations | `apps/mobile/app/ledger.tsx`, `history.tsx`, and the web journey |
+| Milestones mark shared actions, never relationship quality | `README.md` ("action milestones") |
+| A history that is only ever added to | the Event Manager (web), `apps/mobile/app/history.tsx` (append-only, #184) |
+| A journey of two is free; more people can be added, only when everyone agrees | `TERMS.md`; owner decision, Oct 6 |
+| No ads, no analytics trackers, nothing sold | `PRIVACY.md` |
+| No scores; money is context, never a score | `README.md`, `ROADMAP.md`, `moment.tsx` |
+| Export all journeys | web Settings ("Export all journeys") |
+| Delete your account | web Settings, `apps/mobile/app/delete-account.tsx` |
+| Same account on the phone and the web | private sync for separate accounts (`README.md`) |
+| Light, Dark, Green, Flexoki; your theme is only your view | both clients |
 | 18 and over; not therapy, financial advice or professional support | `TERMS.md`, `PRIVACY.md`, `index.html` |
 
-Left out on purpose:
-
-- **"For two people" as a fixed promise.** #304 is still open. The listing
-  uses `TERMS.md`'s form, which is accurate either way.
-- **Check-ins.** They're web-only.
-- **Notifications** (#265), **offline** (#300), **invite links** (#266),
-  **phone sign-in with Google or Apple** (#217), **sync** (#186) and
-  **encryption**.
-- **Any price or purchase.** The phone has none (#318, #320), and Play
-  doesn't allow pointing to payment elsewhere.
+Left out on purpose, because nothing in Together Ledger does them yet:
+**notifications** (#265), **offline** (#300), **encryption**, and
+"seamless" sync (#186 is open and `TERMS.md` disclaims conflicts). A
+**price** is left out too: only "a journey of two is free" is stated, since
+live billing isn't on yet.
 
 ## Images
 
@@ -70,35 +66,42 @@ Left out on purpose:
 `source/*.html` by `source/render.mjs` (see its header for how to run it).
 Edit the HTML, re-render, and commit both.
 
-- **Icon:** the knot from `public/favicon.svg`, same geometry, on the accent.
-  Full square with no corners or shadow, because Play adds its own. Opaque.
-- **Feature graphic:**
-  - Left: the app's welcome headline, "Keep what matters, together.", with
-    its line underneath minus "for two people".
-  - Right: a moment card stack echoing the site's social card.
-  - Nothing within 48 px of an edge, because Play can crop.
+- **Icon:** the knot from `public/favicon.svg`, same geometry and same
+  colours (#8C3A3A behind, #F3EFE6 for the knot). Full square with no
+  corners or shadow, because Play adds its own. Opaque.
+- **Feature graphic:** the site's social card
+  (`public/social/together-ledger-card.svg`) at Play's size: "A private
+  place for two people to hold what matters.", its line about moments and
+  check-ins, and the moment card stack. Nothing within 48 px of an edge,
+  because Play can crop.
 
-Colours are the Light theme's roles (`src/styles.css`,
-`apps/mobile/src/theme/tokens.json`). The serif is Gelasio at weight 400
-(#177) and the rest is the system sans.
+The icon is one fixed image and doesn't follow the four in-app themes, so it
+keeps the brand's original colours, as the owner chose on Oct 6. Paper and
+ink are the Light theme's roles; the serif is Gelasio at weight 400 (#177)
+and the rest is the system sans.
+
+## Decided
+
+- **Colour** (Oct 6): the knot keeps its original #8C3A3A, as on the
+  website. The same hex is the in-app destructive role. That rule is about
+  interface colour, and the brand mark sits outside it.
+- **Two people** (Oct 6): "for two people" stays, with the line "A journey of
+  two is free. You can add more people whenever you're ready" (#304).
+- **Scope** (Oct 6): the listing describes the whole product, web and phone.
 
 ## Open calls for the owner
 
-1. **The icon's colour.** The knot on the website (`public/favicon.svg`,
-   `public/social/together-ledger-card.svg`) is still filled with `#8C3A3A`.
-   That hex is now the **destructive** role, and `CLAUDE.md` keeps it for
-   what can't be undone, so this icon uses the accent `#1F5257` instead. If
-   that's right, the favicon and social card should follow, as a separate
-   change.
-2. **"Two people" or "people"** (#304). Once decided, the headline line and
-   "A journey holds two people to begin with" may change.
-3. **Category.** Lifestyle is suggested and not decided.
-4. **The app's own icon is still Expo's placeholder.**
+1. **Category.** Lifestyle is the suggestion; nothing decides it yet.
+2. **The app's own icon is still Expo's placeholder.**
    `apps/mobile/assets/icon.png`, the adaptive icon layers and
    `adaptiveIcon.backgroundColor` (`#E6F4FE`) are Expo's defaults. Play
    expects the store icon to match the launcher icon, so they need this
    design before the first upload. That's a separate change.
-5. **Screenshots** (at least two phone screenshots) aren't part of this
+3. **Name.** Web search found no app called "Together Ledger" on Play (Oct 6).
+   Play itself is blocked from the session that checked, so look once in
+   Play Console before the first upload. There is an unrelated GitHub project
+   called `together-ledger` (a shared expense tracker), not on Play.
+4. **Screenshots** (at least two phone screenshots) aren't part of this
    draft. They must be of the real app, so they wait on a build. The reviewer
    account (#319) holds a journey already lived in, which would make good
    ones.

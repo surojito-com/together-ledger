@@ -31,19 +31,20 @@ const playPolicy = [
 // stems, so plurals are caught.
 const stems = ['seat', 'licen', 'slot', 'removed', 'emergenc', 'diagnos'];
 
-// Claims the phone app can't back today (store/google-play/README.md):
-// photos (#187), notifications (#265), offline (#300), encryption, sync
-// (#186), and anything that scores or diagnoses a relationship.
+// Claims Together Ledger can't back on any surface yet
+// (store/google-play/README.md): notifications (#265), offline (#300),
+// encryption, seamless sync (#186), and anything that scores or diagnoses
+// a relationship.
 const offVoice = [
   'notification', 'notifications', 'offline', 'end-to-end', 'encrypted',
   'sync', 'couples', 'relationship score', 'healthy relationship',
 ];
 
-// Lines that keep the listing honest about what the phone can't do yet.
+// Lines the owner asked for, and the ones that bound the promise.
 const required = [
-  ['a journey is started on the web', 'a journey cannot be created on the phone'],
+  ['a journey of two is free', 'owner decision, Oct 6: two people free, more can be added'],
   ['18 and over', 'TERMS.md and PRIVACY.md: adults only'],
-  ['someone new joins only when everyone already in the journey agrees', 'TERMS.md, neutral on #304'],
+  ['someone new joins only when everyone already in the journey agrees', 'TERMS.md'],
 ];
 
 let failed = false;

@@ -1,7 +1,7 @@
-Together Ledger is a private journal that the people in a journey keep together. Hold the moments, plans and memories you want to come back to, without the noise of a feed.
+Together Ledger is a private place for two people to hold what matters: the moments, plans and memories you want to come back to, without the noise of a feed.
 
 Hold a moment
-Write down what happened while it's still fresh: a promise, a memory, a heart-to-heart, a boundary, a repair request, a practical matter, or a kind of moment you name yourself. Give it a date, a few words and as much detail as you want. You can edit or delete it later.
+Write down what happened while it's still fresh: a promise, a memory, a heart-to-heart, a boundary, a repair request, a practical matter, or a kind of moment you name yourself. Give it a date, a place in your own words, a photo if you like, and as much detail as you want. You can edit or delete it later.
 
 Choose who sees it
 Every moment carries its visibility, shown in a shape, a word and a border:
@@ -10,25 +10,27 @@ Every moment carries its visibility, shown in a shape, a word and a border:
 - Shared now opens it to everyone in the journey.
 A shared moment can't be made private again, so nothing is quietly taken back.
 
+Check in gently
+A short check-in asks one question at a time. Nothing you write in it is saved.
+
 Return to it together
-The ledger shows your recent moments and what wants care. Start a return-to conversation about a moment and come back to it when you're ready. The journey keeps a history that is only ever added to: what changed, who changed it, and when.
+The ledger shows your recent moments and what wants care. Start a return-to conversation about a moment and come back to it when you're ready. Milestones mark what you've done together, never how well you're doing. The journey keeps a history that is only ever added to: what changed, who changed it, and when.
 
 Grow when you choose
-A journey holds two people to begin with. Someone new joins only when everyone already in the journey agrees.
+A journey of two is free. You can add more people whenever you're ready, and someone new joins only when everyone already in the journey agrees.
 
 Private by design
-- No advertising, no analytics trackers and no crash reporting. We don't sell your information.
-- The app doesn't ask for your location, contacts, camera, microphone or photos.
-- Your sign-in is kept in your phone's secure storage.
+- No advertising and no analytics trackers. We don't sell your information.
 - No scores and no feed. Money can be noted as context, never counted as a score.
-- Delete your account from inside the app at any time.
+- Export all your journeys whenever you want a copy.
+- Delete your account at any time.
+
+On your phone and on the web
+Sign in with the same account and your journeys are there.
 
 Make it yours
 Choose Light, Dark, Green or Flexoki. Your theme changes only your own view.
 
-Good to know
-- You'll need a Together Ledger account. For now, a journey is started on the web at together-ledger.com, and it appears in the app once it exists.
-- Adding photos and exporting your journeys happen on the web for now.
-- Together Ledger is for adults aged 18 and over. It isn't therapy, financial advice or a substitute for professional support.
+Together Ledger is for adults aged 18 and over. It isn't therapy, financial advice or a substitute for professional support.
 
 Privacy policy: https://app.together-ledger.com/privacy

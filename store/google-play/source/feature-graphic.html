@@ -3,11 +3,10 @@
   Google Play feature graphic, 1024 × 500. Rendered to
   ../feature-graphic-1024x500.png by render.mjs.
 
-  The headline and the line under it are the app's own welcome copy
-  (apps/mobile/app/index.tsx), minus "for two people", which waits on #304.
-  The card on the right echoes the site's social card
-  (public/social/together-ledger-card.svg), with the dots in the accent role
-  instead of the retired red. Light theme roles from src/styles.css; Gelasio
+  The words and the card are the site's social card
+  (public/social/together-ledger-card.svg), in its original colours: the
+  knot and the dots in #8C3A3A, chosen by the owner on Oct 6. Paper, ink and
+  muted are the Light theme roles from src/styles.css; Gelasio
   at weight 400 for the serif (#177), the system sans for the rest. Nothing
   sits within 48 px of an edge, since Play can crop.
 -->
@@ -16,14 +15,14 @@
 <meta charset="utf-8">
 <style>
   @font-face { font-family: Gelasio; src: url(FONT_DIR/Gelasio_400Regular.ttf); font-weight: 400; }
-  :root { --bg: #F3EFE6; --fg: #1E1B17; --muted: #6B645A; --accent: #1F5257; --surface: #EDE7DB; --elev: #FBF8F3; --border: #D8CFC0; }
+  :root { --bg: #F3EFE6; --fg: #1E1B17; --muted: #6B645A; --brand: #8C3A3A; --surface: #EDE7DB; --elev: #FBF8F3; --border: #D8CFC0; }
   html, body { margin: 0; width: 1024px; height: 500px; overflow: hidden; background: var(--bg); color: var(--fg); }
   .sans { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .serif { font-family: Gelasio, Georgia, serif; font-weight: 400; }
   .brand { position: absolute; left: 64px; top: 56px; display: flex; align-items: center; gap: 14px; }
   .brand span { font-size: 28px; }
-  .head { position: absolute; left: 64px; top: 150px; width: 560px; font-size: 58px; line-height: 1.16; letter-spacing: -0.02em; }
-  .sub { position: absolute; left: 66px; top: 330px; width: 540px; font-size: 20px; line-height: 1.45; color: var(--muted); }
+  .head { position: absolute; left: 64px; top: 140px; width: 560px; font-size: 46px; line-height: 1.16; letter-spacing: -0.02em; }
+  .sub { position: absolute; left: 66px; top: 345px; width: 520px; font-size: 20px; line-height: 1.45; color: var(--muted); }
   .stack { position: absolute; left: 620px; top: 118px; width: 340px; height: 252px; }
   .card { position: absolute; inset: 0; border-radius: 24px; }
   .c3 { background: #E3DACB; transform: translate(26px, 26px) rotate(5deg); }
@@ -31,16 +30,16 @@
   .c1 { background: var(--elev); border: 2px solid var(--border); padding: 22px 30px; box-sizing: border-box; }
   .row { display: flex; gap: 14px; align-items: baseline; padding: 16px 0; border-bottom: 2px solid #E4DCCD; font-size: 20px; white-space: nowrap; }
   .row:last-child { border-bottom: 0; }
-  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); flex: none; transform: translateY(-2px); }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--brand); flex: none; transform: translateY(-2px); }
 </style>
 </head>
 <body>
 <div class="brand">
-  <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#1F5257"/><g transform="translate(6.4 6.4) scale(.8)" fill="none" stroke="#F3EFE6" stroke-width="6.5"><rect x="6.5" y="6.5" width="35" height="35" rx="10"/><rect x="22.5" y="22.5" width="35" height="35" rx="10"/></g></svg>
+  <svg width="44" height="44" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#8C3A3A"/><g transform="translate(6.4 6.4) scale(.8)" fill="none" stroke="#F3EFE6" stroke-width="6.5"><rect x="6.5" y="6.5" width="35" height="35" rx="10"/><rect x="22.5" y="22.5" width="35" height="35" rx="10"/></g></svg>
   <span class="serif">Together Ledger</span>
 </div>
-<div class="head serif">Keep what matters,<br>together.</div>
-<div class="sub sans">A private place to hold the moments, plans<br>and memories you want to come back to.</div>
+<div class="head serif">A private place<br>for two people<br>to hold what matters.</div>
+<div class="sub sans">Moments, gentle check-ins,<br>and conversations to return to.</div>
 <div class="stack">
   <div class="card c3"></div><div class="card c2"></div>
   <div class="card c1 serif">
