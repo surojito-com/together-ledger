@@ -126,11 +126,6 @@ export function removePlace(locations: Place[], index: number) {
   return locations.filter((_, at) => at !== index);
 }
 
-/** The web's own note beside each place. The server decides what a person already has. */
-export function placeNote(index: number) {
-  return index === 0 ? 'Included' : '$1/month';
-}
-
 /**
  * A moment already shared stays shared: prior access cannot be undone. The server refuses the
  * change too; the form simply does not offer it.

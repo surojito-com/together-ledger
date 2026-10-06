@@ -13,7 +13,7 @@ export async function importMobile(path) {
 }
 
 const { createAccountClient, OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
-const { accountMessage, ACCOUNT_FALLBACK_MESSAGE } = await importMobile('src/auth/account-messages.ts');
+const { accountMessage, ACCOUNT_FALLBACK_MESSAGE, NO_ROOM_ADDED_HERE } = await importMobile('src/auth/account-messages.ts');
 
 function memoryTokens(initial = null) {
   let held = initial;
@@ -107,7 +107,10 @@ test('accountMessage shows the service\'s own words, and the web\'s fallback oth
   const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
   assert.ok(web.includes(`return '${ACCOUNT_FALLBACK_MESSAGE}';`));
   const notices = await readFile(new URL('src/auth/account-messages.ts', mobile), 'utf8');
-  for (const phrase of [...notices.matchAll(/:\s*'([^']+)',/g)].map((match) => match[1])) {
+  // The phone's words for a moment with no room are its own on purpose: the web's point at a
+  // payment the app does not offer (#268). Everything else is the web's.
+  const phoneOnly = new Set(Object.values(NO_ROOM_ADDED_HERE));
+  for (const phrase of [...notices.matchAll(/:\s*'([^']+)',/g)].map((match) => match[1]).filter((phrase) => !phoneOnly.has(phrase))) {
     assert.ok(web.includes(phrase), `"${phrase}" is not the web's wording`);
   }
 });

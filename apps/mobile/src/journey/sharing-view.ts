@@ -111,6 +111,13 @@ export function sharingCopy(memberCount: number, canInvite: boolean) {
   return `${memberCount} ${memberCount === 1 ? 'person is' : 'people are'} here. ${canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.'} Each person signs in separately.`;
 }
 
+/**
+ * Where the phone meets a full journey, it says where room comes from, and never points to a web
+ * payment (#268; Apple 3.1.1 and 3.1.3). Room bought anywhere works everywhere (#267), so that is
+ * what it says; a store purchase, when it arrives (TL-P-05 onward), is offered beside it.
+ */
+export const ROOM_IS_THE_JOURNEYS = 'Room for another person belongs to the journey, so it is the same on every device anyone here uses.';
+
 /** Any journeyer may ask while there is room; the asking is not the adding. */
 export function mayPropose(snapshot: SharingSnapshot) {
   return snapshot.capacity?.canInvite ?? snapshot.members.length < 2;
@@ -311,10 +318,10 @@ export type BillingStatus = {
 };
 
 /**
- * The billing panel, read-only on the phone (#184, and the owner's payments decision of
- * 1 Oct 2026, #203 option A): it says where this journey's capacity stands, and names no price,
- * offers no purchase and links to no payment. Waiting and settled have their own tone, and
- * neither is a failure, so neither takes the destructive role.
+ * The billing panel's summary on the phone (#184): it says where this journey's capacity stands.
+ * It never names a web price or links to a web payment (#268). The phone sells capacity through
+ * the App Store and Google Play (#267), offered beside this once built. Waiting and settled have
+ * their own tone, and neither is a failure, so neither takes the destructive role.
  */
 export function billingSummary(status: BillingStatus): { tone: '' | 'settled' | 'waiting'; message: string } {
   const entitlement = status.entitlement;

@@ -115,6 +115,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     if (request.headers['x-together-csrf'] !== request.auth.csrfToken) throw new PlatformError(403, 'invalid_csrf', 'Refresh the page and try again.');
   }
 
+  // Stripe is the web's way to pay, and only the web's; the phones pay through Apple and Google
+  // (#267). A phone app that opens a web checkout is refused by both stores (Apple 3.1.1 and
+  // 3.1.3), so a caller holding the phone's credential is refused here too, whatever its client
+  // code does (#268). A bearer token is only ever issued to the app; the browser signs in with a
+  // cookie and is untouched by this.
+  async function keepStripeOffThePhone(request) {
+    if (request.auth?.bearer) throw new PlatformError(403, 'not_from_the_app', 'A web checkout is not opened from the app.');
+  }
+  const stripeSession = [protectMutation, keepStripeOffThePhone];
+
   function setSession(reply, session) {
     reply.setCookie(SESSION_COOKIE, session.rawToken, cookieOptions());
   }
@@ -234,17 +244,17 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   ));
 
   app.get('/api/v1/journeys/:journeyId/billing', { preHandler: authenticate }, async (request) => ({ data: await billing.status(request.auth.userId, request.params.journeyId) }));
-  app.post('/api/v1/journeys/:journeyId/billing/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  app.post('/api/v1/journeys/:journeyId/billing/checkout-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
     const session = await billing.createCheckoutSession(request.auth.userId, request.params.journeyId, request.body || {});
     return reply.code(201).send({ data: session });
   });
-  app.post('/api/v1/journeys/:journeyId/billing/portal-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+  app.post('/api/v1/journeys/:journeyId/billing/portal-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
     const session = await billing.createPortalSession(request.auth.userId, request.params.journeyId);
     return reply.code(201).send({ data: session });
   });
   app.get('/api/v1/journeys/:journeyId/moments/:momentId/image-slots', { preHandler: authenticate }, async (request) => ({ data: { slots: await billing.imageSlots(request.auth.userId, request.params.journeyId, request.params.momentId) } }));
-  app.post('/api/v1/journeys/:journeyId/moments/:momentId/image-slots/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createImageCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
-  app.post('/api/v1/journeys/:journeyId/moments/:momentId/location-slots/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createLocationCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
+  app.post('/api/v1/journeys/:journeyId/moments/:momentId/image-slots/checkout-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createImageCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
+  app.post('/api/v1/journeys/:journeyId/moments/:momentId/location-slots/checkout-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createLocationCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
   // What a phone sends to Apple or Google when it starts a purchase (#269). Created the first time
   // and the same ever after, so it is a POST that is safe to repeat.
   app.post('/api/v1/journeys/:journeyId/billing/store-identity', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({ data: await platform.storePurchaseIdentity(request.auth.userId, request.params.journeyId) }));

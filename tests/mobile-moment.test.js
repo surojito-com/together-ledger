@@ -69,9 +69,23 @@ test('places are added in the person\'s words, removed one at a time, and never 
   assert.equal(draft.addPlace(twelve, 'One more').problem, 'A moment can hold up to 12 places.');
   assert.ok(web.includes("showToast('A moment can hold up to 12 places.')"));
   assert.deepEqual(draft.removePlace([{ label: 'a' }, { label: 'b' }, { label: 'c' }], 1), [{ label: 'a' }, { label: 'c' }]);
-  assert.equal(draft.placeNote(0), 'Included');
-  assert.equal(draft.placeNote(1), '$1/month');
-  assert.ok(web.includes("index === 0 ? 'Included' : '$1/month'"));
+});
+
+test('places carry no price on the phone, and a moment with no room says so without one (#268)', async () => {
+  const form = await read('app/moment.tsx');
+  assert.equal(Object.hasOwn(draft, 'placeNote'), false, 'the web\'s per-place price note stays on the web');
+  assert.match(form, /<Section title="Places \(Optional\)" help="Add only what helps tell the story\.">/);
+  assert.ok(web.includes("index === 0 ? 'Included' : '$1/month'"), 'the web form is not touched');
+  const { accountMessage, NO_ROOM_ADDED_HERE } = await importMobile('src/auth/account-messages.ts');
+  const serverWords = 'Hold the first place, then add another through its monthly place add-on.';
+  assert.ok((await readFile(new URL('../server/app.js', import.meta.url), 'utf8')).includes(serverWords), 'the words being replaced are still the server\'s');
+  const said = accountMessage({ code: 'location_payment_required', message: serverWords });
+  assert.equal(said, NO_ROOM_ADDED_HERE.location_payment_required);
+  assert.match(said, /Remove a place to save the moment\.$/, 'it says what the person can do');
+  for (const message of Object.values(NO_ROOM_ADDED_HERE)) {
+    assert.doesNotMatch(message, /\$|\d|month|price|pay|buy|purchase|upgrade|add-on|unlock|web|site|browser|seat|slot|licen[cs]e/i, message);
+  }
+  assert.equal(accountMessage({ code: 'invalid_credentials', message: 'Password confirmation failed.' }), 'Password confirmation failed.', 'every other answer is still the server\'s own');
 });
 
 test('a shared moment cannot be taken back, and the form says so in the web\'s words', () => {

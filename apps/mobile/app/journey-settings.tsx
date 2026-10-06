@@ -27,6 +27,7 @@ import {
   REST_MODES,
   restModeCopy,
   restQueue,
+  ROOM_IS_THE_JOURNEYS,
   sharingCopy,
   splitMembers,
   showsUnpaidCapacityRest,
@@ -154,7 +155,7 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
           <Field label="Who they are" value={note} onChangeText={setNote} maxLength={300} placeholder="My sister, who has been asking after you" hint="Optional, and shown to the journeyers deciding, so they answer about a person rather than an address." />
           <Button label="Propose this person" pendingLabel="Proposing…" pending={pending === 'propose'} disabled={!email.trim()} onPress={propose} />
         </Section>
-      ) : null}
+      ) : <Body>{ROOM_IS_THE_JOURNEYS}</Body>}
 
       <Section title="Journey record">
         {snapshot.members.length ? (() => {
