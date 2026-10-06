@@ -218,7 +218,7 @@ test('a hosted journey can hold a private moment and deliberately share one late
   await page.locator('#moment-form [name="visibility"][value="private"]').check();
   await page.locator('#moment-form [name="title"]').fill('Mine until I decide');
   await page.getByRole('button', { name: 'Hold this moment' }).click();
-  expect(mutationBodies[0].visibility).toBe('private');
+  await expect.poll(() => mutationBodies[0]?.visibility).toBe('private');
   await expect(page.locator('.moment-card.private')).toContainText('Mine until I decide');
 
   await page.locator('.moment-card.share-later').getByRole('button', { name: 'Share now' }).click();

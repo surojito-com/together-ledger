@@ -12,12 +12,18 @@
     "preview": {
       "distribution": "internal",
       "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_API_ORIGIN": "https://api.together-ledger.com"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
       "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_API_ORIGIN": "https://api.together-ledger.com"
+      },
       "autoIncrement": true
     }
   },
