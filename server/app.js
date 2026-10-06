@@ -245,6 +245,9 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.get('/api/v1/journeys/:journeyId/moments/:momentId/image-slots', { preHandler: authenticate }, async (request) => ({ data: { slots: await billing.imageSlots(request.auth.userId, request.params.journeyId, request.params.momentId) } }));
   app.post('/api/v1/journeys/:journeyId/moments/:momentId/image-slots/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createImageCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
   app.post('/api/v1/journeys/:journeyId/moments/:momentId/location-slots/checkout-sessions', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createLocationCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
+  // What a phone sends to Apple or Google when it starts a purchase (#269). Created the first time
+  // and the same ever after, so it is a POST that is safe to repeat.
+  app.post('/api/v1/journeys/:journeyId/billing/store-identity', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({ data: await platform.storePurchaseIdentity(request.auth.userId, request.params.journeyId) }));
   app.post('/api/v1/billing/webhooks/stripe', { config: { rawBody: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const result = await billing.handleWebhook(request.rawBody, request.headers['stripe-signature']);
     return reply.code(200).send(result);
