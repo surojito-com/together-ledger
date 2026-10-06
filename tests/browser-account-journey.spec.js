@@ -12,7 +12,7 @@
 //
 // Without those it skips, so the ordinary local browser run is unaffected.
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './browser-test.js';
 
 const username = process.env.QA_ACCOUNT_USERNAME || '';
 const password = process.env.QA_ACCOUNT_PASSWORD || '';
