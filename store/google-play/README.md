@@ -69,6 +69,12 @@ Edit the HTML, re-render, and commit both.
 - **Icon:** the knot from `public/favicon.svg`, same geometry and same
   colours (#8C3A3A behind, #F3EFE6 for the knot). Full square with no
   corners or shadow, because Play adds its own. Opaque.
+- **The installed icon matches it.** `scripts/render-app-icons.mjs` draws
+  the phone's launcher icon (`apps/mobile/assets/icon.png`) and Android's
+  three adaptive layers from the same knot, sized so it looks the same on
+  the launcher as in the store, and `adaptiveIcon.backgroundColor` in
+  `apps/mobile/app.json` is #8C3A3A. Change the knot in both places, or
+  the two drift apart. A new icon reaches a phone only with a new build.
 - **Feature graphic:** the site's social card
   (`public/social/together-ledger-card.svg`) at Play's size: "A private
   place for two people to hold what matters.", its line about moments and
@@ -92,16 +98,11 @@ and the rest is the system sans.
 ## Open calls for the owner
 
 1. **Category.** Lifestyle is the suggestion; nothing decides it yet.
-2. **The app's own icon is still Expo's placeholder.**
-   `apps/mobile/assets/icon.png`, the adaptive icon layers and
-   `adaptiveIcon.backgroundColor` (`#E6F4FE`) are Expo's defaults. Play
-   expects the store icon to match the launcher icon, so they need this
-   design before the first upload. That's a separate change.
-3. **Name.** Web search found no app called "Together Ledger" on Play (Oct 6).
+2. **Name.** Web search found no app called "Together Ledger" on Play (Oct 6).
    Play itself is blocked from the session that checked, so look once in
    Play Console before the first upload. There is an unrelated GitHub project
    called `together-ledger` (a shared expense tracker), not on Play.
-4. **Screenshots** (at least two phone screenshots) aren't part of this
+3. **Screenshots** (at least two phone screenshots) aren't part of this
    draft. They must be of the real app, so they wait on a build. The reviewer
    account (#319) holds a journey already lived in, which would make good
    ones.
