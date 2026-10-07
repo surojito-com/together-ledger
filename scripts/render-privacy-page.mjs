@@ -28,9 +28,13 @@ function inline(text, source) {
   return html;
 }
 
-export function renderPolicyBody(markdown, source = 'PRIVACY.md') {
+// The policy as blocks of still-Markdown text: headings, paragraphs and lists, with the
+// repository-only sections left out. The web page renders these as HTML, and the phone app
+// (scripts/mobile-policies.mjs) carries them as its own Privacy screen, so both read one parse.
+// Every block's text has already passed inline(), so an unsupported mark fails here for both.
+export function policyBlocks(markdown, source = 'PRIVACY.md') {
   const blocks = markdown.replace(/\r\n/g, '\n').trim().split(/\n{2,}/);
-  const html = [];
+  const parsed = [];
   let title = null;
   let skipping = false;
 
@@ -45,21 +49,36 @@ export function renderPolicyBody(markdown, source = 'PRIVACY.md') {
         continue;
       }
       if (level === 2) skipping = repositoryOnlySections.has(heading[2]);
-      if (!skipping) html.push(`<h${level}>${inline(heading[2], source)}</h${level}>`);
+      if (!skipping) parsed.push({ kind: 'heading', level, text: checked(heading[2], source) });
       continue;
     }
     if (skipping) continue;
     if (lines.every((line) => line.startsWith('- '))) {
-      html.push(`<ul>${lines.map((line) => `<li>${inline(line.slice(2), source)}</li>`).join('')}</ul>`);
+      parsed.push({ kind: 'list', items: lines.map((line) => checked(line.slice(2), source)) });
       continue;
     }
     if (lines.some((line) => /^(#|- |\d+\. |>|```|\|)/.test(line))) {
       throw new Error(`${source} has a block this page does not render:\n${block}`);
     }
-    html.push(`<p>${inline(lines.join(' '), source)}</p>`);
+    parsed.push({ kind: 'paragraph', text: checked(lines.join(' '), source) });
   }
 
   if (!title) throw new Error(`${source} needs a top-level # heading to title the page.`);
+  return { title, blocks: parsed };
+}
+
+function checked(text, source) {
+  inline(text, source);
+  return text;
+}
+
+export function renderPolicyBody(markdown, source = 'PRIVACY.md') {
+  const { title, blocks } = policyBlocks(markdown, source);
+  const html = blocks.map((block) => {
+    if (block.kind === 'heading') return `<h${block.level}>${inline(block.text, source)}</h${block.level}>`;
+    if (block.kind === 'list') return `<ul>${block.items.map((item) => `<li>${inline(item, source)}</li>`).join('')}</ul>`;
+    return `<p>${inline(block.text, source)}</p>`;
+  });
   return { title, html: html.join('\n        ') };
 }
 

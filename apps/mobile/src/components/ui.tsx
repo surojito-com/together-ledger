@@ -107,9 +107,10 @@ export function Notice({ message, tone = 'info' }: { message: string | null; ton
   );
 }
 
-export function Body({ children }: { children: ReactNode }) {
+/** Body copy. `selectable` lets a person copy it, for an address they need to write to. */
+export function Body({ children, selectable = false }: { children: ReactNode; selectable?: boolean }) {
   const { theme } = useTheme();
-  return <Text style={[styles.body, { color: theme.colors.textSecondary }]}>{children}</Text>;
+  return <Text selectable={selectable} style={[styles.body, { color: theme.colors.textSecondary }]}>{children}</Text>;
 }
 
 const styles = StyleSheet.create({

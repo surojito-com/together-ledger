@@ -47,7 +47,7 @@ Verification, invitation, proposal, and recovery messages are sent through Resen
 
 ## Payments
 
-Paying for another person, another place, or an extra photo happens on the web through Stripe Checkout. Stripe receives your email address, the payment details and any billing details you enter on Stripe's own page, and internal reference numbers for your account, the journey, and the moment the payment is for. We never see or store your full card number. We store the Stripe customer and subscription references, what was bought, and its status, so the capacity you paid for works and so billing can be reconciled. Stripe keeps its own payment records as the law requires of it; its privacy policy is at [stripe.com/privacy](https://stripe.com/privacy).
+Payments for another person, another place, or an extra photo are processed by Stripe. Stripe receives your email address, the payment details and any billing details you enter on Stripe's own page, and internal reference numbers for your account, the journey, and the moment the payment is for. We never see or store your full card number. We store the Stripe customer and subscription references, what was bought, and its status, so the capacity you paid for works and so billing can be reconciled. Stripe keeps its own payment records as the law requires of it; its privacy policy is at [stripe.com/privacy](https://stripe.com/privacy).
 
 ## Server logs
 
