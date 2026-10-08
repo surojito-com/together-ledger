@@ -25,7 +25,8 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "com.android.vending.BILLING"
       ],
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

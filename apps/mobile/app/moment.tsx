@@ -2,9 +2,11 @@ import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '../src/auth/session';
+import { extrasFor } from '../src/billing/store-products';
 import { Choices } from '../src/components/choices';
 import { DateField } from '../src/components/date-field';
 import { MomentCard } from '../src/components/moment-card';
+import { MomentExtras } from '../src/components/store-offers';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import { MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, VISIBILITY_CUES, visibilityRole, type ShownMoment } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
@@ -184,6 +186,16 @@ export default function MomentScreen() {
       <Section title="Live preview" help={`${momentThemeLabel(draft.theme)} · exactly as this moment will appear in the ledger.`}>
         <MomentCard moment={preview} />
       </Section>
+
+      {/* An extra photo or place is bought for a moment that has been held, so the purchase can
+          name it, and only once the moment holds the first of its kind, which stays free. */}
+      {before ? (
+        <MomentExtras
+          journeyId={journey.state.activeId}
+          momentId={before.id}
+          offered={extrasFor({ locations: before.locations, images: (journey.state.snapshot.images || []).filter((image) => image.momentId === before.id && !image.deletedAt) })}
+        />
+      ) : null}
 
       <Button label={before ? 'Save moment' : 'Hold this moment'} pending={pending === 'save'} disabled={pending !== null} onPress={save} />
       <Button kind="quiet" label="Cancel" disabled={pending !== null} onPress={() => router.back()} />

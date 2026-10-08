@@ -63,8 +63,35 @@ anything is charged, unless every value it needs is a real UUID from the service
 StoreKit or Play Billing is given.
 
 `tests/mobile-store-purchase.test.js` fails if any phone code starts a store purchase (`requestPurchase`,
-`requestSubscription`, `launchBillingFlow`, and the like) without going through it. There is no purchase screen
-yet; the work that adds one (TL-P-05 onward) builds on this rather than around it.
+`requestSubscription`, `launchBillingFlow`, and the like) without going through it.
+
+### The purchase screen (TL-P-05, #272)
+
+The phone buys through [expo-iap](https://github.com/hyochan/expo-iap): StoreKit 2 on iOS, Play Billing on
+Android, as an Expo module that runs on the New Architecture. It is native code, so it needs a **new development
+build**; an older build simply shows that purchases can't be made on that phone. `src/billing/store-kit.ts` is
+the only file that imports it, and it hands the library whole to `src/billing/store-purchase.ts`, the only file
+that starts a purchase (`startStorePurchase`) or tells a store one is finished (`settleStorePurchase`). A test
+holds both.
+
+- **Journey settings → Room for more people**, for the owner of a journey whose capacity is billed. The payer's
+  first paid journey is offered the two monthly subscriptions; once this store account holds a subscription for
+  another journey, this one is offered the four passes instead, because a second subscription in the same group
+  would move the first journey's room here. A journey that already holds the subscription can change between 51
+  and 101 people (on Google, up now with proration, down deferred to the end of the paid period).
+- **A moment → More on this moment**, once it holds its free first photo or place: an extra photo or place,
+  naming the moment. An extra the phone paid for but whose moment it no longer knows (the app closed before the
+  store answered) waits, and can be put on any moment from there.
+- **Restore purchases**, in Settings and beside the room offers (#275).
+- Every price is the store's `displayPrice`. A product the store does not list says it isn't offered yet.
+
+Each transaction goes to `/billing/store-purchases/apple` or `/google`. It is finished on success; on a refusal
+with `retryable: false`, an Apple transaction is finished, and a Google one is left unacknowledged so Google
+refunds it within three days; anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
+the store to hand back. A purchase Google still reports as pending is not sent.
+
+On Android the Play Billing library declares `com.android.vending.BILLING`, so `app.json` grants it beside
+`INTERNET` and the Phone test APK workflow allows it. It shows no prompt and reaches nothing on the phone.
 
 ## When a purchase comes back (TL-P-05, #272)
 
@@ -295,12 +322,13 @@ billing **or** at least one store configured, so the phones can sell while web b
 - **Server notifications, refunds and revocations** (#273). A refund through Apple or Google does not take room back
   yet; nothing listens for it. A Google subscription's renewal is recorded when the phone sends it again, not on
   Google's word.
-- **Restore on a new phone** (#275).
+- **Restore on a new phone** (#275). The phone's Restore purchases sends what the store hands back; a
+  subscription bought on the other platform is not seen from this one.
 - **What a journey holding more than one entitlement means** (#274, #276), beyond "the most generous one counts".
 - **Reconciliation against the stores** (#277).
 - **The phone's delete-account dialog.** Deleting the account deletes the journey and its store entitlements, and
   keeps `billing_store_purchases`, but it does not cancel a store subscription: that carries on, and keeps
   charging, until the person cancels it with Apple or Google. **Decided by the owner, Oct 8, 2026: the phone's
   delete-account dialog must say that a store subscription is cancelled with Apple or Google**, not by deleting the
-  account (App Store guideline 5.1.1(v) asks for this too). The phone session's prompt 4 builds that screen; nothing
-  on the server stands in for it.
+  account (App Store guideline 5.1.1(v) asks for this too). The phone's deletion screen and its confirmation
+  dialog now say it (`STORE_SUBSCRIPTION_NOT_CANCELLED`); nothing on the server stands in for it.
