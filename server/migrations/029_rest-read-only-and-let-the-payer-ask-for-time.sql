@@ -3,8 +3,21 @@
 
 -- Resting is always read-only. Owners could choose to fully pause resting journeyers, so they
 -- could not even read; that choice is gone. Any journey left on it reads again from here on. The
--- column stays, pinned to the one value, so the release before this one can still be rolled back
--- to without a schema change, and nothing can write the old choice back.
+-- column stays, pinned to the one value, so the release before this one still finds the column
+-- it reads, and nothing can write the old choice back.
+--
+-- Each journey moved is noted first, so its history can say so. A journey's history is a chain of
+-- events signed with a key only the server holds, so SQL cannot write the entry itself: the server
+-- writes it when it starts (recordRestingMadeReadOnly in server/platform.js) and marks the note
+-- recorded, once.
+CREATE TABLE IF NOT EXISTS journeys_made_read_only (
+  journey_id uuid PRIMARY KEY REFERENCES journeys(id) ON DELETE CASCADE,
+  changed_at timestamptz NOT NULL,
+  recorded_at timestamptz
+);
+INSERT INTO journeys_made_read_only (journey_id,changed_at)
+  SELECT id,now() FROM journeys WHERE unpaid_capacity_mode<>'read-only'
+  ON CONFLICT DO NOTHING;
 UPDATE journeys SET unpaid_capacity_mode='read-only' WHERE unpaid_capacity_mode<>'read-only';
 ALTER TABLE journeys DROP CONSTRAINT IF EXISTS journeys_unpaid_capacity_mode_check;
 ALTER TABLE journeys ADD CONSTRAINT journeys_unpaid_capacity_mode_check CHECK (unpaid_capacity_mode = 'read-only');

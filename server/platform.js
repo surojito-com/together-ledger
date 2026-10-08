@@ -874,11 +874,11 @@ export class PlatformService {
     });
   }
 
-  // After the automatic grace, the person who pays can ask for another 7 days, up to 7 times per
-  // journey per calendar year (the Book, 4.7). Each week begins where the current grace ends, or
-  // now if it has already run out, and only one can wait ahead: the next can be asked for once
-  // 7 days or fewer are left. That way nobody has to rest for a moment between one week and the
-  // next, and the weeks cannot be stacked up front. Every request goes into the journey's history.
+  // During any grace, the automatic 7 days included, the person who pays can ask for another 7
+  // days, up to 7 times per journey per calendar year (the Book, 4.7; owner, Oct 8). Each week
+  // begins where the current grace ends, and only one can wait ahead: the next can be asked for
+  // once 7 days or fewer are left. That way nobody has to rest for a moment between one week and
+  // the next, and the weeks cannot be stacked up front. Every request goes into the history.
   async requestMoreGrace(userId, journeyId) {
     return withTransaction(this.pool, async (client) => {
       const membership = await this.requireMember(client, userId, journeyId, { reading: true });
@@ -894,13 +894,20 @@ export class PlatformService {
       if (grace.until.getTime() - now.getTime() > GRACE_REQUEST_DAYS * DAY_MS) {
         throw new PlatformError(409, 'grace_request_early', `More than ${GRACE_REQUEST_DAYS} days are still left. Another week can be asked for once ${GRACE_REQUEST_DAYS} days or fewer remain.`);
       }
-      const graceUntil = new Date(Math.max(grace.until.getTime(), now.getTime()) + GRACE_REQUEST_DAYS * DAY_MS);
+      const graceUntil = new Date(grace.until.getTime() + GRACE_REQUEST_DAYS * DAY_MS);
       const requestNumber = payment.requestsUsed + 1;
-      await client.query(
-        `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [randomUUID(), journeyId, userId, payment.calendarYear, requestNumber, grace.expires_at, graceUntil, now],
-      );
+      try {
+        await client.query(
+          `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [randomUUID(), journeyId, userId, payment.calendarYear, requestNumber, grace.expires_at, graceUntil, now],
+        );
+      } catch (error) {
+        // Another request took this number first. The journey lock makes that rare; the unique
+        // row is what decides it, and the person is told in words rather than a server error.
+        if (error?.code !== '23505') throw error;
+        throw new PlatformError(409, 'grace_request_conflict', 'More time was just asked for on this journey. Refresh to see how long is left.');
+      }
       await this.appendEvent(client, {
         journeyId,
         actorUserId: userId,
@@ -912,6 +919,35 @@ export class PlatformService {
       });
       return this.capacityFor(client, journeyId, { forOwner: membership.role === 'owner' });
     });
+  }
+
+  // Migration 029 took away the choice to fully pause resting journeyers and moved every journey
+  // on it to read-only. Each of those journeys' histories says so, written here because the
+  // history is signed with a key only the server holds. The entry stands under the owner's name,
+  // since every entry needs one, and its words say the product made the change, not them. Run
+  // when the server starts; a journey already recorded is never recorded twice.
+  async recordRestingMadeReadOnly() {
+    const pending = await this.pool.query('SELECT journey_id FROM journeys_made_read_only WHERE recorded_at IS NULL ORDER BY journey_id');
+    for (const { journey_id: journeyId } of pending.rows) {
+      await withTransaction(this.pool, async (client) => {
+        await this.lockJourney(client, journeyId);
+        const note = await client.query('SELECT changed_at FROM journeys_made_read_only WHERE journey_id=$1 AND recorded_at IS NULL', [journeyId]);
+        if (!note.rowCount) return;
+        const journey = await client.query('SELECT owner_user_id FROM journeys WHERE id=$1', [journeyId]);
+        await this.appendEvent(client, {
+          journeyId,
+          actorUserId: journey.rows[0].owner_user_id,
+          action: 'unpaid_capacity_rest_made_read_only',
+          entityType: 'journey',
+          entityId: journeyId,
+          summary: 'Together Ledger no longer lets resting journeyers be fully paused, so anyone resting here can read the whole journey again',
+          before: { unpaidCapacityMode: 'paused' },
+          after: { unpaidCapacityMode: 'read-only', changedAt: dateTime(note.rows[0].changed_at) },
+        });
+        await client.query('UPDATE journeys_made_read_only SET recorded_at=$1 WHERE journey_id=$2', [this.now(), journeyId]);
+      });
+    }
+    return pending.rowCount;
   }
 
   // Reading is the exception, and it is passed explicitly: every other caller is a mutation,
@@ -977,8 +1013,9 @@ export class PlatformService {
   }
 
   // What the journey's payment allows now. A grace lasts until its automatic end, or until the
-  // last week the payer asked for during this lapse. A grace whose time has run out is still
-  // returned, because asking for another week can bring it back until the payment ends for good.
+  // last week the payer asked for during this lapse. Once that has passed the journey rests: no
+  // banner and no asking, even while Stripe has neither been paid nor cancelled (its 'unpaid'
+  // and 'paused' states), so a payment given up on cannot keep a grace alive year after year.
   async paymentFor(client, journeyId) {
     const entitlements = await client.query(
       `SELECT id,state,quantity,expires_at,payer_user_id FROM billing_entitlements
@@ -1004,7 +1041,7 @@ export class PlatformService {
       return { ...row, until };
     });
     const live = rows.find((row) => !row.until || row.until > now) || null;
-    const grace = live ? (live.state === 'grace' ? live : null) : (rows[0]?.state === 'grace' ? rows[0] : null);
+    const grace = live?.state === 'grace' ? live : null;
     return {
       live,
       grace,
@@ -1074,13 +1111,10 @@ export class PlatformService {
     }
     const wouldRest = new Set(queue.slice(0, Math.max(0, peopleHere - INCLUDED_JOURNEY_CAPACITY)));
     const keepAdding = [ownerUserId, ...[...queue].reverse()].filter((id) => id && names.has(id) && !wouldRest.has(id));
-    const now = this.now();
-    const active = grace === payment.live;
-    const msLeft = grace.until.getTime() - now.getTime();
+    const msLeft = grace.until.getTime() - this.now().getTime();
     return {
-      active,
       endsAt: dateTime(grace.until),
-      daysLeft: active ? Math.ceil(msLeft / DAY_MS) : 0,
+      daysLeft: Math.ceil(msLeft / DAY_MS),
       payer: { id: grace.payer_user_id, displayName: names.get(grace.payer_user_id) || 'Former journeyer' },
       calendarYear: payment.calendarYear,
       requestsUsed: payment.requestsUsed,
@@ -1118,7 +1152,7 @@ export class PlatformService {
     const dates = cleanJourneyDetails(input);
     return withTransaction(this.pool, async (client) => {
       if (await this.journeysHeldBy(client, userId) >= MAX_JOURNEYS_PER_PERSON) {
-        throw new PlatformError(409, 'journey_limit_reached', `You are in ${MAX_JOURNEYS_PER_PERSON} journeys, the most one person can be in, so a new one can't be started. Every journey you're in stays as it is.`);
+        throw new PlatformError(409, 'journey_limit_reached', `One person can be in at most ${MAX_JOURNEYS_PER_PERSON} journeys, and you've reached that, so a new one can't be started. Every journey you're in stays as it is.`);
       }
       const id = randomUUID();
       const created = await client.query(
@@ -1355,7 +1389,7 @@ export class PlatformService {
       if (Number(members.rows[0].count) >= MAX_JOURNEY_CAPACITY) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
       // Like a full journey, this leaves the invitation waiting rather than spending it.
       if (await this.journeysHeldBy(client, userId, { besides: invitation.rows[0].journey_id }) >= MAX_JOURNEYS_PER_PERSON) {
-        throw new PlatformError(409, 'journey_limit_reached', `You are in ${MAX_JOURNEYS_PER_PERSON} journeys, the most one person can be in. This invitation keeps waiting for you until it expires, and nothing in the journey changes.`);
+        throw new PlatformError(409, 'journey_limit_reached', `One person can be in at most ${MAX_JOURNEYS_PER_PERSON} journeys, and you've reached that. This invitation keeps waiting for you until it expires, and nothing in the journey changes.`);
       }
       await client.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member') ON CONFLICT DO NOTHING`, [invitation.rows[0].journey_id, userId]);
       await client.query('UPDATE invitations SET accepted_at=$1,reservation_active=false WHERE id=$2', [this.now(), invitation.rows[0].id]);

@@ -522,20 +522,12 @@ function graceBannerCopy(grace, viewerId, peopleHere) {
   const weeks = `${grace.requestsUsed} of ${grace.requestsPerYear} extra weeks used this year`;
   const someoneRests = grace.keepAdding.length < peopleHere;
   const whoAdds = `only ${names(grace.keepAdding)} can add new moments. Everyone else can still see everything, and nothing is lost.`;
-  if (grace.active) {
-    const days = `${grace.daysLeft} ${grace.daysLeft === 1 ? 'day' : 'days'} left`;
-    return [
-      `This journey is waiting on a payment from ${payer}.`,
-      `${days} · ${weeks}.`,
-      someoneRests ? `If it isn't paid, ${whoAdds} Paying again brings everyone back.` : 'If it isn\'t paid, everyone here can still add, and nothing is lost.',
-    ].join(' ');
-  }
-  const asker = payer === 'you' ? 'You' : payer;
+  const days = `${grace.daysLeft} ${grace.daysLeft === 1 ? 'day' : 'days'} left`;
   return [
-    someoneRests ? `The payment from ${payer} has lapsed, so ${whoAdds}` : `The payment from ${payer} has lapsed. Everyone here can still add, and nothing is lost.`,
-    grace.canRequest ? `${asker} can still ask for ${grace.requestDays} more days (${weeks}).` : `All ${grace.requestsPerYear} extra weeks for ${grace.calendarYear} are used.`,
-    someoneRests ? 'Paying again brings everyone back.' : '',
-  ].filter(Boolean).join(' ');
+    `This journey is waiting on a payment from ${payer}.`,
+    `${days} · ${weeks}.`,
+    someoneRests ? `If it isn't paid, ${whoAdds} Paying again brings everyone back.` : 'If it isn\'t paid, everyone here can still add, and nothing is lost.',
+  ].join(' ');
 }
 
 // What the payer reads under the banner when another week can't be asked for yet.

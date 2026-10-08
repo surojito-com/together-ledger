@@ -145,16 +145,16 @@ test('the grace banner says the same on the phone as on the web, in the caution 
   const graceRequestNote = webFunction('graceRequestNote');
   const sam = { id: 'sam', displayName: 'Sam' };
   const alex = { id: 'alex', displayName: 'Alex' };
-  const waiting = { active: true, endsAt: '2026-10-13T00:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026, requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex] };
+  const bo = { id: 'bo', displayName: 'Bo' };
+  const waiting = { endsAt: '2026-10-13T00:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026, requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex] };
   const cases = [
     [waiting, 'bo', 5],
     [waiting, 'sam', 5],
     [waiting, 'alex', 5],
     [{ ...waiting, daysLeft: 1, canRequest: false }, 'sam', 5],
     [{ ...waiting, keepAdding: [sam] }, 'bo', 1],
-    [{ ...waiting, active: false, daysLeft: 0 }, 'bo', 5],
-    [{ ...waiting, active: false, daysLeft: 0 }, 'sam', 5],
-    [{ ...waiting, active: false, daysLeft: 0, requestsUsed: 7, canRequest: false }, 'bo', 5],
+    [{ ...waiting, requestsUsed: 7, canRequest: false }, 'sam', 5],
+    [{ ...waiting, keepAdding: [sam, alex, bo] }, 'alex', 3],
   ];
   for (const [grace, viewerId, peopleHere] of cases) {
     assert.equal(view.graceBannerCopy(grace, viewerId, peopleHere), graceBannerCopy(grace, viewerId, peopleHere));

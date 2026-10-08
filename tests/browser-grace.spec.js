@@ -14,7 +14,7 @@ const members = [
   { ...bo, role: 'member', joinedAt: '2026-09-07T16:00:00.000Z' },
 ];
 const grace = {
-  active: true, endsAt: '2026-10-13T12:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026,
+  endsAt: '2026-10-13T12:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026,
   requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex],
 };
 

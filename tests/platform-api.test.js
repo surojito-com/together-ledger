@@ -1195,16 +1195,27 @@ test('a journey left fully paused reads again, and nothing can choose that mode 
   const userId = '66666666-6666-4666-8666-666666666666';
   const journeyId = '77777777-7777-4777-8777-777777777777';
   // As the schema stood before migration 029: an owner had chosen to fully pause.
-  const { app, pool } = await testPlatform({
+  const { app, pool, platform } = await testPlatform({
     configOverrides: billingConfig,
     beforeMigration029: async (before) => {
       await before.query(`INSERT INTO users (id,email_normalized,username,display_name,password_hash,created_at) VALUES ($1,'paused@example.test','paused-owner','Paused','x',now())`, [userId]);
       await before.query(`INSERT INTO journeys (id,owner_user_id,name,location,start_date_status,end_date_status,budget_cents,unpaid_capacity_mode) VALUES ($1,$2,'A journey someone paused','','unknown','forever',0,'paused')`, [journeyId, userId]);
+      await before.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'owner')`, [journeyId, userId]);
     },
   });
   t.after(async () => { await app.close(); await pool.end(); });
   assert.equal((await pool.query('SELECT unpaid_capacity_mode FROM journeys WHERE id=$1', [journeyId])).rows[0].unpaid_capacity_mode, 'read-only');
   await assert.rejects(pool.query("UPDATE journeys SET unpaid_capacity_mode='paused' WHERE id=$1", [journeyId]));
+
+  // The journey's history says so, once, however many times the server starts.
+  assert.equal(await platform.recordRestingMadeReadOnly(), 1);
+  assert.equal(await platform.recordRestingMadeReadOnly(), 0);
+  const events = (await platform.snapshot(userId, journeyId)).events;
+  assert.deepEqual(events.map((event) => event.action), ['unpaid_capacity_rest_made_read_only']);
+  assert.match(events[0].summary, /^Together Ledger no longer lets resting journeyers be fully paused/);
+  assert.deepEqual(events[0].before, { unpaidCapacityMode: 'paused' });
+  assert.equal(events[0].after.unpaidCapacityMode, 'read-only');
+  assert.equal((await platform.snapshot(userId, journeyId)).eventChainValid, true);
 });
 
 // A journey whose payment has lapsed into grace: the owner pays, two others joined, and the
@@ -1247,7 +1258,6 @@ test('everyone in a journey in grace is told who pays, the time left, the weeks 
   for (const viewer of [owner, first, later]) {
     const capacity = await capacityFor(viewer);
     assert.deepEqual(capacity.grace, {
-      active: true,
       endsAt: '2026-08-09T12:00:00.000Z',
       daysLeft: 7,
       payer: { id: owner.user.id, displayName: 'Sam' },
@@ -1304,28 +1314,40 @@ test('the payer asks for another 7 days, one week ahead at a time, and each requ
   assert.equal(events[1].after_value.graceUntil, '2026-08-23T12:00:00.000Z');
 });
 
-test('when grace runs out the extra people rest and can still read, and asking again brings everyone back', async (t) => {
+test('when grace runs out the extra people rest and can still read, with no banner and nothing left to ask', async (t) => {
   const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
-  const { owner, first, later, capacityFor, ask, platform, journeyId } = await journeyInGrace(t, clock);
+  const { owner, later, capacityFor, ask, platform, journeyId } = await journeyInGrace(t, clock);
 
+  // Past the end of grace the journey rests, even though Stripe has neither been paid nor
+  // cancelled: a payment given up on cannot keep a grace, or a banner, alive.
   clock.now = new Date('2026-08-12T12:00:00.000Z');
   const lapsed = await capacityFor(later);
-  assert.equal(lapsed.grace.active, false);
-  assert.equal(lapsed.grace.daysLeft, 0);
-  assert.equal(lapsed.grace.canRequest, true, 'the payment can still be recovered, so another week can be asked for');
+  assert.equal(lapsed.grace, null);
   assert.deepEqual(lapsed.restingMemberIds, [later.user.id]);
   assert.ok((await platform.snapshot(later.user.id, journeyId)).events.length > 0, 'a resting journeyer reads the whole journey');
+  await assert.rejects(ask(owner), refusedWith('not_in_grace'));
 
-  // Asked after it ran out, the week starts now: nobody is handed a week already gone.
-  await ask(owner);
-  const back = await capacityFor(first);
-  assert.equal(back.grace.active, true);
-  assert.equal(back.grace.endsAt, '2026-08-19T12:00:00.000Z');
-  assert.deepEqual(back.restingMemberIds, []);
+  // Nor does a new calendar year bring the weeks back for it.
+  clock.now = new Date('2027-01-02T12:00:00.000Z');
+  assert.equal((await capacityFor(owner)).grace, null);
+  await assert.rejects(ask(owner), refusedWith('not_in_grace'));
+});
+
+test('two requests for the same week are answered in words, not as a server error', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { pool, owner, journeyId, ask } = await journeyInGrace(t, clock);
+  // One request is counted this year, but it holds number 2: the number this request is about to
+  // take is already gone, as it would be if two people's taps raced past the count together.
+  await pool.query(
+    `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+     VALUES ($1,$2,$3,2026,2,$4,$4,$5)`,
+    ['66666666-1111-4111-8111-111111111111', journeyId, owner.user.id, new Date('2026-01-01T00:00:00.000Z'), clock.now],
+  );
+  await assert.rejects(ask(owner), (error) => refusedWith('grace_request_conflict')(error) && error.status === 409 && /Refresh/.test(error.message));
 });
 
 test('seven weeks a calendar year, counted again from January 1', async (t) => {
-  const clock = { now: new Date('2026-12-20T12:00:00.000Z') };
+  const clock = { now: new Date('2026-12-28T12:00:00.000Z') };
   const { pool, owner, journeyId, automaticEnd, capacityFor, ask } = await journeyInGrace(t, clock);
   for (let number = 1; number <= 7; number += 1) {
     await pool.query(
@@ -1398,7 +1420,7 @@ test('a person can be in 101 journeys: the 102nd can be neither started nor join
   const refused = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(busy), payload: input });
   assert.equal(refused.statusCode, 409, refused.body);
   assert.equal(refused.json().error.code, 'journey_limit_reached');
-  assert.match(refused.json().error.message, /101 journeys/);
+  assert.equal(refused.json().error.message, "One person can be in at most 101 journeys, and you've reached that, so a new one can't be started. Every journey you're in stays as it is.");
   assert.equal((await platform.listJourneys(busy.user.id)).length, 101);
 
   // An invitation to a 102nd waits, as one does for room in a full journey.
