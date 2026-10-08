@@ -81,6 +81,10 @@ export class DisabledBillingService {
   async createLocationCheckoutSession() { throw new PlatformError(503, 'billing_unavailable', 'Additional place billing is not available yet.'); }
   async assertLocationCapacity() { throw new PlatformError(409, 'location_payment_required', 'Another place needs an active monthly place add-on.'); }
 
+  // Without billing, a moment's second place is refused whatever was paid, so no extra place is
+  // offered anywhere.
+  locationExtrasEnabled() { return false; }
+
   async assertAccountDeletable() {}
 
   async handleWebhook() {
@@ -292,6 +296,11 @@ export class StripeBillingService {
   }
 
   // A place bought in a store (#272) counts the same as one paid for here.
+  // Whether a moment's places beyond its first are paid for, and a paid place is counted when the
+  // moment is saved (assertLocationCapacity). The phone offers an extra place only when this is
+  // true, so nobody buys a place the server would not let them use.
+  locationExtrasEnabled() { return this.config.momentLocationBillingEnabled === true; }
+
   async assertLocationCapacity(userId, journeyId, momentId, locationCount) {
     const paid = paidEnvironments(this.config, { environment: 'mls.environment', payer: 'mls.payer_user_id', from: 4 });
     const slots = await this.pool.query(`SELECT m.location_billing_baseline,count(mls.id)::int AS count FROM journey_moments m LEFT JOIN moment_location_slots mls ON mls.moment_id=m.id AND mls.payer_user_id=$3 AND ${paid.sql} AND mls.state IN ('active','grace') WHERE m.id=$1 AND m.journey_id=$2 GROUP BY m.location_billing_baseline`, [momentId, journeyId, userId, ...paid.params]);

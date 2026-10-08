@@ -313,7 +313,10 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.patch('/api/v1/journeys/:journeyId', { preHandler: protectMutation }, async (request) => ({ data: { journey: await platform.updateJourney(request.auth.userId, request.params.journeyId, request.body || {}) } }));
   app.patch('/api/v1/journeys/:journeyId/unpaid-capacity', { preHandler: protectMutation }, async (request) => ({ data: { capacity: await platform.setRestOrder(request.auth.userId, request.params.journeyId, request.body || {}) } }));
   app.post('/api/v1/journeys/:journeyId/grace-requests', { preHandler: protectMutation }, async (request, reply) => reply.code(201).send({ data: { capacity: await platform.requestMoreGrace(request.auth.userId, request.params.journeyId) } }));
-  app.get('/api/v1/journeys/:journeyId/snapshot', { preHandler: authenticate }, async (request) => ({ data: await platform.snapshot(request.auth.userId, request.params.journeyId, request.query?.after) }));
+  // `extras` says which paid extras a moment can use here, so a phone offers only those (#340).
+  app.get('/api/v1/journeys/:journeyId/snapshot', { preHandler: authenticate }, async (request) => ({
+    data: { ...await platform.snapshot(request.auth.userId, request.params.journeyId, request.query?.after), extras: { place: billing.locationExtrasEnabled?.() === true } },
+  }));
   app.get('/api/v1/journeys/:journeyId/events', { preHandler: authenticate }, async (request) => {
     const snapshot = await platform.snapshot(request.auth.userId, request.params.journeyId, request.query?.after);
     return { data: { events: snapshot.events } };

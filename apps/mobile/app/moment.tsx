@@ -187,13 +187,13 @@ export default function MomentScreen() {
         <MomentCard moment={preview} />
       </Section>
 
-      {/* An extra photo or place is bought for a moment that has been held, so the purchase can
-          name it, and only once the moment holds the first of its kind, which stays free. */}
+      {/* An extra place is bought for a moment that has been held, so the purchase can name it,
+          once the moment holds its free first place and the server counts a paid one. */}
       {before ? (
         <MomentExtras
           journeyId={journey.state.activeId}
           momentId={before.id}
-          offered={extrasFor({ locations: before.locations, images: (journey.state.snapshot.images || []).filter((image) => image.momentId === before.id && !image.deletedAt) })}
+          offered={extrasFor({ locations: before.locations }, journey.state.snapshot.extras)}
         />
       ) : null}
 

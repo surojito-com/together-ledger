@@ -197,10 +197,19 @@ test('the first paid journey is offered the subscriptions, every other one the p
   assert.deepEqual(products.roomOfferFor([{ productId: 'room_51_monthly', journeyValue: elsewhere }], here), { shape: 'passes', current: null, products: products.PASS_IDS }, 'a second subscription would move the first journey\'s room');
 });
 
-test('an extra is offered once the free first photo or place is used', () => {
-  assert.deepEqual(products.extrasFor({}), []);
-  assert.deepEqual(products.extrasFor({ locations: [{}], images: [] }), ['extra_place']);
-  assert.deepEqual(products.extrasFor({ locations: [{}], images: [{}] }), ['extra_photo', 'extra_place']);
+test('an extra place is offered only where the server counts it, once the free first place is used (#340)', () => {
+  const on = { place: true };
+  assert.deepEqual(products.extrasFor({}, on), []);
+  assert.deepEqual(products.extrasFor({ locations: [{}] }, on), ['extra_place']);
+  assert.deepEqual(products.extrasFor({ locations: [{}] }, { place: false }), [], 'the server does not count a paid place here');
+  assert.deepEqual(products.extrasFor({ locations: [{}] }, undefined), [], 'a server that does not say is not asked to');
+});
+
+test('no extra photo is sold on the phone until it can add photos (#187)', async () => {
+  assert.deepEqual(products.extrasFor({ locations: [{}, {}], images: [{}, {}] }, { place: true }), ['extra_place']);
+  assert.doesNotMatch(products.EXTRAS_INTRO, /photo/i);
+  const form = await readFile(join(mobile, 'app/moment.tsx'), 'utf8');
+  assert.match(form, /offered=\{extrasFor\(\{ locations: before\.locations \}, journey\.state\.snapshot\.extras\)\}/, 'the moment asks the snapshot');
 });
 
 test('only store-purchase.ts starts or finishes a purchase, and only store-kit.ts loads the store library', async () => {

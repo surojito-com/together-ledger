@@ -79,15 +79,22 @@ holds both.
   another journey, this one is offered the four passes instead, because a second subscription in the same group
   would move the first journey's room here. A journey that already holds the subscription can change between 51
   and 101 people (on Google, up now with proration, down deferred to the end of the paid period).
-- **A moment → More on this moment**, once it holds its free first photo or place: an extra photo or place,
-  naming the moment. An extra the phone paid for but whose moment it no longer knows (the app closed before the
-  store answered) waits, and can be put on any moment from there.
+  "First paid journey" is judged per store account, from the subscriptions that store reports; someone with a
+  subscription on the other platform is offered one again. Decided fine for v1 by the owner, Oct 8, 2026; knowing
+  it across both stores is #344.
+- **A moment → More on this moment**: an extra place, naming the moment, once it holds its free first place and
+  only where the server counts a paid place. The journey snapshot says so in `extras.place`, which is true only
+  with `MOMENT_LOCATION_BILLING_ENABLED` on and a billing service that counts paid places when a moment is saved;
+  without billing, every second place is refused whatever was paid. An extra place the phone paid for but whose
+  moment it no longer knows (the app closed before the store answered) waits, and can be put on any moment from
+  there.
+- **No extra photo is sold on the phone** until it can add photos to a moment (#187); owner, Oct 8, 2026.
 - **Restore purchases**, in Settings and beside the room offers (#275).
 - Every price is the store's `displayPrice`. A product the store does not list says it isn't offered yet.
 
 Each transaction goes to `/billing/store-purchases/apple` or `/google`. It is finished on success; on a refusal
 with `retryable: false`, an Apple transaction is finished, and a Google one is left unacknowledged so Google
-refunds it within three days; anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
+refunds it within three days (decided by the owner, Oct 8, 2026); anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
 the store to hand back. A purchase Google still reports as pending is not sent.
 
 On Android, Play Billing brings two permissions, so `app.json` grants them beside `INTERNET` and the Phone test APK

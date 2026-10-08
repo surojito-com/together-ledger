@@ -321,6 +321,8 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     const body = snapshot.json().data;
     assert.deepEqual(body.members.map((member) => member.id), [alice.user.id]);
     assert.equal(body.members[0].role, 'owner');
+    // Without billing no extra place can be used, so the snapshot tells the phone not to sell one (#340).
+    assert.deepEqual(body.extras, { place: false });
     assert.ok(body.members[0].joinedAt);
     assert.ok(body.journey.createdAt);
     assert.deepEqual(body.invitations, []);

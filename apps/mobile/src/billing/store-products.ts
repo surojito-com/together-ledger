@@ -82,14 +82,15 @@ export function roomOfferFor(held: HeldSubscription[], thisJourneyValue: string 
 }
 
 /**
- * The extras a moment is offered. Every moment's first photo and first place stay free, so an
- * extra is offered only once the moment holds the one that is included.
+ * The extras a moment is offered (owner, Oct 8, 2026, on #340).
+ *
+ * - An extra place, only when the server says a paid place is counted here (the snapshot's
+ *   `extras.place`), and only once the moment holds its first place, which stays free.
+ * - Never an extra photo, until the phone can add photos to a moment (#187). Selling one before
+ *   then would be selling something the person cannot use here.
  */
-export function extrasFor(moment: { locations?: unknown[] | null; images?: unknown[] | null }): ExtraProductId[] {
-  const offered: ExtraProductId[] = [];
-  if ((moment.images?.length ?? 0) >= 1) offered.push('extra_photo');
-  if ((moment.locations?.length ?? 0) >= 1) offered.push('extra_place');
-  return offered;
+export function extrasFor(moment: { locations?: unknown[] | null }, server: { place?: boolean } | null | undefined): ExtraProductId[] {
+  return server?.place === true && (moment.locations?.length ?? 0) >= 1 ? ['extra_place'] : [];
 }
 
 // The words: people, room and rest (CLAUDE.md, "Language"). Capacity is never counted out in pieces,
@@ -110,7 +111,7 @@ export function roomShapeCopy(offer: RoomOffer, platform: StorePlatformName) {
 
 export const EXTRAS_TITLE = 'More on this moment';
 
-export const EXTRAS_INTRO = 'Every moment’s first photo and first place stay free. An extra photo or place is paid for once, and stays with this moment for good. It never rests and never lapses.';
+export const EXTRAS_INTRO = 'Every moment’s first place stays free. An extra place is paid for once, and stays with this moment for good. It never rests and never lapses.';
 
 export function notOfferedYet(platform: StorePlatformName) {
   return `${platform === 'ios' ? 'The App Store' : 'Google Play'} isn’t offering this yet.`;

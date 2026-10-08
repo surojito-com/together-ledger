@@ -51,7 +51,7 @@ export type Concern = { id: string; title: string; detail?: string | null; statu
 /** What the ledger needs of the capacity answer: the grace banner's facts (see sharing-view.ts). */
 export type SnapshotCapacity = { peopleHere: number; grace?: Grace | null };
 
-export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[]; inviteProposals?: { viewerMayDecide?: boolean }[]; capacity?: SnapshotCapacity };
+export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[]; inviteProposals?: { viewerMayDecide?: boolean }[]; capacity?: SnapshotCapacity; extras?: { place?: boolean } };
 
 /** A moment as the list draws it: its photos, and its removed photos, already attached. */
 export type ShownMoment = Moment & { images: MomentImage[]; removedImages: MomentImage[] };

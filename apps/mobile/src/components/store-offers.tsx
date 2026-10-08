@@ -21,8 +21,8 @@ import { fonts, useTheme } from '../theme';
 import { Body, Button } from './ui';
 
 /**
- * Where the phone sells (#272): room for more people in a journey's settings, and an extra photo
- * or place on a moment. Every price is the store's own, for this person's storefront, and a
+ * Where the phone sells (#272): room for more people in a journey's settings, and an extra place
+ * on a moment (no extra photo until the phone can add photos, #187). Every price is the store's own, for this person's storefront, and a
  * product the store does not list is shown as not offered rather than with a price of ours.
  *
  * Paying and waiting are never failures, so nothing here takes the colour kept for what cannot be
