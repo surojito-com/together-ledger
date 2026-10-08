@@ -4,6 +4,9 @@ import { accountMessage, ACCOUNT_NOTICES } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { ACCOUNT_WHILE_OFFLINE } from '../src/auth/session-state';
 import { useJourney } from '../src/journey/use-journey';
+import { useWaitingMoments } from '../src/journey/use-waiting-moments';
+import { signOutConsequence } from '../src/journey/waiting-moments';
+import { useShell } from '../src/shell/shell-provider';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
 
 /**
@@ -20,6 +23,8 @@ export default function AccountScreen() {
   // The name being edited; null until the person types, so it shows their current name.
   const [name, setName] = useState<string | null>(null);
   const journey = useJourney();
+  const waiting = useWaitingMoments();
+  const shell = useShell();
   const [notice, setNotice] = useState<string | null>(carried && carried in ACCOUNT_NOTICES ? ACCOUNT_NOTICES[carried] : null);
   const [problem, setProblem] = useState(false);
 
@@ -81,14 +86,20 @@ export default function AccountScreen() {
         ) : null}
         <Notice message={notice} tone={problem ? 'problem' : 'info'} />
         <Body>Signing out removes hosted journeys from this view without deleting them.</Body>
-        <Button kind="quiet" label="Sign out" pending={pending === 'sign-out'} onPress={() => run('sign-out', async () => {
-          try {
-            await session.client.logout();
-          } finally {
-            session.setUser(null);
-          }
-          return ACCOUNT_NOTICES.signedOut;
-        })} />
+        <Button kind="quiet" label="Sign out" pending={pending === 'sign-out'} onPress={async () => {
+          // Moments still waiting on this phone are said, and asked about, before they go (#352).
+          const held = waiting.moments.length;
+          if (held && !await shell.confirmConsequence(signOutConsequence(held))) return;
+          await run('sign-out', async () => {
+            if (held) await waiting.clear();
+            try {
+              await session.client.logout();
+            } finally {
+              session.setUser(null);
+            }
+            return ACCOUNT_NOTICES.signedOut;
+          });
+        }} />
       </Screen>
     );
   }

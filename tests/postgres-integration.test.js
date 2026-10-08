@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -392,4 +392,29 @@ test('real PostgreSQL writes an invitation’s running out exactly once, however
   assert.equal(stored.includes(`invited-b-${suffix}@example.test`), false);
   assert.equal((await platform.snapshot(user.id, journey.id)).eventChainValid, true);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+// #352: a phone that never heard back sends a held moment again, perhaps while the first send is
+// still on its way. However many arrive together, the journey's lock and the key's primary key
+// leave one moment, and every answer names it.
+test('real PostgreSQL holds a moment once, however many sends of its key arrive together', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const email = `held-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `held-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Held offline', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const moment = { kind: 'memory', kindLabel: '', occurredOn: '2026-08-01', title: 'Sent five times', detail: '', visibility: 'shared-now', theme: '', moneyCents: null, moneyCurrency: '', locations: [], idempotencyKey: `0f8c7c1e-5a3b-4c2d-9e10-${suffix.padStart(12, '0').slice(-12)}` };
+  const answers = await Promise.all(Array.from({ length: 5 }, () => platform.holdMoment(user.id, journey.id, moment)));
+  assert.equal(new Set(answers.map((answer) => answer.moment.id)).size, 1, 'every answer names the same moment');
+  assert.equal(answers.filter((answer) => !answer.replayed).length, 1, 'exactly one of them held it');
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_moments WHERE journey_id=$1', [journey.id])).rows[0].count, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1 AND action='moment_added'", [journey.id])).rows[0].count, 1);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM moment_hold_keys WHERE author_user_id=$1', [user.id])).rows[0].count, 0);
 });

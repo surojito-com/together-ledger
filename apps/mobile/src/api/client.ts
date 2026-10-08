@@ -192,9 +192,13 @@ export function createAccountClient({ base, fetch, tokens }: {
     async snapshot<S>(journeyId: string) {
       return request<S>(`/journeys/${encodeURIComponent(journeyId)}/snapshot`, { signedIn: true });
     },
-    /** Hold a new moment (TL-M-08, #183). */
-    async createMoment<M>(journeyId: string, moment: object) {
-      return (await request<{ moment: M }>(`/journeys/${encodeURIComponent(journeyId)}/moments`, { method: 'POST', body: moment, signedIn: true })).moment;
+    /**
+     * Hold a new moment (TL-M-08, #183). With the key this phone chose for it (#352), sending it
+     * again answers with the moment already held instead of holding a second one.
+     */
+    async createMoment<M>(journeyId: string, moment: object, idempotencyKey?: string) {
+      const body = idempotencyKey ? { ...moment, idempotencyKey } : moment;
+      return (await request<{ moment: M }>(`/journeys/${encodeURIComponent(journeyId)}/moments`, { method: 'POST', body, signedIn: true })).moment;
     },
     /** Change a moment, from the version it was read at; a newer one elsewhere is a conflict. */
     async updateMoment<M>(journeyId: string, momentId: string, moment: object) {

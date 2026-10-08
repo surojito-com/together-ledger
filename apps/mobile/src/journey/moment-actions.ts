@@ -4,6 +4,8 @@ import { useSession } from '../auth/session';
 import { useShell } from '../shell/shell-provider';
 import { deleteConsequence, payloadFrom, savedMessage, sharePayload, type Draft, type EditableMoment } from './moment-draft';
 import { useJourney } from './use-journey';
+import { useWaitingMoments } from './use-waiting-moments';
+import { KEPT_ON_PHONE } from './waiting-moments';
 
 const SHARE_NOW = {
   title: 'Share this moment now?',
@@ -13,13 +15,19 @@ const SHARE_NOW = {
 
 /**
  * Holding, changing, sharing and deleting a moment (TL-M-08, #183). Each one asks the server,
- * which stays the authority, and then re-reads the journey. A refusal (offline, a conflict, a
- * place that needs its add-on) goes to the status region and leaves the form as it was.
+ * which stays the authority, and then re-reads the journey. A refusal (a conflict, a place that
+ * needs its add-on) goes to the status region and leaves the form as it was.
+ *
+ * Holding a new moment is the one change that can wait (#352): when the service cannot be
+ * reached, it is kept on this phone and sent once the connection returns
+ * (src/journey/use-waiting-moments.ts). Changing, sharing and deleting still need the connection,
+ * and offline they are refused and leave the form as it was.
  */
 export function useMomentActions() {
   const { client } = useSession();
   const shell = useShell();
   const journey = useJourney();
+  const waiting = useWaitingMoments();
   const journeyId = journey.state.phase === 'ready' ? journey.state.activeId : null;
 
   async function attempt(work: () => Promise<void>) {
@@ -43,11 +51,22 @@ export function useMomentActions() {
       if (!journeyId) return false;
       if (before && before.visibility !== 'shared-now' && draft.visibility === 'shared-now' && !await shell.confirmConsequence(SHARE_NOW)) return false;
       const payload = payloadFrom(draft, before);
-      const saved = await attempt(async () => {
-        if (before) await client.updateMoment(journeyId, before.id, payload);
-        else await client.createMoment(journeyId, payload);
-      });
-      if (!saved) return false;
+      if (!before) {
+        const journeyName = journey.state.phase === 'ready' ? journey.state.snapshot.journey.name : '';
+        shell.clearStatus('moment');
+        const held = await waiting.hold(journeyId, journeyName, payload).catch((error: unknown) => {
+          shell.showStatus(accountMessage(error), { source: 'moment' });
+          return null;
+        });
+        if (!held) return false;
+        if (held === 'waiting') {
+          router.back();
+          shell.showToast(KEPT_ON_PHONE);
+          return true;
+        }
+      } else if (!await attempt(() => client.updateMoment(journeyId, before.id, payload).then(() => undefined))) {
+        return false;
+      }
       await journey.reload();
       router.back();
       shell.showToast(savedMessage(before, draft.visibility));

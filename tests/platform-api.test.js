@@ -56,6 +56,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query((await readFile(new URL('../server/migrations/030_ask-for-six-weeks-a-year.sql', import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
   await pool.query(await readFile(new URL('../server/migrations/031_let-a-lost-renewal-reply-be-asked-again.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/033_let-a-moment-held-offline-arrive-once.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -2602,4 +2603,171 @@ test('a phone changes its name with its token', async (t) => {
   const changed = await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: { ...phoneHeaders(phone.token), 'x-together-client': 'app' }, payload: { displayName: 'Phone Name' } });
   assert.equal(changed.statusCode, 200, changed.body);
   assert.equal(changed.json().data.user.displayName, 'Phone Name');
+});
+
+// #352: a moment held on a phone without a connection is sent later, and sent again whenever the
+// phone never heard back. The key it chose makes that safe: one moment, however often it arrives.
+const HELD = { kind: 'memory', kindLabel: '', occurredOn: '2026-08-01', title: 'Held in airplane mode', detail: 'Written with no signal.', visibility: 'shared-now', theme: '', moneyCents: null, moneyCurrency: '', locations: [{ label: 'Gate 12' }] };
+const holdKey = (n) => `0f8c7c1e-5a3b-4c2d-9e10-${String(n).padStart(12, '0')}`;
+const hold = (app, who, journeyId, body) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/moments`, headers: authHeaders(who), payload: body });
+const momentRows = async (pool, journeyId) => (await pool.query('SELECT id,created_by_user_id,title FROM journey_moments WHERE journey_id=$1 ORDER BY created_at,id', [journeyId])).rows;
+
+test('a moment sent again with its key is the moment already held, and nothing new is made', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const first = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(1) });
+  assert.equal(first.statusCode, 201, first.body);
+  const again = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(1) });
+  assert.equal(again.statusCode, 200, again.body);
+  assert.equal(again.json().data.moment.id, first.json().data.moment.id);
+  assert.equal((await momentRows(pool, journey.id)).length, 1, 'one moment, however often it arrives');
+  const events = await pool.query("SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1 AND action='moment_added'", [journey.id]);
+  assert.equal(events.rows[0].count, 1, 'the history records it once');
+
+  // Changed since on another device: the resend still answers with that moment, as it is now.
+  const moment = first.json().data.moment;
+  const edited = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(alice), payload: { title: 'Held, then renamed', version: moment.version } });
+  assert.equal(edited.statusCode, 200, edited.body);
+  const late = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(1) });
+  assert.equal(late.statusCode, 200, late.body);
+  assert.equal(late.json().data.moment.title, 'Held, then renamed');
+  assert.equal((await momentRows(pool, journey.id)).length, 1);
+
+  // Without a key, as the web sends, every send is its own moment, exactly as before.
+  assert.equal((await hold(app, alice, journey.id, HELD)).statusCode, 201);
+  assert.equal((await hold(app, alice, journey.id, HELD)).statusCode, 201);
+  assert.equal((await momentRows(pool, journey.id)).length, 3);
+});
+
+test('the same key from someone else holds their own moment, and says nothing about anyone else', async (t) => {
+  const { app, pool, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const fromAlice = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(2) });
+  const fromBob = await hold(app, bob, journey.id, { ...HELD, idempotencyKey: holdKey(2) });
+  assert.equal(fromAlice.statusCode, 201, fromAlice.body);
+  assert.equal(fromBob.statusCode, 201, 'a fresh moment, answered exactly as any first hold is');
+  assert.notEqual(fromBob.json().data.moment.id, fromAlice.json().data.moment.id);
+  assert.equal(fromBob.json().data.moment.createdByUserId, bob.user.id);
+  // Different content under a key someone else used is not refused either: nothing tells Bob it was used.
+  await hold(app, alice, journey.id, { ...HELD, title: 'Alice first', idempotencyKey: holdKey(4) });
+  const bobsOwn = await hold(app, bob, journey.id, { ...HELD, title: 'Bob, unaware', idempotencyKey: holdKey(4) });
+  assert.equal(bobsOwn.statusCode, 201, bobsOwn.body);
+  assert.equal(bobsOwn.json().data.moment.title, 'Bob, unaware');
+  assert.equal((await momentRows(pool, journey.id)).length, 4);
+
+  // A key belongs to one journey too: the same one in another journey holds a moment there.
+  const elsewhere = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'Another', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  const other = elsewhere.json().data.journey.id;
+  assert.equal((await hold(app, alice, other, { ...HELD, idempotencyKey: holdKey(2) })).statusCode, 201);
+  assert.equal((await momentRows(pool, other)).length, 1);
+});
+
+test('a key that comes back with different content is refused, and the first moment kept', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const first = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(5) });
+  assert.equal(first.statusCode, 201, first.body);
+  for (const change of [{ title: 'A different name' }, { visibility: 'private' }, { locations: [] }, { detail: '' }]) {
+    const refused = await hold(app, alice, journey.id, { ...HELD, ...change, idempotencyKey: holdKey(5) });
+    assert.equal(refused.statusCode, 409, refused.body);
+    assert.equal(refused.json().error.code, 'moment_key_reused');
+    assert.equal(refused.json().error.message, 'This moment was already sent with different details. The first one is kept, and this one was not held.');
+  }
+  const rows = await momentRows(pool, journey.id);
+  assert.deepEqual(rows.map((row) => row.title), ['Held in airplane mode']);
+});
+
+test('a moment held, then deleted, is not held again when its key arrives late', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const first = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(6) });
+  const moment = first.json().data.moment;
+  const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(alice), payload: { version: moment.version } });
+  assert.equal(removed.statusCode, 204, removed.body);
+  const late = await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(6) });
+  assert.equal(late.statusCode, 409, late.body);
+  assert.equal(late.json().error.code, 'moment_already_deleted');
+  assert.equal(late.json().error.message, 'This moment was already held and has since been deleted, so it was not held again.');
+  assert.deepEqual(await momentRows(pool, journey.id), []);
+});
+
+test('a key the phone did not choose properly is refused before anything is held', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  for (const idempotencyKey of ['short', 'x'.repeat(65), 'not a key with spaces!!', 42, { id: holdKey(7) }]) {
+    const refused = await hold(app, alice, journey.id, { ...HELD, idempotencyKey });
+    assert.equal(refused.statusCode, 400, refused.body);
+    assert.equal(refused.json().error.code, 'invalid_input');
+  }
+  assert.deepEqual(await momentRows(pool, journey.id), []);
+});
+
+test('the keys go with a person who is removed, and with an account that is deleted', async (t) => {
+  const { app, pool, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  await hold(app, alice, journey.id, { ...HELD, idempotencyKey: holdKey(8) });
+  await hold(app, bob, journey.id, { ...HELD, idempotencyKey: holdKey(9) });
+  const keysOf = async (userId) => (await pool.query('SELECT count(*)::int AS count FROM moment_hold_keys WHERE author_user_id=$1', [userId])).rows[0].count;
+  assert.equal(await keysOf(bob.user.id), 1);
+  const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/members/${bob.user.id}`, headers: authHeaders(alice), payload: {} });
+  assert.equal(removed.statusCode, 204, removed.body);
+  assert.equal(await keysOf(bob.user.id), 0);
+  assert.equal(await keysOf(alice.user.id), 1);
+  const deleted = await app.inject({ method: 'DELETE', url: '/api/v1/account', headers: authHeaders(alice), payload: { password: 'correct horse battery staple', confirmation: 'DELETE' } });
+  assert.equal(deleted.statusCode, 204, deleted.body);
+  assert.equal(await keysOf(alice.user.id), 0);
+});
+
+test('the phone keeps a moment held offline, sends it once the connection returns, and a lost reply never makes two', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const draft = await load('../apps/mobile/src/journey/moment-draft.ts');
+  const waiting = await load('../apps/mobile/src/journey/waiting-moments.ts');
+  // How the connection behaves: gone, a reply lost after the server acted, or fine.
+  let network = 'online';
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      if (network === 'offline') throw new TypeError('Network request failed');
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      if (network === 'lost-reply') throw new TypeError('Network request failed');
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'airplane@example.test', username: 'airplane', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'airplane@example.test').token);
+  const journey = await phone.createJourney({ name: 'Ours', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const accountId = (await phone.session()).id;
+  const items = new Map();
+  const store = waiting.createWaitingStore({ getItem: async (key) => items.get(key) ?? null, setItem: async (key, value) => { items.set(key, value); }, removeItem: async (key) => { items.delete(key); } });
+  const send = (entry) => phone.createMoment(journey.id, entry.moment, entry.key).then(() => undefined);
+  const describe = (error) => error.message;
+  const keep = (key, title, change = {}) => store.add(accountId, { key, journeyId: journey.id, journeyName: 'Ours', heldAt: new Date().toISOString(), moment: draft.payloadFrom({ ...draft.draftFrom(null), title, ...change }, null), refusal: null });
+
+  network = 'offline';
+  await keep('11111111-aaaa-4bbb-8ccc-000000000001', 'AirplaneModeEntry');
+  assert.deepEqual(await waiting.sendWaiting(accountId, { store, send, describe }), { sent: [], stopped: 'wait' });
+  network = 'lost-reply';
+  assert.deepEqual(await waiting.sendWaiting(accountId, { store, send, describe }), { sent: [], stopped: 'wait' }, 'the server held it, but the phone never heard');
+  assert.equal((await store.list(accountId)).length, 1, 'so the phone keeps it');
+
+  network = 'online';
+  await keep('11111111-aaaa-4bbb-8ccc-000000000002', 'Held after it', { kind: 'not-a-kind' });
+  await keep('11111111-aaaa-4bbb-8ccc-000000000003', 'And another');
+  const sent = await waiting.sendWaiting(accountId, { store, send, describe });
+  assert.deepEqual(sent, { sent: ['11111111-aaaa-4bbb-8ccc-000000000001', '11111111-aaaa-4bbb-8ccc-000000000003'], stopped: null });
+  const moments = (await phone.snapshot(journey.id)).moments;
+  assert.deepEqual(moments.map((moment) => moment.title).sort(), ['AirplaneModeEntry', 'And another'], 'the moment whose reply was lost is there once');
+  const left = await store.list(accountId);
+  assert.equal(left.length, 1);
+  assert.deepEqual(left[0].refusal, { code: 'invalid_input', message: 'Choose a valid kind of moment.' }, 'the refusal stays with its moment, in the service\'s words');
 });

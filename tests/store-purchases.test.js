@@ -26,7 +26,7 @@ const MIGRATIONS = [
   '022_agree-together-before-adding-someone', '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted', '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
   '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time', '030_ask-for-six-weeks-a-year',
-  '031_let-a-lost-renewal-reply-be-asked-again',
+  '031_let-a-lost-renewal-reply-be-asked-again', '033_let-a-moment-held-offline-arrive-once',
 ];
 const origin = 'http://127.0.0.1:4174';
 const PURCHASED = Date.parse('2026-10-08T12:00:00Z');

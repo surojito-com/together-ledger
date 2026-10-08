@@ -45,6 +45,7 @@ const MIGRATIONS = [
   '026_remember-a-refused-apple-deletion.sql',
   '031_let-a-lost-renewal-reply-be-asked-again.sql',
   '032_let-an-invitation-last-fourteen-days.sql',
+  '033_let-a-moment-held-offline-arrive-once.sql',
 ];
 
 async function appAtItsOwnHome() {

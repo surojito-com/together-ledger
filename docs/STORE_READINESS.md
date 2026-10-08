@@ -191,11 +191,14 @@ What the phone can send, from `apps/mobile/src/api/client.ts`:
 | Sign-in tokens (access and refresh) | Keychain / Keystore-backed storage, `WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`apps/mobile/src/auth/token-storage.ts:9-10`) | Sent to our API only, as the bearer token (`client.ts:80`). Kept out of iOS backups by the accessibility class, and out of Android Auto Backup and device transfer (`apps/mobile/plugins/with-tokens-out-of-backup.js:5-42`) | Verified in code |
 | Chosen theme, whether the ledger was begun | SQLite key-value store in the app sandbox (`apps/mobile/src/storage/phone-storage.ts:11-17`, `use-stored-preferences.ts:12-13`) | Included in normal Android Auto Backup and iOS backups (only tokens are excluded) | Verified in code |
 | A synthetic sample ledger | Written once when the ledger is begun (`apps/mobile/src/storage/ledger-store.ts:54-59`, `src/model.js:49`) | As above. It holds no personal data | Verified in code |
+| A moment held while the service can't be reached (#352): everything the form sends (kind, date, title, words, places as typed, visibility, theme, money context), the journey's id and name, when it was held, a random key chosen on the phone, and the service's words if it refused it | Same SQLite key-value store, one list per account id (`apps/mobile/src/journey/waiting-moments.ts`, `apps/mobile/src/storage/phone-storage.ts`) | Sent to our API, with its key, once the connection returns or the app opens; removed from the phone as soon as the API has it. Until then, included in normal Android Auto Backup and iOS backups like the rows above. Removed earlier if the person discards it after a refusal, signs out on purpose (asked first), or deletes the account. Kept through a sign-in that ends by itself, for the same account | Verified in code |
+| The id of the account this phone is signed in as | Same store (`SIGNED_IN_ACCOUNT_KEY`, `waiting-moments.ts`) | Never sent. Lets an app opened offline count only that account's waiting moments; removed on sign-out | Verified in code |
 | The person's account and journeys | Held in memory while the app runs; the phone keeps no copy of a journey between launches (no call to the local store outside `_layout.tsx:74`) | Fetched from the API each time | Verified in code |
 
 **What that means for the person:** on the phone, everything they write lives on our server, not
-the phone. Losing the phone loses only the sign-in (which can be revoked by changing the password,
-`server/platform.js:821-840`) and the theme.
+the phone, except a moment held while the service can't be reached, which waits on the phone until
+it is sent (#352). Losing the phone loses only the sign-in (which can be revoked by changing the
+password, `server/platform.js:821-840`), the theme, and any moment still waiting to be sent.
 
 ### 2.4 Processors: who receives data and why
 
@@ -237,6 +240,7 @@ row for one that is gone.
 | `@react-native-community/netinfo` | No | Says whether the phone is connected, for the offline notice (#300). Its own check that the internet can be reached would ask `clients3.google.com` on iOS; it is switched off (`apps/mobile/src/shell/use-connection.ts`), so the library makes no request. On Android it declares `ACCESS_NETWORK_STATE`, already granted (2.4), and `ACCESS_WIFI_STATE`, which is blocked (`apps/mobile/app.json`): only connected or not is read, never the Wi-Fi network's name |
 | `expo` | No (not verified by traffic) | Core runtime. No update, analytics or notification module is installed |
 | `expo-constants` | No | Reads build constants |
+| `expo-crypto` | No | Only `randomUUID()`, for the key each moment held on the phone carries so a resend is never a second moment (#352, `apps/mobile/src/journey/use-waiting-moments.ts`) |
 | `expo-dev-client` | Development only (not verified) | Connects to a dev server only in a development build (`eas.json:7-11`) |
 | `expo-font` | No | Loads the bundled fonts above; never given a URL |
 | `expo-linking` | No | Opens the app from its own links (`scheme`, `app.json:6`) |
@@ -300,6 +304,8 @@ dependency (2.4).
 | Invitation link | 14 days by default; one that runs out can be sent again while the proposal's 30 days last (#347) | Verified in code (`server/config.js`, `INVITATION_DAYS`) |
 | Invite proposal | Lapses after 30 days if not agreed | Verified in code (`server/platform.js:56`) |
 | Removed photo | The most recently removed one per moment, until another is removed or the moment is deleted | Verified in code (`server/platform.js:1668-1669`) |
+| A moment's hold key: the phone's random key, the moment it made, and a keyed hash of what it said (#352) | As long as the journey and the person in it; the moment link is emptied when the moment is deleted | Verified in code (`server/migrations/033_let-a-moment-held-offline-arrive-once.sql`, `server/platform.js`, `holdMoment`) |
+| A moment waiting on the phone | Until the API has it, or the person discards it after a refusal, signs out on purpose, or deletes the account (2.3) | Verified in code (`apps/mobile/src/journey/waiting-moments.ts`) |
 | Server request logs (with network address) | Rotated: 3 files of 10 MB each, oldest overwritten | Verified in code (`compose.production.yaml:36-43`, `server/log-options.js:18-31`) |
 | Local encrypted backups | Deleted after 29 full days (`-mtime +29`) | Verified in code (`scripts/backup-postgres.sh:78-80`) |
 | Offsite backups (Google Cloud) | 30-day lifecycle rule, up to a day more for deletion to run (TL-C-04) | Decision; bucket setting not verified here (`docs/OPERATIONS.md:133-140`) |
@@ -317,6 +323,8 @@ the web: Settings (`index.html:334`). Both call `DELETE /api/v1/account` (`serve
 | Sessions, phone tokens, email-link tokens (`server/platform.js:1894-1896`) | Verified in code |
 | Journeys only the person was in, with everything in them and their history (`:1871-1877`) | Verified in code |
 | Their private and share-later moments and private history in shared journeys (`:1879-1880`) | Verified in code |
+| The keys of moments they held from a phone (#352), in every journey (`server/platform.js`, `eraseAccount`) | Verified in code |
+| Moments still waiting on the phone they delete from, after the deletion is confirmed (`apps/mobile/app/delete-account.tsx`) | Verified in code |
 | Google/Apple identities; Apple's grant revoked with Apple (`:1897-1914`, `:1928-1931`) | Verified in code |
 | Invitations they sent; pending invitations to them are revoked (`:1915-1916`) | Verified in code |
 | Their email, username and name on the account row, replaced; password hash removed (`:1917-1920`) | Verified in code |
@@ -487,6 +495,9 @@ sentence twice, differently. What it currently gets wrong or leaves out, against
    Google Play, what we keep about a purchase (2.1), and that deleting the account does not cancel a
    store subscription, which is cancelled with Apple or Google (the phone already says so before
    deleting, `apps/mobile/app/delete-account.tsx:24`).
+9. **A moment held offline** (#352, 2.3): the phone keeps it, for that account only, until our
+   service has it. `PRIVACY.md` says nothing about it yet; the sentence proposed for it is in the
+   pull request that built it, for the owner to approve.
 
 The sibling products need the same file: I'm Home and Green Light (#264). File those issues once
 this one has been through a submission.

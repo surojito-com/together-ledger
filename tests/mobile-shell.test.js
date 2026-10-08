@@ -55,16 +55,17 @@ test('the phone watches its connection, shows a standing caution, and clears it 
   assert.equal(connectionChange(false, false), null);
   assert.equal(connectionChange(false, null), null, 'not knowing yet is not coming back');
 
-  // The web promises that anything "will wait". Nothing waits on the phone yet, so it says only what is true.
-  assert.doesNotMatch(OFFLINE_NOTICE, /\bwait/);
-  // The owner's wording, Oct 8 (#361): warmer than the first draft, and still true today.
-  assert.equal(OFFLINE_NOTICE, 'You’re offline. Your journeys will be back when you reconnect; until then, nothing can be held or changed.');
+  // The web promises that anything "will wait". On the phone only a moment held now waits (#352),
+  // so the notice says that, and that nothing else can be changed. The owner's Oct 8 wording
+  // (#361) said nothing could be held; that stopped being true when held moments began to wait.
+  assert.equal(OFFLINE_NOTICE, 'You’re offline. A moment you hold now waits on this phone and is sent when you reconnect. Your journeys will be back then; until then, nothing else can be changed.');
+  assert.match(OFFLINE_NOTICE, /nothing else can be changed/);
 
   const layout = await read('app/_layout.tsx');
   assert.match(layout, /onOffline: \(\) => showStatus\(OFFLINE_NOTICE, \{ tone: 'caution', source: CONNECTION_SOURCE \}\)/);
   assert.match(layout, /onOnline: \(\) => \{\s*clearStatus\(CONNECTION_SOURCE\);\s*recheck\(\);/, 'back online clears only its own notice, then checks again');
   assert.match(layout, /onForeground: recheck/);
-  assert.match(layout, /const recheck = useCallback\(\(\) => \{\s*refresh\(\);\s*reload\(\);/, 'checking again means the session and the journeys, with no restart or password');
+  assert.match(layout, /const recheck = useCallback\(\(\) => \{\s*refresh\(\)\.then\(sendNow\);\s*reload\(\);/, 'checking again means the session, what waits to be sent, and the journeys, with no restart or password');
   assert.equal(CONNECTION_SOURCE, 'connection');
 
   const watch = await read('src/shell/use-connection.ts');
