@@ -5,6 +5,7 @@
  * Every limit here is also the server's (cleanMoment() in server/platform.js), and the server
  * stays the authority: these checks only save a round trip, in the server's own words.
  */
+import { localDay, MOMENT_NAME_MISSING } from '../../../../src/model.js';
 import { normalizeMomentTheme } from '../../../../src/moment-themes.js';
 import type { Moment } from './journey-view';
 
@@ -26,9 +27,12 @@ export type Draft = {
 
 export type EditableMoment = Moment & { version: number; locations?: Place[] };
 
-/** The web's currency choices, in its order ('' is "Currency (optional)"). */
+/**
+ * The web's currency choices, in its order and its words. The empty choice reads as what it is,
+ * no currency, so it never looks like a currency that has been chosen (#351).
+ */
 export const CURRENCIES: [string, string][] = [
-  ['', 'Currency (optional)'],
+  ['', 'No currency'],
   ['USD', 'USD — US dollar'],
   ['EUR', 'EUR — Euro'],
   ['GBP', 'GBP — British pound'],
@@ -38,11 +42,19 @@ export const CURRENCIES: [string, string][] = [
   ['INR', 'INR — Indian rupee'],
 ];
 
+/** The phone's drop-down (#351) carries "(optional)" in its own label. */
+export const CURRENCY_LABEL = 'Currency (optional)';
+
+export { MOMENT_NAME_MISSING };
+
 export const MAX_PLACES = 12;
 
-/** Today, as the web's date field starts: the UTC calendar day, "YYYY-MM-DD". */
+/**
+ * Today, as the web's date field starts: the person's own local day, "YYYY-MM-DD" (#336). Only
+ * the starting value is local; the calendar below still picks and stores a plain day.
+ */
 export function today(now = new Date()) {
-  return now.toISOString().slice(0, 10);
+  return localDay(now);
 }
 
 /** A new moment starts shared now, as on the web; an existing one starts as it is. */
@@ -88,7 +100,10 @@ function realDate(value: string) {
 export function draftProblem(draft: Draft): string | null {
   if (draft.kind === 'other' && (!draft.kindLabel.trim() || draft.kindLabel.trim().length > 60)) return 'A name for this kind of moment is required and must be 60 characters or fewer.';
   if (!realDate(draft.occurredOn)) return 'Choose a valid moment date.';
-  if (!draft.title.trim() || draft.title.trim().length > 120) return 'Moment title is required and must be 120 characters or fewer.';
+  // Named as the form names the field (#354). The field stops at 120, so only an empty name can
+  // reach the second check from the form; the server's words stay for anything longer.
+  if (!draft.title.trim()) return MOMENT_NAME_MISSING;
+  if (draft.title.trim().length > 120) return 'Moment title is required and must be 120 characters or fewer.';
   if (draft.money.trim() !== '') {
     const amount = Number(draft.money);
     if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return 'Enter a valid optional money context.';
@@ -151,12 +166,19 @@ export function sharePayload(moment: EditableMoment) {
 }
 
 /**
- * What deleting says before it happens. A shared moment leaves a tombstone in the journey's
- * history, as a deleted conversation does on the web; a moment only this person could see
- * leaves nothing anyone else sees.
+ * What deleting says before it happens. A shared moment leaves a record in the journey's
+ * history (the server's tombstone: that it was deleted, and by whom), said here in plain words
+ * (#338); a moment only this person could see leaves nothing anyone else sees.
  */
 export function deleteConsequence(moment: EditableMoment) {
   return moment.visibility === 'shared-now'
-    ? `“${moment.title}” will be removed for everyone in this journey. The event history keeps a deletion tombstone, so the change stays attributable.`
+    ? `“${moment.title}” will be removed for everyone in this journey. The journey’s history will still show that it was deleted, and who deleted it.`
     : `“${moment.title}” will be removed. Only you could see it, so it leaves nothing behind that anyone else can see.`;
 }
+
+/**
+ * The line in the edit form's delete zone (#338): what deleting does, said before the button
+ * is ever tapped, and that there is one more question before anything happens.
+ */
+export const DELETE_ZONE_TITLE = 'Delete this moment';
+export const DELETE_ZONE_NOTE = 'Deleting removes this moment from the ledger, and it can’t be undone. You’ll be asked once more before anything is deleted.';

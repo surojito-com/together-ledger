@@ -6,18 +6,23 @@ import {
   CATEGORIES,
   CATEGORY_ICONS,
   conversationPrompts,
+  countOf,
   CURRENT_SCHEMA_VERSION,
   dateLabel,
   dateRange,
   groupDayByCategory,
   isValidState,
+  localDay,
   money,
+  MOMENT_NAME_MISSING,
   MOMENT_TYPES,
   normalizeConcern,
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  RECENT_MOMENTS_SHOWN,
   remainingLabel,
+  seeAllShown,
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
@@ -802,9 +807,9 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#moment-filters').hidden = !momentsExpanded || !recent.length;
   $('#moment-filters').innerHTML = momentsExpanded ? filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('') : '';
   $$('[data-moment-filter]').forEach((button) => button.addEventListener('click', () => { momentFilter = button.dataset.momentFilter; renderSharedJourney(trip, moments); }));
-  $('#toggle-moments-button').hidden = !recent.length;
-  $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
-  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
+  $('#toggle-moments-button').hidden = !seeAllShown(recent.length, momentsExpanded);
+  $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${countOf(recent.length, 'moment', 'moments')}`;
+  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, RECENT_MOMENTS_SHOWN));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
     const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by more than one journeyer</span>' : ''}`;
     const shareAction = isCloudJourney(trip) && moment.visibility === 'share-later' ? `<button data-share-moment="${escapeHtml(moment.id)}">Share now</button>` : '';
@@ -952,7 +957,7 @@ function openMoment(id = '', initialKind = '') {
   // A new moment must never inherit an ID from a dialog that previously edited one.
   form.elements.id.value = '';
   form.elements.kind.innerHTML = MOMENT_TYPES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-  form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
+  form.elements.occurredOn.value = localDay();
   form.elements.visibility.value = 'shared-now';
   renderMomentThemeChooser(form, moment?.theme);
   momentLocations = [];
@@ -1141,7 +1146,7 @@ function openExpense(id = '') {
   form.reset();
   form.elements.category.innerHTML = CATEGORIES.map((category) => `<option>${category}</option>`).join('');
   form.elements.paidBy.innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
-  form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
+  form.elements.occurredOn.value = localDay();
   form.elements.category.value = 'Restaurants';
   $('#expense-title').textContent = 'Add an expense';
   $('#save-expense').textContent = 'Save expense';
@@ -1167,7 +1172,7 @@ function openExpense(id = '') {
 function openJourney(trip = null) {
   const form = $('#journey-form');
   form.reset();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   form.elements.startDate.value = today;
   form.elements.endDate.value = today;
   form.elements.startDateStatus.value = 'exact';
@@ -1484,6 +1489,14 @@ $('#moment-form').addEventListener('submit', async (event) => {
   const form = event.currentTarget;
   try {
     const input = { ...Object.fromEntries(new FormData(form)), locations: structuredClone(momentLocations) };
+    // The browser stops an empty name; a name of only spaces gets past it, so it is caught here,
+    // in the form's own name for the field, and the person is taken back to it (#354).
+    if (!String(input.title || '').trim()) {
+      showStatus(MOMENT_NAME_MISSING, { source: 'moment' });
+      form.elements.title.focus();
+      return;
+    }
+    clearStatus('moment');
     const trip = activeTrip(state);
     const existingIndex = state.moments.findIndex((moment) => moment.id === input.id && moment.tripId === trip?.id);
     const before = existingIndex >= 0 ? structuredClone(state.moments[existingIndex]) : null;
@@ -1969,7 +1982,7 @@ $('#export-button').addEventListener('click', () => {
   const blob = new Blob([exportState(state)], { type: 'application/json' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `together-ledger-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `together-ledger-${localDay()}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
   showToast('Private backup downloaded.');

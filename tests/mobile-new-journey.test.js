@@ -9,10 +9,13 @@ const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
 const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const server = await readFile(new URL('../server/platform.js', import.meta.url), 'utf8');
 
+// The phone's own TypeScript, compiled on the spot, its imports of the web's modules pointed
+// at the real files.
 async function importMobile(path) {
   const url = new URL(path, mobile);
   const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-  return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+  return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
 }
 
 const draft = await importMobile('src/journey/journey-draft.ts');
@@ -25,14 +28,15 @@ function webOptions(name) {
 }
 
 test('a new journey starts as the web\'s does: begun today, with no end planned', () => {
-  const fresh = draft.newJourneyDraft(new Date('2026-10-08T23:30:00Z'));
+  const fresh = draft.newJourneyDraft(new Date(2026, 9, 8, 23, 30));
   assert.deepEqual(fresh, { name: '', location: '', startDateStatus: 'exact', startDate: '2026-10-08', endDateStatus: 'forever', endDate: '2026-10-08' });
   assert.ok(web.includes("form.elements.startDateStatus.value = 'exact';"));
   assert.ok(web.includes("form.elements.endDateStatus.value = 'forever';"));
-  assert.ok(web.includes("const today = new Date().toISOString().slice(0, 10);"), 'both count today as the UTC day');
+  assert.ok(web.includes("const today = localDay();"), 'both count today as the person\'s own local day (#336)');
 });
 
 test('the date choices are the web\'s, in its order and its words', () => {
+  assert.deepEqual(draft.START_DATE_CHOICES, [['exact', 'I know the date'], ['unknown', 'I don’t remember exactly']], 'the owner\'s words, still stored as exact (#358)');
   assert.deepEqual(draft.START_DATE_CHOICES, webOptions('startDateStatus'));
   assert.deepEqual(draft.END_DATE_CHOICES, webOptions('endDateStatus'));
   for (const [value] of [...draft.START_DATE_CHOICES, ...draft.END_DATE_CHOICES]) assert.ok(server.includes(`'${value}'`), `the server accepts ${value}`);
@@ -47,7 +51,7 @@ test('the exact dates show only when chosen, as the web\'s syncJourneyDateFields
 });
 
 test('what the phone sends is the web\'s payload for a new journey, field for field', () => {
-  const sent = draft.journeyPayload({ ...draft.newJourneyDraft(new Date('2026-10-08T12:00:00Z')), name: '  Our first year  ', location: ' Leeds ' });
+  const sent = draft.journeyPayload({ ...draft.newJourneyDraft(new Date(2026, 9, 8, 12)), name: '  Our first year  ', location: ' Leeds ' });
   const webPayload = web.match(/const payload = \{\n([\s\S]*?)\.\.\.\(existing \? \{ version/)[1];
   const webKeys = [...webPayload.matchAll(/^\s+(\w+):/gm)].map(([, key]) => key);
   assert.deepEqual(Object.keys(sent), webKeys);
@@ -59,7 +63,7 @@ test('what the phone sends is the web\'s payload for a new journey, field for fi
 });
 
 test('a draft the server would refuse is stopped first, in the server\'s own words', () => {
-  const fresh = { ...draft.newJourneyDraft(new Date('2026-10-08T12:00:00Z')), name: 'Our first year' };
+  const fresh = { ...draft.newJourneyDraft(new Date(2026, 9, 8, 12)), name: 'Our first year' };
   assert.equal(draft.journeyProblem(fresh), null);
   const problems = [
     draft.journeyProblem({ ...fresh, name: '   ' }),
@@ -98,4 +102,28 @@ test('the 101-journey limit reaches the phone in the server\'s own words (the Bo
   assert.equal(Object.hasOwn(NO_ROOM_ADDED_HERE, 'journey_limit_reached'), false, 'the phone does not reword it');
   assert.equal(accountMessage({ code: 'journey_limit_reached', message: worded }), worded);
   assert.match(screen, /showStatus\(accountMessage\(error\), \{ source: 'new-journey' \}\)/, 'a refused journey is shown, not swallowed');
+});
+
+test('8 pm on Oct 7 in New York begins a journey on Oct 7, not the UTC day (#336)', () => {
+  const before = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    const fresh = draft.newJourneyDraft(new Date('2026-10-08T00:00:00Z'));
+    assert.equal(fresh.startDate, '2026-10-07');
+    assert.equal(fresh.endDate, '2026-10-07');
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+});
+
+test('"I know the date" takes a date still to come, and the end still cannot come before it (#358)', () => {
+  const planned = { ...draft.newJourneyDraft(new Date(2026, 9, 8, 12)), name: 'The trip we are planning', startDate: '2027-06-01' };
+  assert.deepEqual(draft.dateFieldsShown(planned), { startDate: true, endDate: false }, 'choosing it shows the date box');
+  assert.equal(draft.journeyProblem(planned), null, 'a future start is accepted');
+  assert.equal(draft.journeyPayload(planned).startDateStatus, 'exact');
+  assert.equal(draft.journeyPayload(planned).startDate, '2027-06-01');
+  assert.equal(draft.journeyProblem({ ...planned, endDateStatus: 'date', endDate: '2027-06-14' }), null);
+  assert.equal(draft.journeyProblem({ ...planned, endDateStatus: 'date', endDate: '2027-05-31' }), 'The end date must be on or after the start date.');
+  assert.doesNotMatch(server.match(/function cleanJourneyDetails[\s\S]*?\n\}/)[0], /today|now\(|new Date/i, 'the server has no rule against a future start either');
 });

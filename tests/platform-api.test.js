@@ -2085,7 +2085,7 @@ test('the phone begins a journey through this server, and owns it', async (t) =>
   await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'begin-phone@example.test').token);
   assert.deepEqual(await phone.journeys(), [], 'a new account begins with no journey');
 
-  const first = { ...draft.newJourneyDraft(new Date('2026-10-08T12:00:00Z')), name: 'Our first year', location: 'Leeds' };
+  const first = { ...draft.newJourneyDraft(new Date(2026, 9, 8, 12)), name: 'Our first year', location: 'Leeds' };
   const created = await phone.createJourney(draft.journeyPayload(first));
   assert.equal(created.name, 'Our first year');
   assert.equal(created.role, 'owner', 'the phone that begins a journey owns it');
@@ -2100,6 +2100,21 @@ test('the phone begins a journey through this server, and owns it', async (t) =>
 
   await assert.rejects(phone.createJourney(draft.journeyPayload({ ...first, endDateStatus: 'date', endDate: '2026-10-07' })), { status: 400, message: 'The end date must be on or after the start date.' });
   assert.equal(draft.journeyProblem({ ...first, endDateStatus: 'date', endDate: '2026-10-07' }), 'The end date must be on or after the start date.', 'the phone says it first, in the same words');
+
+  // "I know the date" takes a date still to come, so a trip can be planned ahead (#358). The
+  // server's clock here reads Aug 2, 2026; it has no rule against a later start, and keeps the
+  // rule that an end cannot come before the start.
+  const planned = { ...first, name: 'The trip we are planning', startDate: '2027-06-01' };
+  const ahead = await phone.createJourney(draft.journeyPayload(planned));
+  assert.equal(ahead.startDateStatus, 'exact');
+  assert.equal(ahead.startDate, '2027-06-01');
+  const plannedEnd = await phone.createJourney(draft.journeyPayload({ ...planned, name: 'Two weeks away', endDateStatus: 'date', endDate: '2027-06-14' }));
+  assert.equal(plannedEnd.endDate, '2027-06-14');
+  await assert.rejects(phone.createJourney(draft.journeyPayload({ ...planned, endDateStatus: 'date', endDate: '2027-05-31' })), { status: 400, message: 'The end date must be on or after the start date.' });
+  // The web's signed-in form sends the same fields to the same route, from its own session.
+  const browser = await signIn(app, 'begin-phone');
+  const fromWeb = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(browser), payload: { name: 'Planned on the web', location: '', startDateStatus: 'exact', startDate: '2027-06-01', endDateStatus: 'forever', endDate: null, budgetCents: 0 } });
+  assert.equal(fromWeb.statusCode, 201, fromWeb.body);
 });
 
 test('the phone holds, changes, shares and deletes a moment through this server', async (t) => {
