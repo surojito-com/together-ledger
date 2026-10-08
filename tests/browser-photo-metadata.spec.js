@@ -92,6 +92,33 @@ test('a file that cannot be read is not kept for upload, and the line does not a
   await expect(page.locator('#moment-image-privacy')).toHaveText(PHOTO_METADATA_REMOVED);
 });
 
+test('a slow failure on one picked file never clears a photo picked after it', async ({ page }) => {
+  const uploads = [];
+  await hostedJourney(page, uploads);
+  await page.goto('/');
+  // Hold the first file's read open until the second pick has finished.
+  await page.evaluate(() => {
+    const read = File.prototype.arrayBuffer;
+    window.releaseSlowFile = null;
+    File.prototype.arrayBuffer = function arrayBuffer() {
+      if (this.name !== 'slow-and-unreadable.jpg') return read.call(this);
+      return new Promise((resolve) => { window.releaseSlowFile = () => resolve(read.call(this)); });
+    };
+  });
+  await page.getByRole('button', { name: /Hold a moment/ }).first().click();
+  const input = page.locator('#moment-form [name="image"]');
+  await input.setInputFiles({ name: 'slow-and-unreadable.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('not a photo at all') });
+  await expect.poll(() => page.evaluate(() => typeof window.releaseSlowFile)).toBe('function');
+  await input.setInputFiles(fixturePath('sideways-with-gps.png'));
+  await expect(page.locator('#moment-image-privacy')).toHaveText(PHOTO_METADATA_REMOVED);
+
+  await page.evaluate(() => window.releaseSlowFile());
+  await page.waitForTimeout(200);
+  expect(await input.evaluate((element) => element.files[0]?.name)).toBe('sideways-with-gps.png');
+  await expect(page.locator('#moment-image-privacy')).toBeVisible();
+  await expect(page.locator('#moment-dialog #status-banner')).toBeHidden();
+});
+
 test('a cleaned photo draws pixel for pixel as the original did, the right way up', async ({ page }) => {
   await page.goto('/');
   const results = await page.evaluate(async (names) => {

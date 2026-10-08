@@ -819,6 +819,7 @@ async function prepareMomentPhoto(input) {
     note.textContent = PHOTO_METADATA_REMOVED;
     note.hidden = false;
   } catch (error) {
+    if (input.files?.[0] !== file) return; // a newer pick is not this one's to clear
     input.value = '';
     showStatus(error.message, { source: 'photo' });
   }
