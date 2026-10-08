@@ -48,14 +48,15 @@ jobs:
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a
       # The generated manifest is not the whole story: libraries merge their own permissions in at
       # build time. This reads them from the built APK and fails if it asks for more than the
-      # network (#258) and Play Billing's BILLING, which its library declares so the app can buy
-      # through Google Play (#272) and which shows no prompt. The DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+      # network (#258) and what Play Billing brings so the app can buy through Google Play (#272):
+      # BILLING, and ACCESS_NETWORK_STATE from Google's datatransport, which Play Billing depends on.
+      # Neither shows a prompt. The DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
       # androidx.core adds is the app's own signature permission, which nothing outside the app can hold.
       #
       # It must never pass on reading nothing: pipefail stops a missing aapt2 or APK being hidden
       # behind tee, and a list without INTERNET (which the app always asks for) means the read
       # failed, not that the APK is clean. Android 6+ grants uses-permission-sdk-23 the same way.
-      - name: Check the APK asks only for the network and Play Billing
+      - name: Check the APK asks only for the network and what Play Billing needs
         run: |
           set -euo pipefail
           aapt2="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/aapt2"
@@ -66,7 +67,7 @@ jobs:
             echo "::error::No android.permission.INTERNET in what was read from the APK, so the read failed; this check cannot vouch for it."
             exit 1
           fi
-          unexpected="$(grep -vxF -e android.permission.INTERNET -e com.android.vending.BILLING -e com.togetherledger.ledger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION <<< "$requested" || true)"
+          unexpected="$(grep -vxF -e android.permission.INTERNET -e com.android.vending.BILLING -e android.permission.ACCESS_NETWORK_STATE -e com.togetherledger.ledger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION <<< "$requested" || true)"
           if [ -n "$unexpected" ]; then
             echo "::error::The APK asks for permissions apps/mobile/app.json does not grant: $unexpected"
             exit 1

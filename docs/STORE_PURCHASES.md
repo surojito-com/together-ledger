@@ -90,8 +90,11 @@ with `retryable: false`, an Apple transaction is finished, and a Google one is l
 refunds it within three days; anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
 the store to hand back. A purchase Google still reports as pending is not sent.
 
-On Android the Play Billing library declares `com.android.vending.BILLING`, so `app.json` grants it beside
-`INTERNET` and the Phone test APK workflow allows it. It shows no prompt and reaches nothing on the phone.
+On Android, Play Billing brings two permissions, so `app.json` grants them beside `INTERNET` and the Phone test APK
+workflow allows them. `com.android.vending.BILLING` is declared by the billing library itself.
+`android.permission.ACCESS_NETWORK_STATE` is declared by Google's datatransport, which Play Billing 9.1 depends on:
+it schedules its uploads to wait for a network, which Android 9 and later refuse without it. Neither shows a prompt;
+the second says only whether the phone is online and on what kind of network.
 
 ## When a purchase comes back (TL-P-05, #272)
 
