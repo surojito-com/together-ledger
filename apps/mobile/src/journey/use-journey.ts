@@ -91,6 +91,10 @@ function useJourneyLoader() {
       setHeld({ forUser: userId, state: { phase: 'loading' } });
       load(userId, journeyId);
     },
+    /** Open a journey this phone just began. It works from an empty start too, where nothing is open yet. */
+    open: async (journeyId: string) => {
+      if (userId) await load(userId, journeyId);
+    },
     retry: () => {
       if (userId) load(userId, activeId);
     },
