@@ -316,7 +316,7 @@ function Proposal({ proposal, now, pending, mayWithdraw: canWithdraw, onAgree, o
       {canWithdraw ? <Button kind="quiet" label="Withdraw" pending={pending === `withdraw-${proposal.id}`} onPress={onWithdraw} /> : null}
       <Button kind="quiet" label={showDecisions ? 'Hide who was asked' : 'Who was asked, and when'} onPress={() => setShowDecisions((open) => !open)} />
       {showDecisions ? proposal.decisions.map((entry) => (
-        <Row key={entry.userId} title={entry.displayName} meta={[entry.email, `Asked ${dateTimeLabel(entry.requestedAt)} · ${decisionAnswered(entry)}`]} tag={proposalDecisionLabel(entry.decision)} />
+        <Row key={entry.userId} title={entry.displayName} meta={[`Asked ${dateTimeLabel(entry.requestedAt)} · ${decisionAnswered(entry)}`]} tag={proposalDecisionLabel(entry.decision)} />
       )) : null}
     </Row>
   );

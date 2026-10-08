@@ -521,7 +521,7 @@ function proposalDecisionRow(entry) {
   const answered = entry.decision === 'pending'
     ? 'has not answered yet'
     : `${entry.decision === 'agree' ? 'agreed' : 'declined'} ${dateTimeLabel(entry.decidedAt)}`;
-  return `<div class="journey-record-row"><div><strong>${escapeHtml(entry.displayName)}</strong><small>${escapeHtml(entry.email)}</small><small>Asked <time datetime="${escapeHtml(entry.requestedAt || '')}">${escapeHtml(dateTimeLabel(entry.requestedAt))}</time> · ${escapeHtml(answered)}</small></div><span class="invitation-status ${escapeHtml(entry.decision)}">${escapeHtml(proposalDecisionLabel(entry.decision))}</span></div>`;
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(entry.displayName)}</strong><small>Asked <time datetime="${escapeHtml(entry.requestedAt || '')}">${escapeHtml(dateTimeLabel(entry.requestedAt))}</time> · ${escapeHtml(answered)}</small></div><span class="invitation-status ${escapeHtml(entry.decision)}">${escapeHtml(proposalDecisionLabel(entry.decision))}</span></div>`;
 }
 
 // The countdowns are redrawn in place rather than by re-rendering the journey, so that a fold

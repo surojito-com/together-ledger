@@ -240,7 +240,7 @@ test('a place held for someone invited reads as reserved, and can be withdrawn o
   const requests = [];
   const pending = { id: 'invitation-waiting', proposalId: 'proposal-1', email: 's••d@gmail.com', joinedDisplayName: null, invitedByUserId: owner.id, invitedByDisplayName: owner.displayName, status: 'pending', sentAt: '2026-10-08T09:00:00.000Z', expiresAt: '2099-10-22T09:00:00.000Z', acceptedAt: null, revokedAt: null, sendAgainUntil: null, viewerMayWithdraw: true, viewerMaySendAgain: false };
   const ranOut = { ...pending, id: 'invitation-ran-out', proposalId: 'proposal-2', email: 'a••@gmail.com', status: 'expired', expiresAt: '2026-09-22T09:00:00.000Z', sendAgainUntil: '2099-10-01T09:00:00.000Z', viewerMayWithdraw: false, viewerMaySendAgain: true };
-  const agreed = { id: 'proposal-1', email: pending.email, note: '', proposedByUserId: owner.id, proposedByDisplayName: owner.displayName, proposedByEmail: owner.email, status: 'agreed', proposedAt: '2026-10-08T08:00:00.000Z', expiresAt: '2026-11-07T08:00:00.000Z', closedAt: '2026-10-08T09:00:00.000Z', agreedCount: 1, declinedCount: 0, pendingCount: 0, askedCount: 1, viewerDecision: 'agree', viewerMayDecide: false, decisions: [] };
+  const agreed = { id: 'proposal-1', email: pending.email, note: '', proposedByUserId: owner.id, proposedByDisplayName: owner.displayName, status: 'agreed', proposedAt: '2026-10-08T08:00:00.000Z', expiresAt: '2026-11-07T08:00:00.000Z', closedAt: '2026-10-08T09:00:00.000Z', agreedCount: 1, declinedCount: 0, pendingCount: 0, askedCount: 1, viewerDecision: 'agree', viewerMayDecide: false, decisions: [] };
   await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }) }));
   await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { journeys: [{ id: 'journey-1' }] } }) }));
   await page.route('https://api.together-ledger.com/api/v1/journeys/journey-1/billing', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { enabled: false, portalEnabled: false, environment: 'test', offers: [], entitlement: null, subscription: null, invoices: [] } }) }));
@@ -387,24 +387,24 @@ test('A proposal names who was asked, what they decided, and when', async ({ pag
   const proposals = [
     {
       id: 'proposal-open', email: 'newcomer@example.test', note: 'My sister, who has been asking after you both.',
-      proposedByUserId: 'consent-two', proposedByDisplayName: 'second-person', proposedByEmail: 'second@example.test',
+      proposedByUserId: 'consent-two', proposedByDisplayName: 'second-person',
       status: 'open', proposedAt: '2026-09-08T09:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', closedAt: null,
       agreedCount: 1, declinedCount: 0, pendingCount: 2, askedCount: 3, viewerDecision: null, viewerMayDecide: true,
       decisions: [
-        { userId: 'consent-two', displayName: 'second-person', email: 'second@example.test', decision: 'agree', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-08T09:00:00.000Z' },
-        { userId: owner.id, displayName: 'consent-owner', email: 'owner@example.test', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
-        { userId: 'consent-three', displayName: 'third-person', email: 'third@example.test', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
+        { userId: 'consent-two', displayName: 'second-person', decision: 'agree', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-08T09:00:00.000Z' },
+        { userId: owner.id, displayName: 'consent-owner', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
+        { userId: 'consent-three', displayName: 'third-person', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
       ],
     },
     {
       id: 'proposal-declined', email: 'earlier@example.test', note: '',
-      proposedByUserId: owner.id, proposedByDisplayName: 'consent-owner', proposedByEmail: 'owner@example.test',
+      proposedByUserId: owner.id, proposedByDisplayName: 'consent-owner',
       status: 'declined', proposedAt: '2026-09-01T09:00:00.000Z', expiresAt: '2026-10-01T09:00:00.000Z', closedAt: '2026-09-02T11:30:00.000Z',
       agreedCount: 1, declinedCount: 1, pendingCount: 1, askedCount: 3, viewerDecision: 'agree', viewerMayDecide: false,
       decisions: [
-        { userId: owner.id, displayName: 'consent-owner', email: 'owner@example.test', decision: 'agree', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-01T09:00:00.000Z' },
-        { userId: 'consent-three', displayName: 'third-person', email: 'third@example.test', decision: 'decline', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-02T11:30:00.000Z' },
-        { userId: 'consent-two', displayName: 'second-person', email: 'second@example.test', decision: 'pending', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: null },
+        { userId: owner.id, displayName: 'consent-owner', decision: 'agree', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-01T09:00:00.000Z' },
+        { userId: 'consent-three', displayName: 'third-person', decision: 'decline', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: '2026-09-02T11:30:00.000Z' },
+        { userId: 'consent-two', displayName: 'second-person', decision: 'pending', requestedAt: '2026-09-01T09:00:00.000Z', decidedAt: null },
       ],
     },
   ];
@@ -442,6 +442,8 @@ test('A proposal names who was asked, what they decided, and when', async ({ pag
   await expect(record).not.toHaveAttribute('open', '');
   await record.locator('summary').click();
   await expect(record).toContainText('second-person');
+  // Named, never given by their email (owner, Oct 8, 2026).
+  await expect(record).not.toContainText('@example.test');
   await expect(record).toContainText('Asked');
 
   // A decline is attributed and dated, which is the point: it is somebody's decision.

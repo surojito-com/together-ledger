@@ -184,13 +184,13 @@ function publicInvitation(row, now, viewer = {}) {
 
 // A decision is shown with the person who made it and the times on both sides of it: when they
 // were asked, and when they answered. A decline is somebody's decision, named and dated, rather
-// than an anonymous refusal. The journey screen can fold this away; it cannot hide it.
+// than an anonymous refusal. The journey screen can fold this away; it cannot hide it. Each
+// journeyer is named, never given by their email (owner, Oct 8, 2026), so none is sent.
 function publicInviteProposal(row, consentRows, now, viewerUserId) {
   const status = row.status === 'open' && new Date(row.expires_at) <= now ? 'lapsed' : row.status;
   const decisions = consentRows.map((consent) => ({
     userId: consent.user_id,
     displayName: consent.display_name || 'Journey member',
-    email: consent.email_normalized || '',
     decision: consent.decision || 'pending',
     requestedAt: dateTime(consent.requested_at),
     decidedAt: dateTime(consent.decided_at),
@@ -203,7 +203,6 @@ function publicInviteProposal(row, consentRows, now, viewerUserId) {
     note: row.note || '',
     proposedByUserId: row.proposed_by_user_id,
     proposedByDisplayName: row.proposed_by_display_name || 'Journey member',
-    proposedByEmail: row.proposed_by_email || '',
     status,
     proposedAt: dateTime(row.created_at),
     expiresAt: dateTime(row.expires_at),
@@ -1950,12 +1949,12 @@ export class PlatformService {
           LEFT JOIN users joined ON joined.id=i.accepted_by_user_id
           LEFT JOIN journey_invite_proposals p ON p.id=i.proposal_id
           WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
-        client.query(`SELECT p.*,u.display_name AS proposed_by_display_name,u.email_normalized AS proposed_by_email,joined.display_name AS joined_display_name
+        client.query(`SELECT p.*,u.display_name AS proposed_by_display_name,joined.display_name AS joined_display_name
           FROM journey_invite_proposals p JOIN users u ON u.id=p.proposed_by_user_id
           LEFT JOIN invitations i ON i.id=p.invitation_id AND i.accepted_at IS NOT NULL
           LEFT JOIN users joined ON joined.id=i.accepted_by_user_id
           WHERE p.journey_id=$1 ORDER BY p.created_at DESC,p.id`, [journeyId]),
-        client.query(`SELECT c.*,u.display_name,u.email_normalized
+        client.query(`SELECT c.*,u.display_name
           FROM journey_invite_consents c
           JOIN journey_invite_proposals p ON p.id=c.proposal_id
           JOIN users u ON u.id=c.user_id

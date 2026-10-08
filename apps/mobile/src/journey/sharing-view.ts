@@ -15,10 +15,10 @@ export { remainingLabel };
 
 export type Member = { id: string; displayName: string; role: string; joinedAt: string };
 
+/** Each journeyer asked is named, never given by their email; the server sends none. */
 export type ProposalDecision = {
   userId: string;
   displayName: string;
-  email: string;
   decision: 'agree' | 'decline' | 'pending' | string;
   requestedAt: string | null;
   decidedAt: string | null;

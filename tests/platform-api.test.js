@@ -1065,7 +1065,7 @@ test('a new person waits on every journeyer, and a decline is named and dated', 
   assert.equal(proposal.pendingCount, 2);
   assert.equal(proposal.viewerMayDecide, true);
   // Proposing is agreeing, and it is recorded as a decision with a time on it like any other.
-  const proposer = proposal.decisions.find((entry) => entry.email === second.user.email);
+  const proposer = proposal.decisions.find((entry) => entry.userId === second.user.id);
   assert.equal(proposer.decision, 'agree');
   assert.ok(proposer.requestedAt && proposer.decidedAt);
 
@@ -1088,7 +1088,12 @@ test('a new person waits on every journeyer, and a decline is named and dated', 
   assert.equal(proposal.declinedCount, 1);
   // The record says who declined, and when they were asked as well as when they answered.
   const decliner = proposal.decisions.find((entry) => entry.decision === 'decline');
-  assert.equal(decliner.email, third.user.email);
+  assert.equal(decliner.userId, third.user.id);
+  // Each journeyer asked is named, and their email is never sent (owner, Oct 8, 2026).
+  assert.ok(proposal.decisions.every((entry) => !('email' in entry)));
+  const sent = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
+  assert.equal(JSON.stringify(sent.inviteProposals).includes(third.user.email), false);
+  assert.equal(JSON.stringify(sent.inviteProposals).includes(second.user.email), false);
   assert.ok(decliner.displayName);
   assert.ok(decliner.requestedAt && decliner.decidedAt);
   assert.equal(mailer.messages.some((message) => message.to === 'newcomer@example.test'), false);

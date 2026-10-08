@@ -13,7 +13,7 @@ const members = [
 ];
 
 const base = {
-  note: '', proposedByUserId: 'consent-owner', proposedByDisplayName: 'consent-owner', proposedByEmail: 'owner@example.test',
+  note: '', proposedByUserId: 'consent-owner', proposedByDisplayName: 'consent-owner',
   proposedAt: '2026-09-01T09:00:00.000Z', expiresAt: '2026-10-01T09:00:00.000Z', closedAt: '2026-09-02T11:30:00.000Z',
   agreedCount: 1, declinedCount: 0, pendingCount: 2, askedCount: 3, viewerDecision: null, viewerMayDecide: false, decisions: [],
 };
@@ -24,9 +24,9 @@ const proposals = [
     ...base, id: 'proposal-open', email: 'newcomer@example.test', note: 'My sister.', status: 'open',
     expiresAt: '2099-01-01T00:00:00.000Z', closedAt: null, viewerMayDecide: true,
     decisions: [
-      { userId: 'member-1', displayName: 'journeyer-1', email: 'a@example.test', decision: 'agree', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-08T09:00:00.000Z' },
-      { userId: owner.id, displayName: 'consent-owner', email: 'owner@example.test', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
-      { userId: 'member-2', displayName: 'journeyer-2', email: 'b@example.test', decision: 'decline', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-09T09:00:00.000Z' },
+      { userId: 'member-1', displayName: 'journeyer-1', decision: 'agree', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-08T09:00:00.000Z' },
+      { userId: owner.id, displayName: 'consent-owner', decision: 'pending', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: null },
+      { userId: 'member-2', displayName: 'journeyer-2', decision: 'decline', requestedAt: '2026-09-08T09:00:00.000Z', decidedAt: '2026-09-09T09:00:00.000Z' },
     ],
   },
   { ...base, id: 'p-agreed', email: 'a1@example.test', status: 'agreed' },
