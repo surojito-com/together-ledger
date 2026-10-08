@@ -123,7 +123,18 @@ export async function seedReviewJourney({ pool, config, reviewerEmail, partnerEm
   }
   for (const { by, ...conversation } of CONVERSATIONS) await platform.createConcern(ids[by], journey.id, conversation);
 
+  // App Review buys in the sandbox against the live app, and a live server honours that only for
+  // the accounts in STORE_SANDBOX_ACCOUNT_IDS (#272). A rebuild gives the reviewer a new account
+  // id, so the line to set is worked out here: the ids already configured that still belong to an
+  // account, without the one just deleted, plus the new reviewer.
+  const configured = config.storeSandboxAccountIds || [];
+  const living = configured.length
+    ? (await pool.query(`SELECT id FROM users WHERE deleted_at IS NULL AND id IN (${configured.map((_, index) => `$${index + 1}`).join(',')})`, configured)).rows.map((row) => row.id)
+    : [];
+  const sandboxAccounts = [...configured.filter((id) => living.includes(id) && id !== ids.partner), ids.reviewer];
+
   return {
+    storeSandboxAccountIds: `STORE_SANDBOX_ACCOUNT_IDS=${sandboxAccounts.join(',')}`,
     journeyId: journey.id,
     journeyName: REVIEW_JOURNEY_NAME,
     reviewer: { id: ids.reviewer, username: REVIEW_USERNAMES.reviewer, displayName: NAMES.reviewer },

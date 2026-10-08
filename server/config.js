@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { parseRootCertificates } from './store-apple.js';
+import { parseServiceAccount } from './store-google.js';
 
 const ConfigSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -55,6 +57,23 @@ const ConfigSchema = z.object({
   // web asked for is exchanged with both; a code from the phone with neither.
   APPLE_SERVICES_ID: z.string().default('com.togetherledger.ledger.web'),
   APPLE_WEB_REDIRECT_URI: z.string().default('https://app.together-ledger.com/'),
+  // Store purchases, checked on this server (#272, docs/STORE_PURCHASES.md). Each store is off
+  // until its trust is configured, and a purchase from it is then refused as unavailable rather
+  // than believed. APPLE_ROOT_CERTIFICATES is Apple Root CA - G3 as base64 DER or PEM, downloaded
+  // from apple.com and checked by the owner; GOOGLE_PLAY_SERVICE_ACCOUNT is the Play service
+  // account's key JSON, a secret kept with the others. The bundle and package are public.
+  // Which purchases this deployment honours: 'sandbox' (App Store sandbox, Google licence testers)
+  // or 'live' (real money). Only ever one, so a test purchase can never become live capacity.
+  STORE_ENVIRONMENT: z.enum(['sandbox', 'live']).default('sandbox'),
+  // On a live service, the accounts whose sandbox purchases still count, comma-separated account
+  // ids: App Review's sample account (#260) and the owner's own test accounts. App Review buys in
+  // the sandbox against the production app, so without this its purchases would be refused.
+  // Recorded as sandbox, and read only for these accounts. Ignored on a sandbox service.
+  STORE_SANDBOX_ACCOUNT_IDS: z.string().default(''),
+  APPLE_ROOT_CERTIFICATES: z.string().default(''),
+  APPLE_BUNDLE_ID: z.string().default('com.togetherledger.ledger'),
+  GOOGLE_PLAY_PACKAGE_NAME: z.string().default('com.togetherledger.ledger'),
+  GOOGLE_PLAY_SERVICE_ACCOUNT: z.string().default(''),
 });
 
 function assertStripeConfiguration(config) {
@@ -90,11 +109,23 @@ function assertStripeConfiguration(config) {
 export function loadConfig(overrides = {}) {
   const config = ConfigSchema.parse({ ...process.env, ...overrides });
   assertStripeConfiguration(config);
+  const appleRootCertificates = parseRootCertificates(config.APPLE_ROOT_CERTIFICATES);
+  const googlePlayServiceAccount = parseServiceAccount(config.GOOGLE_PLAY_SERVICE_ACCOUNT);
+  const storeEnvironment = config.STORE_ENVIRONMENT;
+  const storeSandboxAccountIds = [...new Set(config.STORE_SANDBOX_ACCOUNT_IDS.split(',').map((id) => id.trim().toLowerCase()).filter(Boolean))];
+  if (storeSandboxAccountIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) {
+    throw new Error('STORE_SANDBOX_ACCOUNT_IDS must be account ids (UUIDs), comma-separated.');
+  }
+  const storePurchasesConfigured = appleRootCertificates.length > 0 || Boolean(googlePlayServiceAccount);
+  if (config.STRIPE_ENVIRONMENT === 'live' && storeEnvironment === 'sandbox') {
+    throw new Error('A service that takes live web payments must honour live store purchases only (STORE_ENVIRONMENT=live).');
+  }
   if (config.NODE_ENV === 'production' && config.JOURNEY_CAPACITY_MODE === 'test-groups') {
     throw new Error('Synthetic group capacity cannot be enabled in production.');
   }
-  if (config.JOURNEY_CAPACITY_MODE === 'billing' && config.BILLING_ENABLED !== 'true') {
-    throw new Error('Billing-backed journey capacity requires Stripe billing to be enabled.');
+  // Capacity can be paid for on the web, in a store, or both (#267); either is enough to read it.
+  if (config.JOURNEY_CAPACITY_MODE === 'billing' && config.BILLING_ENABLED !== 'true' && !storePurchasesConfigured) {
+    throw new Error('Billing-backed journey capacity requires Stripe billing to be enabled, or store purchases to be checked here.');
   }
   if (config.MOMENT_IMAGE_BILLING_ENABLED === 'true' && config.BILLING_ENABLED !== 'true') {
     throw new Error('Additional moment image billing requires Stripe billing to be enabled.');
@@ -122,6 +153,15 @@ export function loadConfig(overrides = {}) {
     billingEnabled: config.BILLING_ENABLED === 'true',
     billingPortalEnabled: config.BILLING_PORTAL_ENABLED === 'true',
     stripeEnvironment: config.STRIPE_ENVIRONMENT,
+    storeEnvironment,
+    // Every environment an entitlement or a paid slot is read from here: the web's and the stores'.
+    // 'sandbox' only where STORE_ENVIRONMENT says so, never beside live web payments, and on a live
+    // service only for the listed testers' own purchases (server/billing-environments.js).
+    billingEnvironments: [...new Set([config.STRIPE_ENVIRONMENT, storeEnvironment])],
+    appleRootCertificates,
+    googlePlayServiceAccount,
+    storePurchasesConfigured,
+    storeSandboxAccountIds,
     stripeTaxEnabled: config.STRIPE_TAX_ENABLED === 'true',
     billingGraceDays: config.BILLING_GRACE_DAYS,
     momentImageBillingEnabled: config.MOMENT_IMAGE_BILLING_ENABLED === 'true',

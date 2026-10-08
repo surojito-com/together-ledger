@@ -1,0 +1,13 @@
+{
+  "kind": "androidpublisher#productPurchase",
+  "purchaseTimeMillis": "1791460800000",
+  "purchaseState": 0,
+  "consumptionState": 0,
+  "orderId": "GPA.3300-0000-0000-00002",
+  "purchaseType": 0,
+  "acknowledgementState": 0,
+  "productId": "room_101_week_pass",
+  "regionCode": "US",
+  "obfuscatedExternalAccountId": "set-by-test",
+  "obfuscatedExternalProfileId": "set-by-test"
+}
