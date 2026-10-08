@@ -351,8 +351,9 @@ A journey owner with others still in it must hand the journey over first
 ## Part 3. The store answers, for the phone app
 
 These are written to be pasted. They describe the build that `apps/mobile` makes at `1cc17a6`.
-Each answer that rests on a judgement rather than a plain fact is marked **Decision**: the owner
-confirms it before submitting.
+Each answer that rests on a judgement rather than a plain fact is marked **Decision**. Five of them
+were confirmed by the owner on Oct 8, 2026 and say so; the rest still need the owner's confirmation
+before submitting.
 
 ### 3.1 Google Play: Data safety
 
@@ -364,7 +365,7 @@ confirms it before submitting.
 | Is all of the user data collected by your app encrypted in transit? | **Yes** | 2.11 |
 | Which ways can users create an account? | **Username and password** (and "OAuth" only once Google or Apple sign-in reaches the phone, 1.5) | `client.ts:136-142` |
 | Do you provide a way for users to request that their data is deleted? | **Yes** | 2.8 |
-| Delete account URL | **Decision:** `https://together-ledger.com/privacy`, whose Deletion section says how (Settings → Delete account, in the app or at `https://app.together-ledger.com/`). Play wants a page that explains the steps without the app; that section does once `PRIVACY.md` carries 1.3 and 1.4. The page has no per-section anchors (`scripts/render-privacy-page.mjs`), so the link lands at the top. A dedicated deletion page would be clearer; not built | 2.8 |
+| Delete account URL | **Decision (owner, Oct 8, 2026), for now:** `https://together-ledger.com/privacy`, whose Deletion section says how (Settings → Delete account, in the app or at `https://app.together-ledger.com/`). Play wants a page that explains the steps without the app; that section does once `PRIVACY.md` carries 1.3 and 1.4. The page has no per-section anchors (`scripts/render-privacy-page.mjs`), so the link lands at the top. A dedicated deletion page would be clearer; not built | 2.8 |
 | Can users request that some data be deleted without deleting their account? | **Yes**: moments, places, conversations and display name can be edited or deleted in the app | 2.2 |
 | Committed to Play Families Policy? / Independent security review? | **No** / **No** | Not a children's app (`PRIVACY.md:13`); no review has been done |
 
@@ -376,14 +377,14 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Category → Type | Collected | Shared | Required or optional | Purposes | Notes |
 |---|---|---|---|---|---|
 | Location → **Approximate location** | No | No | — | — | Nothing coarser than 1.1 is collected |
-| Location → **Precise location** | **Yes** | No | **Optional** (only if a moment has a device location added on the web, then edited or shared on the phone) | **App functionality** | 1.1. Becomes "No" only if the phone stops re-sending coordinates and labels that carry them. **Decision** |
+| Location → **Precise location** | **Yes** | No | **Optional** (only if a moment has a device location added on the web, then edited or shared on the phone) | **App functionality** | 1.1. Becomes "No" only if the phone stops re-sending coordinates and labels that carry them. **Decision (owner, Oct 8, 2026)** |
 | Personal info → **Name** | **Yes** | No | **Optional** (the display name starts as the username) | **App functionality, Account management** | 2.1 |
 | Personal info → **Email address** | **Yes** | No | **Required** | **App functionality, Account management** | The person's own, and another person's email when proposing to add them (2.2) |
 | Personal info → **User IDs** | **Yes** | No | **Required** | **Account management** | The username |
 | Personal info → Address, Phone number, Race and ethnicity, Political or religious beliefs, Sexual orientation, Other info | No | No | — | — | Not asked for (2.1). **Decision** on sensitive types: the app never asks about these, though a person may write anything in a moment; that free text is declared below |
 | Financial info → User payment info, Credit score | No | No | — | — | The phone has no payment screen; Stripe is never reached from the phone |
 | Financial info → **Purchase history** | No | No | — | — | Becomes **Yes, Optional, App functionality** when store purchases ship on the phone (#267) |
-| Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision**: it is context the person types, not an account balance, but declaring it is the safer reading |
+| Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision (owner, Oct 8, 2026)**: it is context the person types, not an account balance, but declaring it is the safer reading |
 | Health and fitness | No | No | — | — | |
 | Messages → Emails, SMS or MMS | No | No | — | — | The app sends no message content written by the person; the proposal note is declared below |
 | Messages → **Other in-app messages** | No | No | — | — | **Decision**: journeyers share moments and notes, not messages to each other |
@@ -393,12 +394,12 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Files and docs | No | No | — | — | |
 | Calendar | No | No | — | — | Dates are typed into the app, not read from the calendar |
 | Contacts | No | No | — | — | A proposed email is typed, never read from contacts |
-| App activity → App interactions | No | No | — | — | **Decision**: the journey history records what a person did to shared records so others can see it; it is the content itself, not usage measurement |
+| App activity → App interactions | No | No | — | — | **Decision (owner, Oct 8, 2026)**: the journey history records what a person did to shared records so others can see it; it is the content itself, not usage measurement |
 | App activity → In-app search history, Installed apps | No | No | — | — | |
 | App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), return-to conversations, notes on proposals (2.2) |
 | App activity → Other actions | No | No | — | — | |
 | Web browsing | No | No | — | — | |
-| App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics |
+| App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision (owner, Oct 8, 2026)**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics |
 | Device or other IDs | No | No | — | — | No advertising id or device id is read |
 
 **Deletion, as Play asks it in the policy text:** everything above is deleted with the account
