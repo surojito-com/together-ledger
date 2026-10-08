@@ -2,11 +2,14 @@ import { useFocusEffect } from 'expo-router';
 import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { accountMessage } from '../auth/account-messages';
 import { useSession } from '../auth/session';
+import type { OfflineReason } from '../auth/session-state';
 import { useShell } from '../shell/shell-provider';
 import { chooseJourney, type Journey, type Snapshot } from './journey-view';
 
 export type JourneyState =
   | { phase: 'signed-out' }
+  /** Signed in on this phone, but the service could not be asked who (#352). No journey is kept on the phone in v1. */
+  | { phase: 'offline'; reason: OfflineReason }
   | { phase: 'loading' }
   | { phase: 'no-journeys' }
   | { phase: 'failed' }
@@ -63,9 +66,11 @@ function useJourneyLoader() {
 
   const state: JourneyState = session.status === 'loading'
     ? { phase: 'loading' }
-    : !userId
-      ? { phase: 'signed-out' }
-      : held?.forUser === userId ? held.state : { phase: 'loading' };
+    : session.status === 'offline'
+      ? { phase: 'offline', reason: session.reason }
+      : !userId
+        ? { phase: 'signed-out' }
+        : held?.forUser === userId ? held.state : { phase: 'loading' };
 
   const activeId = state.phase === 'ready' ? state.activeId : null;
   const reload = useCallback(async () => {

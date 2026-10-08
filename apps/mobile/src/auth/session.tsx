@@ -1,16 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiBase } from '../config/api';
 import { createAccountClient, type AccountClient, type AccountUser } from '../api/client';
+import { sessionAnswered, sessionFailed, type SessionState } from './session-state';
 import { secureTokenStore } from './token-storage';
-
-type SessionState =
-  | { status: 'loading'; user: null }
-  | { status: 'signed-out'; user: null }
-  | { status: 'signed-in'; user: AccountUser };
 
 type SessionValue = SessionState & {
   client: AccountClient;
-  /** Re-reads the account from the service, for example after verifying an email in the browser. */
+  /** Re-reads the account from the service: after verifying an email in the browser, and when the connection or the app comes back. */
   refresh: () => Promise<void>;
   setUser: (user: AccountUser | null) => void;
 };
@@ -23,14 +19,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'loading', user: null });
 
   const setUser = useCallback((user: AccountUser | null) => {
-    setState(user ? { status: 'signed-in', user } : { status: 'signed-out', user: null });
+    setState(sessionAnswered(user));
   }, []);
 
-  // Offline, or no service in this build: keep whoever was signed in rather than signing them
-  // out for a network problem. Only an explicit refusal clears the session.
+  // Offline, or the service out of reach: keep whoever was signed in, and on opening the app
+  // say the phone is offline rather than signed out (#352). Only an explicit refusal signs out.
   const settle = useCallback((result: Promise<AccountUser | null>) => result.then(setUser, (error) => {
-    if ((error as { code?: string }).code === 'authentication_required') setUser(null);
-    else setState((current) => (current.status === 'loading' ? { status: 'signed-out', user: null } : current));
+    setState((current) => sessionFailed(current, error));
   }), [setUser]);
 
   const refresh = useCallback(() => settle(client.session()), [settle]);

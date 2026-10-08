@@ -25,7 +25,16 @@ A request may authenticate in one of two ways. A browser sends the `tl_session` 
 
 `POST /auth/register` and `POST /auth/login` return a bearer token when the client asks for one by sending `X-Together-Client: app`. The reply then carries `token`, `tokenExpiresAt`, `refreshToken`, and `refreshTokenExpiresAt` alongside the user, and no session cookie or CSRF token is issued. Without that header both endpoints behave exactly as they always have: a `tl_session` cookie plus a `csrfToken`, and no bearer token in the body. The web client does not send the header and its flow is unchanged.
 
-The access token is short-lived (`ACCESS_TOKEN_MINUTES`, 30 by default). The refresh token lasts longer (`REFRESH_TOKEN_DAYS`, 30 by default) and is spent the first time it is used: `POST /auth/refresh` takes `{ "refreshToken": "…" }` and returns a new pair. Tokens issued together share a family. Signing out retires the whole family, so a copied access token cannot outlive the sign-out meant to end it, and presenting a refresh token that was already spent retires the family too — a second presentation means a copy is in circulation, and the safe reading is that neither holder should continue.
+The access token is short-lived (`ACCESS_TOKEN_MINUTES`, 30 by default). The refresh token lasts longer (`REFRESH_TOKEN_DAYS`, 30 by default) and is spent the first time it is used: `POST /auth/refresh` takes `{ "refreshToken": "…" }` and returns a new pair. Tokens issued together share a family. Signing out retires the whole family, so a copied access token cannot outlive the sign-out meant to end it.
+
+A refresh token that was already spent is answered by what has happened to the pair it issued (#353, migration 031):
+
+- **Nobody has used that pair** (neither its access token nor its refresh token has been presented to the server): the reply carrying it was most likely lost on the way back to the phone. That pair is retired and a fresh one is issued in its place, in the same family, as often as the reply is lost. Only hashes are kept, so the lost pair itself cannot be returned.
+- **That pair has been used, or is gone** (renewed again, signed out, or retired): a copy is in circulation, and the whole family is retired — the safe reading is that neither holder should continue. A pair that a retry retired counts as used if it ever turns up.
+
+Each token records when it was first presented (`used_at`) and each pair which refresh token issued it (`issued_by`). A refresh token spent before migration 031 has no pair recorded against it, so presenting it again retires its family, as before.
+
+Only `401 invalid_token` means the refresh token was refused and the sign-in is over. A client keeps its tokens on anything else — no connection, a `5xx`, a `429` from the rate limit (30 per 15 minutes), or a reply that is not this API's JSON — and tries again later.
 
 `DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
 
