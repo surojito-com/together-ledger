@@ -351,9 +351,8 @@ A journey owner with others still in it must hand the journey over first
 ## Part 3. The store answers, for the phone app
 
 These are written to be pasted. They describe the build that `apps/mobile` makes at `1cc17a6`.
-Each answer that rests on a judgement rather than a plain fact is marked **Decision**. Five of them
-were confirmed by the owner on Oct 8, 2026 and say so; the rest still need the owner's confirmation
-before submitting.
+Each answer that rests on a judgement rather than a plain fact is marked **Decision**, with the
+date the owner confirmed it. All were confirmed on Oct 8, 2026.
 
 ### 3.1 Google Play: Data safety
 
@@ -371,8 +370,8 @@ before submitting.
 
 **Data types.** "Shared" means transferred to a third party. Nothing below is shared: what goes to
 other journeyers goes at the person's own direction, and what goes to the email sender and the
-host is a service provider acting for us, both of which Play exempts. **Decision**, on Play's own
-definitions. No data is processed ephemerally; all of it is stored.
+host is a service provider acting for us, both of which Play exempts. **Decision (owner, Oct 8, 2026)**, on Play's
+own definitions. No data is processed ephemerally; all of it is stored.
 
 | Category → Type | Collected | Shared | Required or optional | Purposes | Notes |
 |---|---|---|---|---|---|
@@ -381,13 +380,13 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Personal info → **Name** | **Yes** | No | **Optional** (the display name starts as the username) | **App functionality, Account management** | 2.1 |
 | Personal info → **Email address** | **Yes** | No | **Required** | **App functionality, Account management** | The person's own, and another person's email when proposing to add them (2.2) |
 | Personal info → **User IDs** | **Yes** | No | **Required** | **Account management** | The username |
-| Personal info → Address, Phone number, Race and ethnicity, Political or religious beliefs, Sexual orientation, Other info | No | No | — | — | Not asked for (2.1). **Decision** on sensitive types: the app never asks about these, though a person may write anything in a moment; that free text is declared below |
+| Personal info → Address, Phone number, Race and ethnicity, Political or religious beliefs, Sexual orientation, Other info | No | No | — | — | Not asked for (2.1). **Decision (owner, Oct 8, 2026)** on sensitive types: the app never asks about these, though a person may write anything in a moment; that free text is declared below |
 | Financial info → User payment info, Credit score | No | No | — | — | The phone has no payment screen; Stripe is never reached from the phone |
 | Financial info → **Purchase history** | No | No | — | — | Becomes **Yes, Optional, App functionality** when store purchases ship on the phone (#267) |
 | Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision (owner, Oct 8, 2026)**: it is context the person types, not an account balance, but declaring it is the safer reading |
 | Health and fitness | No | No | — | — | |
 | Messages → Emails, SMS or MMS | No | No | — | — | The app sends no message content written by the person; the proposal note is declared below |
-| Messages → **Other in-app messages** | No | No | — | — | **Decision**: journeyers share moments and notes, not messages to each other |
+| Messages → **Other in-app messages** | No | No | — | — | **Decision (owner, Oct 8, 2026)**: a return-to conversation is a titled record with a status, kept in the journey alongside moments, not a chat thread. It is declared below as user-generated content |
 | Photos and videos → **Photos** | No | No | — | — | Becomes **Yes, Optional, App functionality** when the phone can attach photos (#187), 1.2 |
 | Photos and videos → Videos | No | No | — | — | |
 | Audio files | No | No | — | — | |
@@ -396,7 +395,7 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Contacts | No | No | — | — | A proposed email is typed, never read from contacts |
 | App activity → App interactions | No | No | — | — | **Decision (owner, Oct 8, 2026)**: the journey history records what a person did to shared records so others can see it; it is the content itself, not usage measurement |
 | App activity → In-app search history, Installed apps | No | No | — | — | |
-| App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), return-to conversations, notes on proposals (2.2) |
+| App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), return-to conversations (title, detail, status; `client.ts:254-263`), notes on proposals (2.2). **Decision (owner, Oct 8, 2026)** for the conversations |
 | App activity → Other actions | No | No | — | — | |
 | Web browsing | No | No | — | — | |
 | App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision (owner, Oct 8, 2026)**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics |
@@ -427,12 +426,12 @@ the privacy policy (Part 4).
 | Financial Info → **Other Financial Info** | **Yes** | **App Functionality** | The optional money context on a moment. **Decision**, as in 3.1 |
 | Location → **Precise Location** | **Yes** | **App Functionality** | 1.1: four-decimal coordinates are "three or more decimal places" in Apple's definition. **Decision**, as in 3.1 |
 | Location → Coarse Location | No | — | |
-| Sensitive Info | No | — | **Decision**, as in 3.1 |
+| Sensitive Info | No | — | **Decision (owner, Oct 8, 2026)**, as in 3.1 |
 | Contacts | No | — | |
-| User Content → Emails or Text Messages | No | — | |
+| User Content → Emails or Text Messages | No | — | **Decision (owner, Oct 8, 2026)**: return-to conversations are records in the journey, declared under Other User Content, as on Play |
 | User Content → **Photos or Videos** | No | — | Becomes **Yes, App Functionality** with #187 |
 | User Content → Audio Data, Gameplay Content, Customer Support | No | — | Support is by email, outside the app |
-| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1 |
+| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1, return-to conversations included |
 | Browsing History, Search History | No | — | |
 | Identifiers → **User ID** | **Yes** | **App Functionality** | The username and the account id behind the tokens |
 | Identifiers → Device ID | No | — | |
