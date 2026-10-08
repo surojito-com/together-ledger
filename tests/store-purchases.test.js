@@ -311,7 +311,7 @@ test('on a live service, a sandbox purchase counts only for an allowed tester, a
   assert.equal(photo.statusCode, 201, photo.body);
   const [slotId] = photo.json().data.extra.slotIds;
   assert.deepEqual(await h.platform.imageSlots(sam.id, samsJourney.id, walk.id), [{ id: slotId, state: 'active' }]);
-  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  const bytes = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
   await h.platform.uploadMomentImage(sam.id, samsJourney.id, walk.id, 'image/jpeg', bytes);
   await h.platform.uploadMomentImage(sam.id, samsJourney.id, walk.id, 'image/jpeg', bytes, slotId);
   const real = await h.apple(lee, h.signed({ appAccountToken: leesIds.appAccountToken, environment: 'Production', transactionId: 'lee-real' }));
@@ -616,7 +616,7 @@ test('an extra photo is room for one more photo on its moment, for good', async 
   assert.equal(extra.slotIds.length, 1);
   assert.deepEqual(await h.platform.imageSlots(sam.id, ours.id, walk.id), [{ id: extra.slotIds[0], state: 'active' }]);
 
-  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  const bytes = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
   await h.platform.uploadMomentImage(sam.id, ours.id, walk.id, 'image/jpeg', bytes);
   await assert.rejects(h.platform.uploadMomentImage(sam.id, ours.id, walk.id, 'image/jpeg', bytes), (error) => error.code === 'included_image_already_used');
   await h.platform.uploadMomentImage(sam.id, ours.id, walk.id, 'image/jpeg', bytes, extra.slotIds[0]);

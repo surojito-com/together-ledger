@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createPool, runMigrations } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
@@ -7,6 +8,7 @@ import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
 import { appleChain, signTransaction, transactionPayload } from './support/apple-signing.js';
+import { stripPhotoMetadata } from '../src/photo-metadata.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -215,4 +217,34 @@ test('real PostgreSQL grants a store purchase once, and a failed grant leaves no
   assert.equal((await new PlatformService({ pool, config: liveNobody, mailer }).imageSlots(user.id, journey.id, moment.id)).length, 0, 'and nobody else\u2019s does');
   await pool.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id<>$2', [journey.id, user.id]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+// pg-mem cannot carry a binary bytea (every byte that is not UTF-8 comes back as U+FFFD), so a
+// photo's round trip is proved here: what is stored and served is the photo without its location
+// and camera details, byte for byte (#258).
+test('real PostgreSQL stores and serves a photo without its location and camera details', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({
+    NODE_ENV: 'development',
+    JOURNEY_CAPACITY_MODE: 'test-groups',
+    DATABASE_URL: databaseUrl,
+    SESSION_SECRET: 's'.repeat(32),
+    AUDIT_HMAC_KEY: 'a'.repeat(32),
+  });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const registration = await platform.register({ email: 'postgres-photo@example.test', username: 'postgres-photo', password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.find((message) => message.type === 'verification').token);
+  const journey = await platform.createJourney(registration.user.id, { name: 'Photo proof', location: '', startDate: '2026-10-07', endDate: '2026-10-08', budgetCents: 0 });
+  const moment = await platform.createMoment(registration.user.id, journey.id, { kind: 'memory', title: 'A photo from far away', detail: '', occurredOn: '2026-10-07', visibility: 'shared-now', moneyCents: null, moneyCurrency: '' });
+
+  const photo = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  const uploaded = await platform.uploadMomentImage(registration.user.id, journey.id, moment.id, 'image/jpeg', photo, null, 'IMG_0042.jpg');
+  const served = await platform.momentImage(registration.user.id, journey.id, moment.id, uploaded.id);
+  assert.deepEqual(served.bytes, Buffer.from(stripPhotoMetadata(photo).bytes));
+  for (const word of ['Kolkata', 'Fixture Camera Co', 'SN-FIXTURE-0042', 'ns.adobe.com/xap', 'MotionPhoto']) assert.equal(served.bytes.includes(word), false, word);
+
+  await platform.deleteAccount(registration.user.id, 'correct horse battery staple');
 });
