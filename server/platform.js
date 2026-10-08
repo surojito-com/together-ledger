@@ -1423,7 +1423,9 @@ export class PlatformService {
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 25 * 1024 * 1024) throw new PlatformError(400, 'invalid_image', 'Choose an image no larger than 25 MB.');
     // The device removes a photo's location and camera details before sending it (#258). This does
     // it again before anything is stored, because an older client or a hand-made request may not
-    // have. What is stored is the cleaned file, under the type its bytes really are.
+    // have. What is stored is the cleaned file, under the type its bytes really are. Only a member
+    // of the journey gets as far as the file being read; the transaction below checks again.
+    await this.requireMember(this.pool, userId, journeyId);
     let photo;
     try {
       photo = stripPhotoMetadata(bytes);

@@ -81,6 +81,16 @@ function unreadable() {
   return new PhotoMetadataError();
 }
 
+// A camera writes tens of segments or chunks; an encoder splitting a large PNG's image data, a few
+// thousand. A file made of millions of tiny ones is not a photo, and walking it would cost the
+// server seconds and gigabytes, so past this many it is refused.
+const MAX_PARTS = 65536;
+
+function countPart(parts) {
+  if (parts >= MAX_PARTS) throw unreadable();
+  return parts + 1;
+}
+
 // Orientation is the one EXIF tag that changes how the picture is drawn: a phone held sideways
 // writes the pixels sideways and says so here. It is read from the original and written back as
 // a TIFF structure holding nothing else.
@@ -132,6 +142,12 @@ const KEPT_JPEG_APP = new Map([
   [0xee, ascii('Adobe')],
 ]);
 
+// The segments that draw the picture: every start-of-frame (C0-CF but C4, C8 and CC), Huffman
+// and arithmetic-coding tables (C4, CC), quantisation tables (DB), restart interval (DD), number
+// of lines (DC) and start of scan (DA). Any other marker outside APPn and comments is refused, so
+// metadata cannot ride through under a marker this does not know.
+const PICTURE_MARKERS = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf, 0xc4, 0xcc, 0xdb, 0xdd, 0xdc, 0xda]);
+
 function segment(marker, payload) {
   const length = payload.length + 2;
   if (length > 0xffff) throw unreadable();
@@ -144,7 +160,9 @@ function stripJpeg(bytes) {
   let orientation = 1;
   let position = 2;
   let ended = false;
+  let parts = 0;
   while (position < bytes.length && !ended) {
+    parts = countPart(parts);
     if (bytes[position] !== 0xff) throw unreadable();
     while (bytes[position] === 0xff) position += 1; // fill bytes before a marker
     const marker = bytes[position];
@@ -154,10 +172,10 @@ function stripJpeg(bytes) {
       ended = true;
       break;
     }
-    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-      kept.push(Uint8Array.of(0xff, marker));
-      continue;
-    }
+    // Restart markers belong inside a scan, where the scan below steps over them. Out here they,
+    // TEM and every marker not listed are not part of a photo.
+    const metadata = (marker >= 0xe0 && marker <= 0xef) || marker === 0xfe;
+    if (!metadata && !PICTURE_MARKERS.has(marker)) throw unreadable();
     if (position + 2 > bytes.length) throw unreadable();
     const length = (bytes[position] << 8) | bytes[position + 1];
     if (length < 2 || position + length > bytes.length) throw unreadable();
@@ -185,7 +203,7 @@ function stripJpeg(bytes) {
       continue;
     }
 
-    if ((marker >= 0xe0 && marker <= 0xef) || marker === 0xfe) {
+    if (metadata) {
       if (marker === 0xe1 && orientation === 1 && startsWith(payload, EXIF_HEADER)) orientation = readOrientation(payload.subarray(EXIF_HEADER.length));
       const identifier = KEPT_JPEG_APP.get(marker);
       if (!identifier || !startsWith(payload, identifier)) continue;
@@ -243,7 +261,9 @@ function stripPng(bytes) {
   let position = PNG_SIGNATURE.length;
   let sawHeader = false;
   let sawEnd = false;
+  let parts = 0;
   while (position < bytes.length && !sawEnd) {
+    parts = countPart(parts);
     if (position + 12 > bytes.length) throw unreadable();
     const length = ((bytes[position] << 24) | (bytes[position + 1] << 16) | (bytes[position + 2] << 8) | bytes[position + 3]) >>> 0;
     const type = readAscii(bytes, position + 4, 4);
@@ -275,8 +295,10 @@ const VP8X_XMP = 0x04;
 
 const u32le = (value) => Uint8Array.of(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, value >>> 24);
 
+const WEBP_PAD = Uint8Array.of(0);
+
 function webpChunk(fourcc, data) {
-  return concat([ascii(fourcc), u32le(data.length), data, data.length % 2 ? Uint8Array.of(0) : new Uint8Array()]);
+  return concat([ascii(fourcc), u32le(data.length), data, data.length % 2 ? WEBP_PAD : new Uint8Array()]);
 }
 
 function stripWebp(bytes) {
@@ -287,7 +309,9 @@ function stripWebp(bytes) {
   let orientation = 1;
   let sawImage = false;
   let position = 12;
+  let parts = 0;
   while (position + 8 <= limit) {
+    parts = countPart(parts);
     const fourcc = readAscii(bytes, position, 4);
     const size = (bytes[position + 4] | (bytes[position + 5] << 8) | (bytes[position + 6] << 16) | (bytes[position + 7] << 24)) >>> 0;
     const dataEnd = position + 8 + size;
@@ -301,7 +325,9 @@ function stripWebp(bytes) {
       kept.push(null); // the header is written last, once its flags are known
     } else if (KEPT_WEBP_CHUNKS.has(fourcc)) {
       if (fourcc === 'VP8 ' || fourcc === 'VP8L' || fourcc === 'ANMF') sawImage = true;
-      kept.push(webpChunk(fourcc, data));
+      // A view of the chunk as it stands, header included, rather than a copy of each one.
+      kept.push(bytes.subarray(position, dataEnd));
+      if (size % 2) kept.push(WEBP_PAD);
     }
     position = dataEnd + (size % 2);
   }

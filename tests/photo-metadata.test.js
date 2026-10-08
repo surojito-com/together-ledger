@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { PHOTO_METADATA_REMOVED, PhotoMetadataError, photoType, stripPhotoMetadata } from '../src/photo-metadata.js';
+import { jpegOfEmptyTables, jpegOfRestarts, pngOfEmptyChunks, webpOfEmptyChunks } from './fixtures/photos/crafted.js';
 
 // The fixtures carry what a phone camera writes (tests/fixtures/photos/make-fixtures.mjs). This
 // file reads them with its own small parser, not the one under test, so a mistake in one is not
@@ -196,6 +197,29 @@ test('a file it cannot read through is refused, never passed on as it came', () 
     assert.throws(() => stripPhotoMetadata(bytes), (error) => error instanceof PhotoMetadataError && error.code === 'unreadable_photo');
   }
 });
+
+test('a JPEG marker it does not know is refused, so metadata cannot ride through under one', () => {
+  // The fixture's EXIF segment with its marker changed from APP1 (E1) to a byte no JPEG uses.
+  const disguised = Buffer.from(jpeg);
+  const exif = disguised.indexOf('Exif\0\0', 0, 'latin1');
+  assert.deepEqual([disguised[exif - 4], disguised[exif - 3]], [0xff, 0xe1]);
+  disguised[exif - 3] = 0x55;
+  assert.throws(() => stripPhotoMetadata(disguised), (error) => error.code === 'unreadable_photo');
+  // A restart marker belongs inside a scan; out here it is not part of a photo.
+  assert.throws(() => stripPhotoMetadata(Buffer.from([0xff, 0xd8, 0xff, 0xd0, 0xff, 0xd9])), (error) => error.code === 'unreadable_photo');
+});
+
+// Before #332's review fix, the first of these took ~22 s and ~3.5 GB, the third ~9 s and ~1 GB.
+for (const [label, make] of [['restart markers', jpegOfRestarts], ['empty JPEG tables', jpegOfEmptyTables], ['empty WebP chunks', webpOfEmptyChunks], ['empty PNG chunks', pngOfEmptyChunks]]) {
+  test(`a 25 MB file of ${label} is refused at once, without allocating per part`, () => {
+    const crafted = make();
+    const before = process.memoryUsage().rss;
+    const started = performance.now();
+    assert.throws(() => stripPhotoMetadata(crafted), (error) => error.code === 'unreadable_photo');
+    assert.ok(performance.now() - started < 1000, `took ${Math.round(performance.now() - started)} ms`);
+    assert.ok(process.memoryUsage().rss - before < 200 * 1024 * 1024, 'grew by more than 200 MB');
+  });
+}
 
 test('the line said beneath the picker is one sentence about location and camera details', () => {
   assert.match(PHOTO_METADATA_REMOVED, /^[^.]+\.$/);

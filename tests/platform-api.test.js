@@ -9,6 +9,7 @@ import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
 import { loggerOptions, redactUrl } from '../server/log-options.js';
 import { stripPhotoMetadata } from '../src/photo-metadata.js';
+import { jpegOfRestarts, webpOfEmptyChunks } from './fixtures/photos/crafted.js';
 
 const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
@@ -254,6 +255,38 @@ test('a photo sent with its metadata is stored without it, and one that cannot b
   const unreadable = await upload('not a photo at all', 'image/jpeg');
   assert.equal(unreadable.response.statusCode, 400, unreadable.response.body);
   assert.equal(unreadable.response.json().error.code, 'unreadable_image');
+});
+
+// A file built to make the strip expensive is refused quickly, and only a journey member's upload
+// is read at all (#332 review).
+test('a crafted 25 MB upload is refused at once, and a non-member never gets it read', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const alice = await register(app, mailer, { email: 'crafted-owner@example.test', username: 'crafted-owner' });
+  const bob = await register(app, mailer, { email: 'crafted-stranger@example.test', username: 'crafted-stranger' });
+  const journey = (await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
+    payload: { name: 'Not for strangers', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  })).json().data.journey;
+  const moment = (await app.inject({
+    method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+    payload: { kind: 'memory', title: 'A moment', detail: '', occurredOn: '2026-10-08', visibility: 'shared-now', moneyCents: null, moneyCurrency: '' },
+  })).json().data.moment;
+  const send = (who, contentType, payload) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images`, headers: { ...authHeaders(who), 'content-type': contentType }, payload });
+
+  for (const [contentType, payload] of [['image/jpeg', jpegOfRestarts()], ['image/webp', webpOfEmptyChunks()]]) {
+    const started = performance.now();
+    const response = await send(alice, contentType, payload);
+    const elapsed = performance.now() - started;
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error.code, 'unreadable_image');
+    assert.ok(elapsed < 3000, `${contentType} took ${Math.round(elapsed)} ms`);
+  }
+
+  // Refused for access, not for the file: a stranger's upload never reaches the strip.
+  const stranger = await send(bob, 'image/jpeg', jpegOfRestarts());
+  assert.equal(stranger.statusCode, 403, stranger.body);
+  assert.equal(stranger.json().error.code, 'forbidden');
 });
 
 test('TC-00010 through TC-00120 prove the shared journey is clear and durable', async (t) => {
