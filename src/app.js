@@ -6,18 +6,23 @@ import {
   CATEGORIES,
   CATEGORY_ICONS,
   conversationPrompts,
+  countOf,
   CURRENT_SCHEMA_VERSION,
   dateLabel,
   dateRange,
   groupDayByCategory,
   isValidState,
+  localDay,
   money,
+  MOMENT_NAME_MISSING,
   MOMENT_TYPES,
   normalizeConcern,
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  RECENT_MOMENTS_SHOWN,
   remainingLabel,
+  seeAllShown,
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
@@ -361,7 +366,7 @@ function renderAccountState() {
   $('#invite-form').hidden = !sharing || !canInvite;
   $('#sharing-create-journey-button').hidden = !needsPrivateJourney;
   $('#sharing-copy').textContent = sharing
-    ? `${activeTrip(state).members.length} ${activeTrip(state).members.length === 1 ? 'person is' : 'people are'} here. ${canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.'} Each person signs in separately.`
+    ? sharingCopy(activeTrip(state).members.length, canInvite, reservedFor(activeTrip(state)))
     : needsPrivateJourney
       ? 'Your account is ready. Create a private journey to invite another journeyer.'
       : 'Sign in and create a private journey to invite another journeyer.';
@@ -383,24 +388,28 @@ function renderAccountState() {
     };
     $('#member-list').innerHTML = memberListMarkup(members, memberRow)
       || emptyState('No one is listed yet', 'The people in this journey appear here once the account service answers.', { compact: true });
-    const proposals = trip.inviteProposalRecords || [];
-    $('#invite-proposals').hidden = !proposals.length;
-    $('#invite-proposal-list').innerHTML = proposals.map((proposal) => inviteProposalRow(proposal, trip)).join('');
-    renderUnpaidCapacityRest(trip, members);
     const invitations = trip.invitationRecords || [];
+    // Once everyone has agreed and the invitation is out, nothing is being decided any more: the
+    // place is held for the person until they accept, it runs out, or it is withdrawn (#350).
+    const reserved = reservedInvitations(invitations);
+    $('#reserved-places').hidden = !reserved.length;
+    $('#reserved-place-list').innerHTML = reserved.map(reservedPlaceRow).join('');
+    const { deciding, settled } = splitProposals(trip.inviteProposalRecords || []);
+    $('#invite-proposals').hidden = !deciding.length;
+    $('#invite-proposal-list').innerHTML = deciding.map((proposal) => inviteProposalRow(proposal, trip)).join('');
+    $('#settled-proposals').hidden = !settled.length;
+    $('#settled-proposal-list').innerHTML = settled.map((proposal) => inviteProposalRow(proposal, trip)).join('');
+    renderUnpaidCapacityRest(trip, members);
     $('#invitation-history').hidden = !invitations.length;
-    $('#invitation-list').innerHTML = invitations.map((invitation) => {
-      // Two different waits, and they are not the same length: the journeyers have a month to
-      // answer, and the person invited has only as long as a single-use link safely lasts.
-      const joining = invitation.status === 'pending'
-        ? `<small class="countdown" data-expires-at="${escapeHtml(invitation.expiresAt || '')}" data-countdown-prefix="Time left to join">Time left to join: ${escapeHtml(remainingLabel(invitation.expiresAt))}</small>`
-        : '';
-      return `<div class="journey-record-row"><div><strong>Invitation sent to ${escapeHtml(invitation.email)}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt)}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small>${joining}</div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`;
-    }).join('');
+    $('#invitation-list').innerHTML = invitations.map(invitationHistoryRow).join('');
   } else {
     $('#member-list').innerHTML = '';
+    $('#reserved-places').hidden = true;
+    $('#reserved-place-list').innerHTML = '';
     $('#invite-proposals').hidden = true;
     $('#invite-proposal-list').innerHTML = '';
+    $('#settled-proposals').hidden = true;
+    $('#settled-proposal-list').innerHTML = '';
     $('#invitation-history').hidden = true;
     $('#invitation-list').innerHTML = '';
   }
@@ -432,6 +441,64 @@ function memberListMarkup(members, memberRow) {
   return `${inView.map(memberRow).join('')}<details class="member-overflow"><summary>Show the other ${folded.length} ${people}</summary>${folded.map(memberRow).join('')}</details>`;
 }
 
+// "N people are here…": the top line of Journey sharing. Where the journey is full only because
+// places are held for people invited, it says so, rather than that there is no open place (#350).
+function sharingCopy(memberCount, canInvite, reserved) {
+  const here = `${memberCount} ${memberCount === 1 ? 'person is' : 'people are'} here.`;
+  let room = canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.';
+  if (!canInvite && reserved?.held && reserved.invitations.length === 1) room = `1 place is reserved for ${invitedPerson(reserved.invitations[0])}, waiting for them to accept the invitation.`;
+  else if (!canInvite && reserved?.held && reserved.invitations.length > 1) room = `${reserved.invitations.length} places are reserved, waiting for the people invited to accept.`;
+  return `${here} ${room} Each person signs in separately.`;
+}
+
+function reservedFor(trip) {
+  return { held: Boolean(trip?.capacity?.heldForInvitations), invitations: reservedInvitations(trip?.invitationRecords || []) };
+}
+
+// The server sends only the masked email (#350); once the person has joined, their name.
+function invitedPerson(record) {
+  return record.joinedDisplayName || record.email;
+}
+
+function reservedInvitations(invitations) {
+  return invitations.filter((invitation) => invitation.status === 'pending');
+}
+
+// "Being decided on" is only for people the journey hasn't finished agreeing on. Everything else
+// is settled, and its record stays readable below it.
+function splitProposals(proposals) {
+  return { deciding: proposals.filter((proposal) => proposal.status === 'open'), settled: proposals.filter((proposal) => proposal.status !== 'open') };
+}
+
+function reservedPlaceTitle(invitation) {
+  return `1 place reserved — waiting for ${invitedPerson(invitation)} to accept the invitation`;
+}
+
+// Two different waits, and they are not the same length: the journeyers have a month to answer,
+// and the person invited has two weeks to accept (#347). "left" is said once, by the value (#282).
+function countdownMarkup(expiresAt, prefix) {
+  return `<small class="countdown" data-expires-at="${escapeHtml(expiresAt || '')}" data-countdown-prefix="${escapeHtml(prefix)}">${escapeHtml(prefix)}: ${escapeHtml(remainingLabel(expiresAt))}</small>`;
+}
+
+function reservedPlaceRow(invitation) {
+  const withdraw = invitation.viewerMayWithdraw
+    ? `<div class="settings-actions"><button class="button quiet" type="button" data-withdraw-invitation="${escapeHtml(invitation.id)}">Withdraw the invitation</button></div>`
+    : '';
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(reservedPlaceTitle(invitation))}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt || '')}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small>${countdownMarkup(invitation.expiresAt, 'Time to join')}${withdraw}</div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`;
+}
+
+function sendAgainNote(invitation) {
+  return `Everyone has already agreed, so it can be sent again until ${dateTimeLabel(invitation.sendAgainUntil)} without asking them again.`;
+}
+
+function invitationHistoryRow(invitation) {
+  const joining = invitation.status === 'pending' ? countdownMarkup(invitation.expiresAt, 'Time to join') : '';
+  const sendAgain = invitation.viewerMaySendAgain
+    ? `<small>${escapeHtml(sendAgainNote(invitation))}</small><div class="settings-actions"><button class="button quiet" type="button" data-send-invitation-again="${escapeHtml(invitation.id)}">Send it again</button></div>`
+    : '';
+  return `<div class="journey-record-row"><div><strong>Invitation sent to ${escapeHtml(invitedPerson(invitation))}</strong><small>Sent by ${escapeHtml(invitation.invitedByDisplayName)} · <time datetime="${escapeHtml(invitation.sentAt)}">${escapeHtml(dateTimeLabel(invitation.sentAt))}</time></small>${joining}${sendAgain}</div><span class="invitation-status ${escapeHtml(invitation.status)}">${escapeHtml(invitationStatusLabel(invitation.status))}</span></div>`;
+}
+
 // The times on both sides of a decision are kept in the record: when somebody was asked, and
 // when they answered. A journey can fold this away to read the summary, and cannot lose it.
 function inviteProposalRow(proposal, trip) {
@@ -451,17 +518,15 @@ function inviteProposalRow(proposal, trip) {
   ].filter(Boolean).join('');
   const actions = buttons ? `<div class="settings-actions">${buttons}</div>` : '';
   const note = proposal.note ? `<small>${escapeHtml(proposal.note)}</small>` : '';
-  const countdown = proposal.status === 'open'
-    ? `<small class="countdown" data-expires-at="${escapeHtml(proposal.expiresAt || '')}" data-countdown-prefix="Time left to answer">Time left to answer: ${escapeHtml(remainingLabel(proposal.expiresAt))}</small>`
-    : '';
-  return `<div class="journey-record-row"><div><strong>${escapeHtml(proposal.email)}</strong><small>Proposed by ${escapeHtml(proposal.proposedByDisplayName)} · <time datetime="${escapeHtml(proposal.proposedAt || '')}">${escapeHtml(dateTimeLabel(proposal.proposedAt))}</time></small>${note}<small>${escapeHtml(waiting)}</small>${countdown}${actions}<details class="proposal-detail"><summary>Who was asked, and when</summary>${proposal.decisions.map(proposalDecisionRow).join('')}</details></div><span class="invitation-status ${escapeHtml(proposal.status)}">${escapeHtml(proposalStatusLabel(proposal.status))}</span></div>`;
+  const countdown = proposal.status === 'open' ? countdownMarkup(proposal.expiresAt, 'Time to answer') : '';
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(invitedPerson(proposal))}</strong><small>Proposed by ${escapeHtml(proposal.proposedByDisplayName)} · <time datetime="${escapeHtml(proposal.proposedAt || '')}">${escapeHtml(dateTimeLabel(proposal.proposedAt))}</time></small>${note}<small>${escapeHtml(waiting)}</small>${countdown}${actions}<details class="proposal-detail"><summary>Who was asked, and when</summary>${proposal.decisions.map(proposalDecisionRow).join('')}</details></div><span class="invitation-status ${escapeHtml(proposal.status)}">${escapeHtml(proposalStatusLabel(proposal.status))}</span></div>`;
 }
 
 function proposalDecisionRow(entry) {
   const answered = entry.decision === 'pending'
     ? 'has not answered yet'
     : `${entry.decision === 'agree' ? 'agreed' : 'declined'} ${dateTimeLabel(entry.decidedAt)}`;
-  return `<div class="journey-record-row"><div><strong>${escapeHtml(entry.displayName)}</strong><small>${escapeHtml(entry.email)}</small><small>Asked <time datetime="${escapeHtml(entry.requestedAt || '')}">${escapeHtml(dateTimeLabel(entry.requestedAt))}</time> · ${escapeHtml(answered)}</small></div><span class="invitation-status ${escapeHtml(entry.decision)}">${escapeHtml(proposalDecisionLabel(entry.decision))}</span></div>`;
+  return `<div class="journey-record-row"><div><strong>${escapeHtml(entry.displayName)}</strong><small>Asked <time datetime="${escapeHtml(entry.requestedAt || '')}">${escapeHtml(dateTimeLabel(entry.requestedAt))}</time> · ${escapeHtml(answered)}</small></div><span class="invitation-status ${escapeHtml(entry.decision)}">${escapeHtml(proposalDecisionLabel(entry.decision))}</span></div>`;
 }
 
 // The countdowns are redrawn in place rather than by re-rendering the journey, so that a fold
@@ -587,7 +652,7 @@ async function saveUnpaidCapacityRest(trip, payload) {
 }
 
 function invitationStatusLabel(status) {
-  return ({ accepted: 'Accepted', expired: 'Expired', pending: 'Pending', revoked: 'Revoked' })[status] || 'Recorded';
+  return ({ accepted: 'Accepted', expired: 'Expired', pending: 'Pending', revoked: 'Revoked', withdrawn: 'Withdrawn' })[status] || 'Recorded';
 }
 
 function initializeThemePicker() {
@@ -742,9 +807,9 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#moment-filters').hidden = !momentsExpanded || !recent.length;
   $('#moment-filters').innerHTML = momentsExpanded ? filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('') : '';
   $$('[data-moment-filter]').forEach((button) => button.addEventListener('click', () => { momentFilter = button.dataset.momentFilter; renderSharedJourney(trip, moments); }));
-  $('#toggle-moments-button').hidden = !recent.length;
-  $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${recent.length} moments`;
-  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
+  $('#toggle-moments-button').hidden = !seeAllShown(recent.length, momentsExpanded);
+  $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${countOf(recent.length, 'moment', 'moments')}`;
+  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, RECENT_MOMENTS_SHOWN));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
     const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by more than one journeyer</span>' : ''}`;
     const shareAction = isCloudJourney(trip) && moment.visibility === 'share-later' ? `<button data-share-moment="${escapeHtml(moment.id)}">Share now</button>` : '';
@@ -892,7 +957,7 @@ function openMoment(id = '', initialKind = '') {
   // A new moment must never inherit an ID from a dialog that previously edited one.
   form.elements.id.value = '';
   form.elements.kind.innerHTML = MOMENT_TYPES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-  form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
+  form.elements.occurredOn.value = localDay();
   form.elements.visibility.value = 'shared-now';
   renderMomentThemeChooser(form, moment?.theme);
   momentLocations = [];
@@ -1081,7 +1146,7 @@ function openExpense(id = '') {
   form.reset();
   form.elements.category.innerHTML = CATEGORIES.map((category) => `<option>${category}</option>`).join('');
   form.elements.paidBy.innerHTML = trip.members.map((member) => `<option>${escapeHtml(member)}</option>`).join('');
-  form.elements.occurredOn.value = new Date().toISOString().slice(0, 10);
+  form.elements.occurredOn.value = localDay();
   form.elements.category.value = 'Restaurants';
   $('#expense-title').textContent = 'Add an expense';
   $('#save-expense').textContent = 'Save expense';
@@ -1107,7 +1172,7 @@ function openExpense(id = '') {
 function openJourney(trip = null) {
   const form = $('#journey-form');
   form.reset();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   form.elements.startDate.value = today;
   form.elements.endDate.value = today;
   form.elements.startDateStatus.value = 'exact';
@@ -1424,6 +1489,14 @@ $('#moment-form').addEventListener('submit', async (event) => {
   const form = event.currentTarget;
   try {
     const input = { ...Object.fromEntries(new FormData(form)), locations: structuredClone(momentLocations) };
+    // The browser stops an empty name; a name of only spaces gets past it, so it is caught here,
+    // in the form's own name for the field, and the person is taken back to it (#354).
+    if (!String(input.title || '').trim()) {
+      showStatus(MOMENT_NAME_MISSING, { source: 'moment' });
+      form.elements.title.focus();
+      return;
+    }
+    clearStatus('moment');
     const trip = activeTrip(state);
     const existingIndex = state.moments.findIndex((moment) => moment.id === input.id && moment.tripId === trip?.id);
     const before = existingIndex >= 0 ? structuredClone(state.moments[existingIndex]) : null;
@@ -1733,7 +1806,7 @@ $('#member-list').addEventListener('click', async (event) => {
   }
 });
 
-$('#invite-proposal-list')?.addEventListener('click', async (event) => {
+async function onProposalClick(event) {
   const agreeButton = event.target.closest('[data-agree-proposal]');
   const declineButton = event.target.closest('[data-decline-proposal]');
   const withdrawButton = event.target.closest('[data-withdraw-proposal]');
@@ -1771,7 +1844,43 @@ $('#invite-proposal-list')?.addEventListener('click', async (event) => {
   } catch (error) {
     showStatus(accountMessage(error));
   }
-});
+}
+
+$('#invite-proposal-list')?.addEventListener('click', onProposalClick);
+
+// Withdrawing frees the place at once; sending again is one tap, because everyone has already
+// agreed and that agreement still holds (#347).
+async function onInvitationClick(event) {
+  const withdrawButton = event.target.closest('[data-withdraw-invitation]');
+  const againButton = event.target.closest('[data-send-invitation-again]');
+  const button = withdrawButton || againButton;
+  if (!button) return;
+  const invitationId = withdrawButton ? button.dataset.withdrawInvitation : button.dataset.sendInvitationAgain;
+  const invitation = (activeTrip(state).invitationRecords || []).find((entry) => entry.id === invitationId);
+  if (!invitation) return;
+  try {
+    if (withdrawButton) {
+      if (!await confirmConsequence({
+        title: `Withdraw the invitation to ${invitation.email}?`,
+        consequence: 'Their link stops working, and the place it held is free again straight away. The journey’s history keeps a record that it was withdrawn.',
+        confirmLabel: 'Withdraw the invitation',
+      })) return;
+      await api.mutate(`/journeys/${activeTrip(state).id}/invitations/${invitationId}`, 'DELETE', {});
+      showToast('Withdrawn. The link no longer works, and the place is free again.');
+    } else {
+      setButtonPending(button, true, 'Sending…');
+      await api.mutate(`/journeys/${activeTrip(state).id}/invitations/${invitationId}/send-again`, 'POST', {});
+      showToast('Sent again. Everyone had already agreed, so nobody was asked again.');
+    }
+    await refreshCloudState();
+  } catch (error) {
+    if (againButton) setButtonPending(button, false);
+    showStatus(accountMessage(error));
+  }
+}
+
+$('#reserved-place-list')?.addEventListener('click', onInvitationClick);
+$('#invitation-list')?.addEventListener('click', onInvitationClick);
 
 $('#expense-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1873,7 +1982,7 @@ $('#export-button').addEventListener('click', () => {
   const blob = new Blob([exportState(state)], { type: 'application/json' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `together-ledger-${new Date().toISOString().slice(0, 10)}.json`;
+  link.download = `together-ledger-${localDay()}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
   showToast('Private backup downloaded.');

@@ -340,6 +340,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     await platform.withdrawInviteProposal(request.auth.userId, request.params.journeyId, request.params.proposalId);
     return reply.code(204).send();
   });
+  // A sent invitation can be withdrawn by whoever asked or the owner, and one that ran out can be
+  // sent again by whoever asked while the agreement's 30 days last (#347).
+  app.delete('/api/v1/journeys/:journeyId/invitations/:invitationId', { preHandler: protectMutation }, async (request, reply) => {
+    await platform.withdrawInvitation(request.auth.userId, request.params.journeyId, request.params.invitationId);
+    return reply.code(204).send();
+  });
+  app.post('/api/v1/journeys/:journeyId/invitations/:invitationId/send-again', { preHandler: protectMutation }, async (request, reply) => {
+    await platform.sendInvitationAgain(request.auth.userId, request.params.journeyId, request.params.invitationId, accountOriginFor(request));
+    return reply.code(202).send({ data: { invitationSent: true } });
+  });
   // The token travels in the body, which the log never records (issue #208). The path form below
   // stays for clients that haven't updated; server/log-options.js masks its token in the log.
   app.post('/api/v1/invitations/accept', { preHandler: protectMutation }, async (request) => {

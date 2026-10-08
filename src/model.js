@@ -150,6 +150,31 @@ export function money(cents, currency = 'USD') {
   if (!currency) return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value);
   try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value); } catch { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value); }
 }
+/**
+ * "Today" as the person's own calendar day, read from their device's clock in their own time
+ * zone, "YYYY-MM-DD" (#336). Only a form's starting value comes from here: a day the person
+ * chooses is still stored as a plain calendar day, with no time and no time zone.
+ */
+export function localDay(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+/** How many of the most recent moments the ledger shows until the person asks for all. */
+export const RECENT_MOMENTS_SHOWN = 3;
+
+/**
+ * "See all" shows only when the ledger is not already showing every moment (#337). Once all are
+ * showing, its other face, "Show recent", stays, so the way back is never lost.
+ */
+export function seeAllShown(count, expanded) {
+  return count > 0 && (expanded || count > RECENT_MOMENTS_SHOWN);
+}
+
+/** A count with its noun, singular for one: "1 moment", "3 moments" (#337). */
+export function countOf(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 export function dateLabel(date, options = { month: 'short', day: 'numeric' }) { if (!date) return 'Date not set'; return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...options }).format(new Date(`${date}T12:00:00Z`)); }
 export function makeId(prefix = 'entry') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 
@@ -166,8 +191,11 @@ export function normalizeConcern(input, tripId, actorName, existing = null) {
   return { id: existing?.id || makeId('thread'), tripId, title: input.title.trim(), detail: input.detail?.trim() || '', status: input.status === 'resolved' ? 'resolved' : 'open', createdAt: existing?.createdAt || now, createdBy: existing?.createdBy || actorName, updatedAt: now, updatedBy: actorName };
 }
 
+/** What an empty "A short name" says, in the form's own name for the field (#354). */
+export const MOMENT_NAME_MISSING = 'Give this moment a short name.';
+
 export function normalizeMoment(input, tripId, existing = null) {
-  if (!input.title?.trim()) throw new Error('A moment needs a short title.');
+  if (!input.title?.trim()) throw new Error(MOMENT_NAME_MISSING);
   if (!MOMENT_TYPES.some(([value]) => value === input.kind)) throw new Error('Choose a valid kind of moment.');
   const kindLabel = input.kind === 'other' ? String(input.kindLabel || '').trim() : '';
   if (input.kind === 'other' && (!kindLabel || kindLabel.length > 60)) throw new Error('Give this kind of moment a short name of 60 characters or fewer.');
