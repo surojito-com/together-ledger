@@ -102,7 +102,7 @@ and the rest is the system sans.
    Play itself is blocked from the session that checked, so look once in
    Play Console before the first upload. There is an unrelated GitHub project
    called `together-ledger` (a shared expense tracker), not on Play.
-3. **Screenshots** (at least two phone screenshots) aren't part of this
-   draft. They must be of the real app, so they wait on a build. The reviewer
-   account (#319) holds a journey already lived in, which would make good
-   ones.
+3. **Screenshots** aren't taken yet. They must be of the real app, so they
+   wait on a build. `SCREENSHOTS.md` is the shot list: seven shots of the
+   review account's sample journey, what each must show and keep out, and
+   the sizes Play and the App Store take.
