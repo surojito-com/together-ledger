@@ -13,7 +13,7 @@ const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
 const apiOrigin = 'https://api.example.test';
 
-async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z'), beforeMigration028 } = {}) {
+async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z'), beforeMigration029 } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({
     name: 'char_length',
@@ -46,8 +46,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
-  if (beforeMigration028) await beforeMigration028(pool);
-  await pool.query(await readFile(new URL('../server/migrations/028_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
+  if (beforeMigration029) await beforeMigration029(pool);
+  await pool.query(await readFile(new URL('../server/migrations/029_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -1194,10 +1194,10 @@ test('someone joining later never takes the place of the person the owner chose 
 test('a journey left fully paused reads again, and nothing can choose that mode any more', async (t) => {
   const userId = '66666666-6666-4666-8666-666666666666';
   const journeyId = '77777777-7777-4777-8777-777777777777';
-  // As the schema stood before migration 028: an owner had chosen to fully pause.
+  // As the schema stood before migration 029: an owner had chosen to fully pause.
   const { app, pool } = await testPlatform({
     configOverrides: billingConfig,
-    beforeMigration028: async (before) => {
+    beforeMigration029: async (before) => {
       await before.query(`INSERT INTO users (id,email_normalized,username,display_name,password_hash,created_at) VALUES ($1,'paused@example.test','paused-owner','Paused','x',now())`, [userId]);
       await before.query(`INSERT INTO journeys (id,owner_user_id,name,location,start_date_status,end_date_status,budget_cents,unpaid_capacity_mode) VALUES ($1,$2,'A journey someone paused','','unknown','forever',0,'paused')`, [journeyId, userId]);
     },
