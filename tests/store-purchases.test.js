@@ -25,7 +25,7 @@ const MIGRATIONS = [
   '019_let-moments-carry-their-own-atmosphere', '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history',
   '022_agree-together-before-adding-someone', '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted', '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
-  '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time',
+  '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time', '030_ask-for-six-weeks-a-year',
 ];
 const origin = 'http://127.0.0.1:4174';
 const PURCHASED = Date.parse('2026-10-08T12:00:00Z');
@@ -94,7 +94,8 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
       await pool.query('ALTER TABLE moment_image_slots DROP CONSTRAINT IF EXISTS moment_image_slots_constraint_1');
       await pool.query('ALTER TABLE moment_location_slots DROP CONSTRAINT IF EXISTS moment_location_slots_constraint_1');
     }
-    await pool.query(await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8'));
+    // pg-mem cannot parse NOT VALID (030); tests/postgres-integration runs 030 as written.
+    await pool.query((await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
   }
 
   const chain = appleChain();
@@ -420,6 +421,33 @@ test('a pass bought while another is running starts when that one ends', async (
   assert.equal((await h.capacity(ours.id)).restingMemberIds.length, 10, 'room that starts later holds nobody yet');
   h.clock.now = new Date(now + 21 * DAY);
   assert.equal((await h.capacity(ours.id)).restingMemberIds.length, 0);
+});
+
+test('a pass that runs out gives a grace, and a pass bought during it starts at once', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-lapsed');
+  const ours = await h.journey(sam);
+  const alex = await h.person('alex-lapsed');
+  const kit = await h.person('kit-lapsed');
+  await h.join(ours.id, alex);
+  await h.join(ours.id, kit);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const now = h.clock.now.getTime();
+  await h.apple(sam, h.signed({ appAccountToken, transactionId: 't-lapse-1' }));
+
+  // The week ran out two days ago: 7 days of grace from its end, as for a failed payment.
+  h.clock.now = new Date(now + 9 * DAY);
+  const waiting = await h.capacity(ours.id);
+  assert.equal(waiting.grace?.endsAt, new Date(now + 14 * DAY).toISOString());
+  assert.deepEqual(waiting.restingMemberIds, []);
+
+  // The ended week is not running, so a new one does not queue behind it. (A phone's access key
+  // lasts 30 minutes, so after nine days it signs in again.)
+  const signedIn = { ...sam, token: (await h.platform.issueTokens(sam.id)).token };
+  const again = await h.apple(signedIn, h.signed({ appAccountToken, transactionId: 't-lapse-2' }));
+  assert.equal(again.statusCode, 201, again.body);
+  assert.equal(again.json().data.room.from, h.clock.now.toISOString());
+  assert.equal((await h.capacity(ours.id)).grace, null);
 });
 
 test('a month pass from the 31st ends on the last day of the next month', () => {

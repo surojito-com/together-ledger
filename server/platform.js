@@ -43,11 +43,16 @@ const MAX_JOURNEY_CAPACITY = 101;
 // The most journeys one person can be in, owned or joined (owner, Oct 7, 2026; the Book, 4.7). It
 // only stops a new one: nobody already past it loses a journey.
 const MAX_JOURNEYS_PER_PERSON = 101;
-// After the automatic grace, the person who pays can ask for another week, up to seven times per
-// journey per calendar year (the Book, 4.7). Only one week can wait ahead: the next can be asked
-// for once no more than a week is left.
+// After the automatic grace, the person who pays can ask for another week, up to six times per
+// journey per calendar year (owner, Oct 8, 2026, replacing seven): seven weeks of grace in all,
+// the first automatic. Only one week can wait ahead: the next can be asked for once no more than
+// a week is left.
 const GRACE_REQUEST_DAYS = 7;
-const GRACE_REQUESTS_PER_YEAR = 7;
+const GRACE_REQUESTS_PER_YEAR = 6;
+// Room bought in a store that ends without anything after it, a pass running out or a
+// subscription lapsing, gets the same grace a failed web payment does (owner, Oct 8, 2026).
+const STORE_SOURCES = new Set(['apple', 'google']);
+const STORE_REPLACED = 'store_subscription_replaced';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CAPACITY_CAPABILITY = 'additional-journey-capacity';
 
@@ -877,7 +882,7 @@ export class PlatformService {
   }
 
   // During any grace, the automatic 7 days included, the person who pays can ask for another 7
-  // days, up to 7 times per journey per calendar year (the Book, 4.7; owner, Oct 8). Each week
+  // days, up to 6 times per journey per calendar year (the Book, 4.7; owner, Oct 8). Each week
   // begins where the current grace ends, and only one can wait ahead: the next can be asked for
   // once 7 days or fewer are left. That way nobody has to rest for a moment between one week and
   // the next, and the weeks cannot be stacked up front. Every request goes into the history.
@@ -902,7 +907,7 @@ export class PlatformService {
         await client.query(
           `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-          [randomUUID(), journeyId, userId, payment.calendarYear, requestNumber, grace.expires_at, graceUntil, now],
+          [randomUUID(), journeyId, userId, payment.calendarYear, requestNumber, grace.basis, graceUntil, now],
         );
       } catch (error) {
         // Another request took this number first. The journey lock makes that rare; the unique
@@ -1034,24 +1039,38 @@ export class PlatformService {
   // A grace lasts until its automatic end, or until the last week the payer asked for during this
   // lapse. Once that has passed the journey rests: no banner and no asking, even while Stripe has
   // neither been paid nor cancelled (its 'unpaid' and 'paused' states), so a payment given up on
-  // cannot keep a grace alive year after year. A store row stays 'active' past its end, so every
-  // row is judged by its own dates, never by its place in the order.
+  // cannot keep a grace alive year after year.
+  //
+  // Stripe tells us when a payment fails, and its row turns 'grace' with the automatic end as
+  // expires_at. A store row stays 'active' past its end instead: a pass simply runs out, and a
+  // subscription that isn't renewed sends nothing more. So a store row that has ended is in grace
+  // here, for the same 7 days from its end, unless a newer purchase replaced it (owner, Oct 8,
+  // 2026). Every row is judged by its own dates, never by its place in the order, and newer room
+  // that has started always comes before any grace.
   async paymentFor(client, journeyId) {
     const paid = paidEnvironments(this.config, { from: 3 });
     const entitlements = await client.query(
-      `SELECT id,state,quantity,effective_at,expires_at,payer_user_id FROM billing_entitlements
+      `SELECT id,source,state,quantity,effective_at,expires_at,payer_user_id,reason FROM billing_entitlements
        WHERE journey_id=$1 AND capability=$2 AND ${paid.sql} AND state IN ('active','grace')
        ORDER BY CASE WHEN state='active' THEN 0 ELSE 1 END, quantity DESC, updated_at DESC`,
       [journeyId, CAPACITY_CAPABILITY, ...paid.params],
     );
     const now = this.now();
     const calendarYear = now.getUTCFullYear();
-    const requests = entitlements.rows.some((row) => row.state === 'grace')
+    const requests = entitlements.rows.some((row) => row.state === 'grace' || (STORE_SOURCES.has(row.source) && row.state === 'active'))
       ? (await client.query('SELECT calendar_year,grace_basis,grace_until FROM journey_grace_requests WHERE journey_id=$1', [journeyId])).rows
       : [];
-    const rows = entitlements.rows.map((row) => {
-      if (!row.expires_at) return { ...row, until: null };
-      const automaticEnd = new Date(row.expires_at);
+    const graceMs = this.config.billingGraceDays * DAY_MS;
+    const lapsedStoreRoom = (row) => row.state === 'active' && STORE_SOURCES.has(row.source) && row.reason !== STORE_REPLACED
+      && row.expires_at && new Date(row.expires_at) <= now;
+    const asRead = entitlements.rows.map((row) => (lapsedStoreRoom(row)
+      ? { ...row, state: 'grace', basis: new Date(new Date(row.expires_at).getTime() + graceMs) }
+      : { ...row, basis: row.expires_at ? new Date(row.expires_at) : null }));
+    // Running room first, then grace, each most generous first; the query's order breaks ties.
+    asRead.sort((a, b) => (a.state === b.state ? Number(b.quantity) - Number(a.quantity) : a.state === 'active' ? -1 : 1));
+    const rows = asRead.map((row) => {
+      if (!row.basis) return { ...row, until: null };
+      const automaticEnd = row.basis;
       let until = automaticEnd;
       if (row.state === 'grace') {
         for (const request of requests) {

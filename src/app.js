@@ -520,7 +520,7 @@ function graceBannerCopy(grace, viewerId, peopleHere) {
     return listed.length > 1 ? `${listed.slice(0, -1).join(', ')} and ${listed[listed.length - 1]}` : listed[0] || '';
   };
   const payer = name(grace.payer);
-  const weeks = `${grace.requestsUsed} of ${grace.requestsPerYear} extra weeks used this year`;
+  const weeks = `${grace.requestsUsed} of ${grace.requestsPerYear} extra weeks asked for this year`;
   const someoneRests = grace.keepAdding.length < peopleHere;
   const whoAdds = `only ${names(grace.keepAdding)} can add new moments. Everyone else can still see everything, and nothing is lost.`;
   const days = `${grace.daysLeft} ${grace.daysLeft === 1 ? 'day' : 'days'} left`;
@@ -531,9 +531,11 @@ function graceBannerCopy(grace, viewerId, peopleHere) {
   ].join(' ');
 }
 
-// What the payer reads under the banner when another week can't be asked for yet.
+// What the payer reads under the banner when another week can't be asked for yet, or at all
+// this year.
 function graceRequestNote(grace, viewerId) {
-  if (grace.payer.id !== viewerId || grace.canRequest || grace.requestsUsed >= grace.requestsPerYear) return '';
+  if (grace.payer.id !== viewerId || grace.canRequest) return '';
+  if (grace.requestsUsed >= grace.requestsPerYear) return `All ${grace.requestsPerYear} extra weeks for ${grace.calendarYear} have been asked for. The count starts again on January 1.`;
   return `Another week can be asked for once ${grace.requestDays} days or fewer are left.`;
 }
 

@@ -133,6 +133,20 @@ starts straight away, because making room for more people is why it was bought, 
 beneath it. Passes from either store count, because the room is the journey's. A pass starts when our server
 honours it, never earlier, so a purchase that reaches us late loses none of its days.
 
+### When room bought in a store ends
+
+Decided by the owner, Oct 8, 2026: **a pass that runs out, or a monthly subscription that lapses, gets the same grace
+as a failed web payment.** Neither store tells us anything when that happens: a pass simply reaches its end, and a
+subscription that isn't renewed sends no renewal. So the row stays `active`, and `paymentFor` (`server/platform.js`)
+reads a store row whose end has passed as in grace for `BILLING_GRACE_DAYS` (7) from that end:
+
+- New invitations wait, a banner tells everyone, and the payer can ask for another week, up to 6 times per journey
+  per calendar year (migration 030), exactly as for Stripe.
+- Room that has started always comes first, so a pass bought during the grace ends it straight away. That pass
+  starts at once, because a pass that has ended isn't running for it to wait behind.
+- A subscription marked `store_subscription_replaced` gets no grace: something newer took its place.
+- When the grace and any weeks asked for are over, the people beyond two rest. Nobody is removed.
+
 ### Subscriptions over time
 
 Decided by the owner, Oct 8, 2026, after review of #335:
