@@ -172,6 +172,10 @@ export function createAccountClient({ base, fetch, tokens }: {
     async journeys<J>() {
       return (await request<{ journeys: J[] }>('/journeys', { signedIn: true }))?.journeys ?? [];
     },
+    /** Begin a journey (#333). The account that creates it owns it. */
+    async createJourney<J>(journey: object) {
+      return (await request<{ journey: J }>('/journeys', { method: 'POST', body: journey, signedIn: true })).journey;
+    },
     async snapshot<S>(journeyId: string) {
       return request<S>(`/journeys/${encodeURIComponent(journeyId)}/snapshot`, { signedIn: true });
     },

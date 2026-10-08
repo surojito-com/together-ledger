@@ -1586,6 +1586,49 @@ test('the phone reads a shared journey through this server, and never another pe
   assert.equal(view.moneyContext(recent[0]), '$12.50 is held here as context, not a score.');
 });
 
+test('the phone begins a journey through this server, and owns it', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const load = async (path) => {
+    const url = new URL(path, import.meta.url);
+    const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+    const linked = outputText.replace(/from '(\.[^']+\.js)'/g, (_, specifier) => `from '${new URL(specifier, url).href}'`);
+    return import(`data:text/javascript;base64,${Buffer.from(linked).toString('base64')}`);
+  };
+  const { createAccountClient } = await load('../apps/mobile/src/api/client.ts');
+  const draft = await load('../apps/mobile/src/journey/journey-draft.ts');
+  const view = await load('../apps/mobile/src/journey/journey-view.ts');
+
+  let held = null;
+  const phone = createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (url, init) => {
+      const response = await app.inject({ method: init.method, url, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+  await phone.register({ email: 'begin-phone@example.test', username: 'begin-phone', password: 'correct horse battery staple' });
+  await phone.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'begin-phone@example.test').token);
+  assert.deepEqual(await phone.journeys(), [], 'a new account begins with no journey');
+
+  const first = { ...draft.newJourneyDraft(new Date('2026-10-08T12:00:00Z')), name: 'Our first year', location: 'Leeds' };
+  const created = await phone.createJourney(draft.journeyPayload(first));
+  assert.equal(created.name, 'Our first year');
+  assert.equal(created.role, 'owner', 'the phone that begins a journey owns it');
+
+  const second = await phone.createJourney(draft.journeyPayload({ ...first, name: 'The long way round', startDateStatus: 'unknown', endDateStatus: 'date', endDate: '2027-03-01' }));
+  const journeys = await phone.journeys();
+  assert.deepEqual(journeys.map(({ id }) => id).sort(), [created.id, second.id].sort(), 'an account that has a journey can begin another');
+  assert.equal(view.chooseJourney(journeys, second.id), second.id, 'the journey just begun is the one that opens');
+  const snapshot = await phone.snapshot(second.id);
+  assert.equal(snapshot.journey.name, 'The long way round');
+  assert.ok(snapshot.events.some((event) => event.action === 'journey_created'), 'beginning it is in the journey\'s history');
+
+  await assert.rejects(phone.createJourney(draft.journeyPayload({ ...first, endDateStatus: 'date', endDate: '2026-10-07' })), { status: 400, message: 'The end date must be on or after the start date.' });
+  assert.equal(draft.journeyProblem({ ...first, endDateStatus: 'date', endDate: '2026-10-07' }), 'The end date must be on or after the start date.', 'the phone says it first, in the same words');
+});
+
 test('the phone holds, changes, shares and deletes a moment through this server', async (t) => {
   const { app, mailer, pool } = await testPlatform();
   t.after(async () => { await app.close(); await pool.end(); });
