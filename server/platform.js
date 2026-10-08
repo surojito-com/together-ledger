@@ -3,6 +3,7 @@ import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
 import { appleEventFrom, appleSignInFor } from './apple.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
+import { PhotoMetadataError, stripPhotoMetadata } from '../src/photo-metadata.js';
 import {
   assertPassword,
   csrfForSession,
@@ -1420,6 +1421,20 @@ export class PlatformService {
   async uploadMomentImage(userId, journeyId, momentId, contentType, bytes, paidSlotId = null, originalFilename = '') {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) throw new PlatformError(400, 'unsupported_image', 'Choose a JPEG, PNG, or WebP image.');
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 25 * 1024 * 1024) throw new PlatformError(400, 'invalid_image', 'Choose an image no larger than 25 MB.');
+    // The device removes a photo's location and camera details before sending it (#258). This does
+    // it again before anything is stored, because an older client or a hand-made request may not
+    // have. What is stored is the cleaned file, under the type its bytes really are. Only a member
+    // of the journey gets as far as the file being read; the transaction below checks again.
+    await this.requireMember(this.pool, userId, journeyId);
+    let photo;
+    try {
+      photo = stripPhotoMetadata(bytes);
+    } catch (error) {
+      if (error instanceof PhotoMetadataError) throw new PlatformError(400, 'unreadable_image', error.message);
+      throw error;
+    }
+    const storedType = photo.contentType;
+    const stored = Buffer.from(photo.bytes.buffer, photo.bytes.byteOffset, photo.bytes.byteLength);
     return withTransaction(this.pool, async (client) => {
       await this.requireMember(client, userId, journeyId);
       await this.lockJourney(client, journeyId);
@@ -1431,7 +1446,7 @@ export class PlatformService {
         const slot = await client.query(`UPDATE moment_image_slots SET used_at=$1,updated_at=$1 WHERE id=$2 AND journey_id=$3 AND moment_id=$4 AND payer_user_id=$5 AND environment=$6 AND state='active' AND used_at IS NULL RETURNING id`, [this.now(), paidSlotId, journeyId, momentId, userId, this.config.stripeEnvironment]);
         if (!slot.rowCount) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
       }
-      const image = await client.query(`INSERT INTO moment_images (id,journey_id,moment_id,uploaded_by_user_id,content_type,content_length,bytes,paid_slot_id,original_filename) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), journeyId, momentId, userId, contentType, bytes.length, bytes, paidSlotId, cleanImageFilename(originalFilename, contentType)]);
+      const image = await client.query(`INSERT INTO moment_images (id,journey_id,moment_id,uploaded_by_user_id,content_type,content_length,bytes,paid_slot_id,original_filename) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), journeyId, momentId, userId, storedType, stored.length, stored, paidSlotId, cleanImageFilename(originalFilename, storedType)]);
       return publicMomentImage(image.rows[0]);
     });
   }

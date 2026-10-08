@@ -23,6 +23,7 @@ import {
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
 import { ApiError, TogetherApi } from './api.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from './moment-themes.js';
+import { PHOTO_METADATA_REMOVED, stripPhotoMetadata } from './photo-metadata.js';
 
 // Visibility is carried by shape as well as colour and word: an empty ring holds nothing
 // out, a half ring is meant for later, a full ring is out. The order reads even in
@@ -794,12 +795,43 @@ function addMomentLocation(location) {
   renderMomentLocations();
 }
 
+// The photo picked in the moment dialog, its location and camera details already removed (#258).
+// The line beneath the picker says so only once that has happened, so it is never a promise.
+let preparedMomentPhoto = null;
+
+function forgetMomentPhoto() {
+  preparedMomentPhoto = null;
+  clearStatus('photo');
+  const note = $('#moment-image-privacy');
+  note.hidden = true;
+  note.textContent = '';
+}
+
+async function prepareMomentPhoto(input) {
+  forgetMomentPhoto();
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const { bytes, contentType } = stripPhotoMetadata(new Uint8Array(await file.arrayBuffer()));
+    if (input.files?.[0] !== file) return; // another photo was picked meanwhile
+    preparedMomentPhoto = { source: file, photo: new File([bytes], file.name, { type: contentType }) };
+    const note = $('#moment-image-privacy');
+    note.textContent = PHOTO_METADATA_REMOVED;
+    note.hidden = false;
+  } catch (error) {
+    if (input.files?.[0] !== file) return; // a newer pick is not this one's to clear
+    input.value = '';
+    showStatus(error.message, { source: 'photo' });
+  }
+}
+
 function openMoment(id = '', initialKind = '') {
   const form = $('#moment-form');
   const trip = activeTrip(state);
   const moment = state.moments.find((item) => item.id === id && item.tripId === trip?.id);
   const hosted = isCloudJourney();
   form.reset();
+  forgetMomentPhoto();
   // A new moment must never inherit an ID from a dialog that previously edited one.
   form.elements.id.value = '';
   form.elements.kind.innerHTML = MOMENT_TYPES.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
@@ -1328,6 +1360,8 @@ $('#remove-moment-image-button').addEventListener('click', async (event) => {
   }
 });
 
+$('#moment-form').elements.image.addEventListener('change', (event) => prepareMomentPhoto(event.currentTarget));
+
 $('#moment-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1341,7 +1375,7 @@ $('#moment-form').addEventListener('submit', async (event) => {
       const payload = { kind: input.kind, kindLabel: input.kindLabel || '', title: input.title, detail: input.detail, occurredOn: input.occurredOn, visibility: input.visibility, theme: normalizeMomentTheme(input.theme), moneyCents, moneyCurrency: input.moneyCurrency || '', locations: input.locations, ...(before ? { version: before.version } : {}) };
       const result = before ? await api.mutate(`/journeys/${trip.id}/moments/${before.id}`, 'PATCH', payload) : await api.mutate(`/journeys/${trip.id}/moments`, 'POST', payload);
       const image = form.elements.image.files[0];
-      if (image) await api.uploadMomentImage(trip.id, result.moment.id, image, form.dataset.paidSlotId || '');
+      if (image) await api.uploadMomentImage(trip.id, result.moment.id, preparedMomentPhoto?.source === image ? preparedMomentPhoto.photo : image, form.dataset.paidSlotId || '');
       $('#moment-dialog').close();
       await refreshCloudState();
       showToast(before ? 'Moment updated.' : input.visibility === 'shared-now' ? 'Moment shared.' : 'Moment held with you.');

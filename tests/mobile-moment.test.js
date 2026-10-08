@@ -143,5 +143,7 @@ test('the calendar picks a day, not a moment in time: what is chosen is what is 
   assert.match(await read('app/moment.tsx'), /<DateField label="When"/);
   const app = JSON.parse(await read('app.json'));
   assert.ok(app.expo.plugins.includes('@react-native-community/datetimepicker'));
-  assert.doesNotMatch(JSON.stringify(app), /permission/i, 'a date picker asks for no permission');
+  // Only the network is granted (tests/mobile-permissions.test.js), and iOS asks for nothing.
+  assert.deepEqual(app.expo.android.permissions, ['android.permission.INTERNET'], 'a date picker asks for no permission');
+  assert.doesNotMatch(JSON.stringify(app.expo.ios), /UsageDescription/, 'a date picker asks for no permission');
 });
