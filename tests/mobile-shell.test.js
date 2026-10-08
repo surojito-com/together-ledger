@@ -57,7 +57,8 @@ test('the phone watches its connection, shows a standing caution, and clears it 
 
   // The web promises that anything "will wait". Nothing waits on the phone yet, so it says only what is true.
   assert.doesNotMatch(OFFLINE_NOTICE, /\bwait/);
-  assert.match(OFFLINE_NOTICE, /^You are offline\./, 'it opens as the web\'s does');
+  // The owner's wording, Oct 8 (#361): warmer than the first draft, and still true today.
+  assert.equal(OFFLINE_NOTICE, 'You’re offline. Your journeys will be back when you reconnect; until then, nothing can be held or changed.');
 
   const layout = await read('app/_layout.tsx');
   assert.match(layout, /onOffline: \(\) => showStatus\(OFFLINE_NOTICE, \{ tone: 'caution', source: CONNECTION_SOURCE \}\)/);

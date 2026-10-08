@@ -4,7 +4,7 @@
  * phone nothing waits yet, so a moment held offline is refused and stays in its form (#352). The
  * notice says only what is true today. Kept free of runtime imports so it can be tested as it is.
  */
-export const OFFLINE_NOTICE = 'You are offline. Until you reconnect, nothing can be held or changed in your journeys.';
+export const OFFLINE_NOTICE = 'You’re offline. Your journeys will be back when you reconnect; until then, nothing can be held or changed.';
 
 /** Reconnecting clears only this source's message, never a problem the person has not read. */
 export const CONNECTION_SOURCE = 'connection';
