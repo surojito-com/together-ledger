@@ -4,6 +4,8 @@ import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { STORE_SUBSCRIPTION_NOT_CANCELLED } from '../src/billing/store-products';
 import { Body, Button, Field, Screen } from '../src/components/ui';
+import { useWaitingMoments } from '../src/journey/use-waiting-moments';
+import { removedWithAccount } from '../src/journey/waiting-moments';
 import { useShell } from '../src/shell/shell-provider';
 
 /**
@@ -24,16 +26,20 @@ const DELETION_WAITS_ON_WEB_PAYMENT = 'If you pay on the web for room in a journ
 export default function DeleteAccountScreen() {
   const session = useSession();
   const shell = useShell();
+  const waiting = useWaitingMoments();
   const [password, setPassword] = useState('');
   const [typed, setTyped] = useState('');
   const [pending, setPending] = useState(false);
 
   async function confirm() {
-    if (!await shell.confirmConsequence({ title: 'Permanently delete this account?', consequence: `This follows the journey ownership rules shown here and cannot be undone. ${STORE_SUBSCRIPTION_NOT_CANCELLED}`, confirmLabel: 'Permanently delete account', destructive: true })) return;
+    // A moment still waiting on this phone can never be sent once the account is gone (#352).
+    const unsent = removedWithAccount(waiting.moments.length);
+    if (!await shell.confirmConsequence({ title: 'Permanently delete this account?', consequence: `This follows the journey ownership rules shown here and cannot be undone. ${STORE_SUBSCRIPTION_NOT_CANCELLED}${unsent ? ` ${unsent}` : ''}`, confirmLabel: 'Permanently delete account', destructive: true })) return;
     setPending(true);
     shell.clearStatus('account-deletion');
     try {
       await session.client.deleteAccount(password);
+      await waiting.clear();
       session.setUser(null);
       router.replace({ pathname: '/account', params: { notice: 'deleted' } });
     } catch (error) {

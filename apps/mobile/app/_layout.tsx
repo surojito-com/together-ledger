@@ -7,6 +7,7 @@ import { StoreProvider } from '../src/billing/store-provider';
 import { ShellOverlays } from '../src/components/dialogs';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
+import { useWaitingMoments, WaitingMomentsProvider } from '../src/journey/use-waiting-moments';
 import { ShellProvider, useShell } from '../src/shell/shell-provider';
 import { CONNECTION_SOURCE, OFFLINE_NOTICE } from '../src/shell/connection';
 import { useConnectionWatch } from '../src/shell/use-connection';
@@ -75,16 +76,18 @@ function SaveFailureNotice({ failure }: { failure: SaveFailure }) {
 /**
  * The standing offline notice, as a caution, cleared by its own source when the connection
  * returns (#300). Coming back online, or back to the foreground, checks the session again and
- * reloads the journeys, so an app opened offline recovers without a restart or a password (#352).
+ * reloads the journeys, so an app opened offline recovers without a restart or a password, and
+ * sends whatever moments were held while it was away (#352).
  */
 function ConnectionWatch() {
   const { refresh } = useSession();
   const { reload } = useJourney();
+  const { sendNow } = useWaitingMoments();
   const { showStatus, clearStatus } = useShell();
   const recheck = useCallback(() => {
-    refresh();
+    refresh().then(sendNow);
     reload();
-  }, [refresh, reload]);
+  }, [refresh, reload, sendNow]);
   useConnectionWatch({
     onOffline: () => showStatus(OFFLINE_NOTICE, { tone: 'caution', source: CONNECTION_SOURCE }),
     onOnline: () => {
@@ -107,11 +110,14 @@ export default function RootLayout() {
       <SessionProvider>
         <ShellProvider initialOnboardingComplete={stored.onboardingComplete} onOnboardingComplete={completeOnboarding}>
           <JourneyProvider>
-            {/* The App Store or Google Play, while someone is signed in (#272). */}
-            <StoreProvider>
-              <ThemedStack />
-            </StoreProvider>
-            <ConnectionWatch />
+            {/* Moments held without a connection, kept on this phone until they are sent (#352). */}
+            <WaitingMomentsProvider>
+              {/* The App Store or Google Play, while someone is signed in (#272). */}
+              <StoreProvider>
+                <ThemedStack />
+              </StoreProvider>
+              <ConnectionWatch />
+            </WaitingMomentsProvider>
           </JourneyProvider>
           <ShellOverlays />
           <SaveFailureNotice failure={failure} />

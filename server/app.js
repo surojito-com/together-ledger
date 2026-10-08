@@ -375,7 +375,9 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
 
   app.post('/api/v1/journeys/:journeyId/moments', { preHandler: protectMutation }, async (request, reply) => {
     if (config.momentLocationBillingEnabled && Array.isArray(request.body?.locations) && request.body.locations.length > 1) throw new PlatformError(409, 'location_payment_required', 'Hold the first place, then add another through its monthly place add-on.');
-    return reply.code(201).send({ data: { moment: await platform.createMoment(request.auth.userId, request.params.journeyId, request.body || {}) } });
+    // A resend of a moment already held (#352) answers 200 with that moment; a new one is 201.
+    const { moment, replayed } = await platform.holdMoment(request.auth.userId, request.params.journeyId, request.body || {});
+    return reply.code(replayed ? 200 : 201).send({ data: { moment } });
   });
   app.patch('/api/v1/journeys/:journeyId/moments/:momentId', { preHandler: protectMutation }, async (request) => {
     if (config.momentLocationBillingEnabled) await billing.assertLocationCapacity(request.auth.userId, request.params.journeyId, request.params.momentId, Array.isArray(request.body?.locations) ? request.body.locations.length : 0);

@@ -14,6 +14,9 @@ import { journeyPeriod, momentFilters, MOMENT_TYPES, openThreads, recentMoments,
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
+import { useWaitingMoments } from '../src/journey/use-waiting-moments';
+import { waitingWhileOffline } from '../src/journey/waiting-moments';
+import { WaitingMoments } from '../src/components/waiting-moments';
 import { fonts, useTheme } from '../src/theme';
 
 /**
@@ -24,6 +27,7 @@ export default function LedgerScreen() {
   const session = useSession();
   const journey = useJourney();
   const actions = useMomentActions();
+  const waiting = useWaitingMoments();
   const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState('all');
@@ -35,6 +39,8 @@ export default function LedgerScreen() {
     return (
       <Screen title="Our ledger">
         <Body>{LEDGER_WHILE_OFFLINE[state.reason]}</Body>
+        {/* What this account held and the service doesn't have yet: kept, not lost (#352). */}
+        {waiting.moments.length ? <Body>{waitingWhileOffline(waiting.moments.length)}</Body> : null}
         <Button kind="quiet" label="Try again" onPress={session.refresh} />
       </Screen>
     );
@@ -95,6 +101,7 @@ export default function LedgerScreen() {
               <Text style={[styles.body, { color: colors.muted }]}>Hold what happened in words that feel true.</Text>
             </View>
             <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />
+            <WaitingMoments activeJourneyId={activeId} />
             {seeAllShown(recent.length, expanded) ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
             {expanded && recent.length ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
           </View>

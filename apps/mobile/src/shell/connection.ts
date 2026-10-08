@@ -1,10 +1,10 @@
 /**
  * The standing offline notice (#300), in the web's place (src/app.js, reportConnection) but not
- * in its words. The web promises that anything needing the account service "will wait"; on the
- * phone nothing waits yet, so a moment held offline is refused and stays in its form (#352). The
- * notice says only what is true today. Kept free of runtime imports so it can be tested as it is.
+ * in its words. On the phone, holding a new moment is the one thing that waits: it is kept on the
+ * phone and sent once the connection returns (#352). Changing anything else still needs the
+ * connection. The notice says only that. Kept free of runtime imports so it can be tested as it is.
  */
-export const OFFLINE_NOTICE = 'You’re offline. Your journeys will be back when you reconnect; until then, nothing can be held or changed.';
+export const OFFLINE_NOTICE = 'You’re offline. A moment you hold now waits on this phone and is sent when you reconnect. Your journeys will be back then; until then, nothing else can be changed.';
 
 /** Reconnecting clears only this source's message, never a problem the person has not read. */
 export const CONNECTION_SOURCE = 'connection';

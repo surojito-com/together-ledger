@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
@@ -293,6 +293,24 @@ function cleanImageFilename(value, contentType) {
   } catch {
     return fallback;
   }
+}
+
+// The key a phone chose for a moment it holds (#352): its own random id, never anything about the
+// person. Absent is fine (the web sends none); anything else malformed is refused.
+const HOLD_KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+
+function cleanHoldKey(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !HOLD_KEY_PATTERN.test(value)) throw new PlatformError(400, 'invalid_input', 'This moment\u2019s key is not valid.');
+  return value;
+}
+
+// What a held moment said, as a keyed hash, so a resend can be told apart from different content
+// under the same key without the table keeping the words themselves.
+function momentContentHash(key, moment) {
+  const { kind, kindLabel, occurredOn, title, detail, visibility, theme, moneyCents, moneyCurrency, locations } = moment;
+  const canonical = JSON.stringify({ kind, kindLabel, occurredOn, title, detail, visibility, theme: theme || '', moneyCents, moneyCurrency, locations });
+  return createHmac('sha256', key).update(`moment-hold:${canonical}`).digest('hex');
 }
 
 function auditMoment(moment) {
@@ -1668,6 +1686,7 @@ export class PlatformService {
       if (member.rows[0].role === 'owner') throw new PlatformError(400, 'invalid_member', 'The journey owner cannot be removed.');
       await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [journeyId, memberUserId]);
       await client.query("DELETE FROM journey_moments WHERE journey_id=$1 AND created_by_user_id=$2 AND visibility<>'shared-now'", [journeyId, memberUserId]);
+      await client.query('DELETE FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journeyId, memberUserId]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_removed', entityType: 'membership', entityId: memberUserId, summary: `Removed journey member: ${member.rows[0].display_name}`, before: { userId: memberUserId, role: member.rows[0].role }, after: null });
       await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, memberUserId]);
     });
@@ -1758,11 +1777,35 @@ export class PlatformService {
   }
 
   async createMoment(userId, journeyId, input) {
+    return (await this.holdMoment(userId, journeyId, input)).moment;
+  }
+
+  // Holding a moment, safe to send twice (#352). A phone holding a moment without a connection
+  // keeps it and sends it later with a key it chose, and sends it again whenever it never heard
+  // back. The key is looked up only for this person in this journey: the same key sent again
+  // answers with the moment it already made (`replayed`) and makes nothing new, while the same key
+  // from someone else simply holds their own moment. A key that comes back with different content
+  // is refused and the first moment kept; one whose moment has since been deleted is not held again.
+  async holdMoment(userId, journeyId, input) {
+    const holdKey = cleanHoldKey(input.idempotencyKey);
     return withTransaction(this.pool, async (client) => {
-      await this.requireMember(client, userId, journeyId);
+      // Reading first: a resend of what was already held is answered even if changes have since
+      // started resting, because it changes nothing.
+      await this.requireMember(client, userId, journeyId, { reading: holdKey !== null });
       await this.lockJourney(client, journeyId);
-      const id = randomUUID();
       const next = cleanMoment(input);
+      const contentHash = holdKey === null ? null : momentContentHash(this.config.AUDIT_HMAC_KEY, next);
+      if (holdKey !== null) {
+        const held = await client.query('SELECT moment_id,content_hash FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2 AND hold_key=$3 FOR UPDATE', [journeyId, userId, holdKey]);
+        if (held.rowCount) {
+          if (held.rows[0].content_hash !== contentHash) throw new PlatformError(409, 'moment_key_reused', 'This moment was already sent with different details. The first one is kept, and this one was not held.');
+          const found = await client.query('SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND created_by_user_id=$3', [held.rows[0].moment_id, journeyId, userId]);
+          if (!found.rowCount) throw new PlatformError(409, 'moment_already_deleted', 'This moment was already held and has since been deleted, so it was not held again.');
+          return { moment: publicMoment(found.rows[0]), replayed: true };
+        }
+        await this.requireMember(client, userId, journeyId);
+      }
+      const id = randomUUID();
       const created = await client.query(
         `INSERT INTO journey_moments (id,journey_id,kind,kind_label,occurred_on,title,detail,visibility,theme,money_cents,money_currency,locations,created_by_user_id,updated_by_user_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14) RETURNING *`,
@@ -1774,7 +1817,10 @@ export class PlatformService {
       } else {
         await this.appendPrivateMomentEvent(client, { journeyId, momentId: id, ownerUserId: userId, action: 'moment_added', afterVisibility: moment.visibility, afterTheme: moment.theme });
       }
-      return moment;
+      if (holdKey !== null) {
+        await client.query('INSERT INTO moment_hold_keys (journey_id,author_user_id,hold_key,moment_id,content_hash,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [journeyId, userId, holdKey, id, contentHash, this.now()]);
+      }
+      return { moment, replayed: false };
     });
   }
 
@@ -2134,6 +2180,7 @@ export class PlatformService {
           await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [membership.journey_id, userId]);
         }
       }
+      await client.query('DELETE FROM moment_hold_keys WHERE author_user_id=$1', [userId]);
       await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM api_tokens WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM account_tokens WHERE user_id=$1', [userId]);
