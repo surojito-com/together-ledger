@@ -400,7 +400,8 @@ export function valueLabel(key: string, value: unknown) {
   if (value == null || value === '') return 'none';
   if (key === 'budgetCents' || key === 'amountCents') return money(value as number);
   if (key === 'theme') return momentThemeLabel(value as string);
-  if (Array.isArray(value)) return value.join(', ');
+  // A list of places is a list of values: each is written out, rather than read as [object Object].
+  if (Array.isArray(value)) return value.map((item) => (item && typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ');
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
