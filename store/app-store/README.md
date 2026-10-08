@@ -57,8 +57,8 @@ still there, and the home-screen name in `apps/mobile/app.json` is still
 
 ## The name
 
-The App Store name is **"Together-Ledger"** for now, because "Together Ledger"
-is taken on the App Store. **The owner hasn't confirmed it as final.** The name
+The App Store name is **"Together-Ledger"**, because "Together Ledger" is
+taken on the App Store. **The owner decided on Oct 8 to keep it for v1.** The name
 under the icon on the home screen stays **"Together Ledger"**: that comes from
 `expo.name` in `apps/mobile/app.json`, not from App Store Connect, and the check
 fails if it changes.
@@ -66,22 +66,73 @@ fails if it changes.
 The keywords leave out "together" and "ledger", because Apple already searches
 the name.
 
+## The subtitle
+
+**"Private moments, kept together"**, chosen by the owner on Oct 8, unless #304
+decides otherwise. #304 was decided on Oct 6: "two people" is the product's
+identity, and more people can join. The subtitle names neither "two people" nor
+"people", so it doesn't contradict that, and the description's first line still
+says "a private place for two people". If #304's decision changes, revisit the
+subtitle with it.
+
 ## Store settings to enter alongside them
 
-- **Privacy policy URL:** https://app.together-ledger.com/privacy. The Play
-  listing uses this one too. `docs/STORE_READINESS.md` (3.2) gives
-  `https://together-ledger.com/privacy`; both serve `PRIVACY.md`. Pick one and
-  use it on both stores.
-- **Terms of use:** the description links https://app.together-ledger.com/terms
-  (`TERMS.md`, `tests/terms-page.test.js`). Guideline 3.1.2 asks for a terms
-  link in the metadata of an app with auto-renewing subscriptions. Whether to
-  also set it as a custom licence agreement in App Store Connect, rather than
-  keep Apple's standard one, is the owner's call.
-- **Support URL and email:** ledger-support@together-ledger.com is the address
-  `PRIVACY.md` and `TERMS.md` publish. A support URL isn't chosen.
-- **Age rating:** Together Ledger is 18 and over (`TERMS.md`). The
-  questionnaire answers aren't written yet.
-- **Category:** not decided. Lifestyle is the suggestion, as on Play.
+Decided by the owner on Oct 8, 2026:
+
+- **Category:** Lifestyle.
+- **Age rating:** 18+, matching `TERMS.md` ("You must be 18 or older, wherever
+  you live").
+- **Privacy policy URL:** https://app.together-ledger.com/privacy, on both
+  stores. It is built from `PRIVACY.md` (`scripts/build-public-site.mjs`).
+- **Terms of use:** the link in the description,
+  https://app.together-ledger.com/terms (`TERMS.md`,
+  `tests/terms-page.test.js`), plus **Apple's standard licence agreement**. No
+  custom licence agreement is set in App Store Connect. Guideline 3.1.2 asks
+  for a terms link in the metadata of an app with auto-renewing subscriptions;
+  the description carries it, and the check requires it.
+
+**What that means for Play.** The Play listing's own files already use
+`https://app.together-ledger.com/privacy` (`store/google-play/README.md` and
+the end of `full-description.txt`), so nothing in them changes. Two things
+outside them do:
+
+1. **`docs/STORE_READINESS.md` (3.2) still gives
+   `https://together-ledger.com/privacy`.** That address serves the company
+   site's own privacy page ("Privacy — Together Ledger Digital", checked Oct 8),
+   not `PRIVACY.md`. Change it to the `app.` address, and check that Play
+   Console's Privacy policy field holds the `app.` address too.
+2. **Play's Data safety "Delete account URL"** is
+   `https://together-ledger.com/privacy`, by the owner's decision of Oct 8
+   (`docs/STORE_READINESS.md`, 3.1). That is a separate field and decision;
+   whether it moves too is the owner's call.
+
+### Support URL
+
+**There is no support page on `app.together-ledger.com`.**
+`https://app.together-ledger.com/support` answers 200, but only because the
+web app serves its home page for any path it doesn't know (checked Oct 8). So
+it must not be entered.
+
+**The company site has one:** `https://together-ledger.com/support`
+("Support — Together Ledger Digital", built in the `together-ledger.com`
+repository). It already gives Together Ledger's address,
+ledger-support@together-ledger.com, how to delete an account, and the privacy
+policy link.
+
+**Proposed: use `https://together-ledger.com/support` as the support URL on
+both stores**, once two lines on it are corrected in the `together-ledger.com`
+repository:
+
+- It says "Phone apps are in development." That stops being true when the
+  iPhone app ships.
+- Its deletion steps describe only the web ("open Account settings"). On the
+  phone it is Settings → Delete account (`apps/mobile/app/delete-account.tsx`),
+  which also says first that a store subscription isn't cancelled by deleting
+  the account.
+
+The alternative is a product page at `app.together-ledger.com/support`, built
+from a `SUPPORT.md` the way `/privacy` and `/terms` are built. That is more to
+keep in step for no gain at this size, so it isn't the proposal.
 
 ## The App Review notes
 
@@ -175,20 +226,17 @@ date. This PR leaves it alone; these notes are the written version.
 - **"Emergency".** Not even as a disclaimer: Together Ledger is never
   positioned as one, and nothing here needs the word.
 
-## Proposed, not added
+## Both checks run in `npm run check`
 
-`store/google-play/check-listing.mjs` passes today but isn't in
-`npm run check`. Adding it there, next to this one, would stop the Play text
-drifting the same way. It's a one-line change to the `check` script and is
-left for the owner to decide.
+`store/google-play/check-listing.mjs` joined this one in `npm run check` on
+Oct 8 (owner decision), so neither listing can drift unnoticed.
 
 ## Open calls for the owner
 
-1. **The App Store name**, "Together-Ledger", before submission.
-2. **Every sentence** in these files, quoted in the PR.
-3. **Category, age rating answers, support URL**, and which privacy-policy URL
-   both stores use.
-4. **Terms of use**: link only, or also a custom licence agreement in App
-   Store Connect.
-5. **Screenshots**, from a build: `store/google-play/SCREENSHOTS.md` is the
+1. **Every sentence** in these files, quoted in the PR.
+2. **The support URL**: the proposal above, and the two corrections to
+   `together-ledger.com/support` it needs.
+3. **The Play "Delete account URL"**: stay on
+   `https://together-ledger.com/privacy`, or move.
+4. **Screenshots**, from a build: `store/google-play/SCREENSHOTS.md` is the
    shot list for both stores, and they go in `store/app-store/screenshots/`.

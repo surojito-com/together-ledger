@@ -17,11 +17,12 @@ the most features today, and they are being brought to the phone.
 
 Store settings to enter alongside them:
 
-- **Category:** Lifestyle is the suggestion; not decided anywhere yet.
+- **Category:** Lifestyle (owner, Oct 8).
 - **Contact email:** ledger-support@together-ledger.com (the address
   `PRIVACY.md` and `TERMS.md` already publish).
 - **Website:** https://together-ledger.com
-- **Privacy policy:** https://app.together-ledger.com/privacy
+- **Privacy policy:** https://app.together-ledger.com/privacy, the same on
+  both stores (owner, Oct 8).
 
 Before pasting, run:
 
@@ -32,7 +33,8 @@ node store/google-play/check-listing.mjs
 It checks the three lengths, emoji, superlatives and other brands' names, the
 capacity words `CLAUDE.md` rules out (seats, licenses, slots, "removed"),
 claims nothing in Together Ledger backs yet, and that "A journey of two is
-free" and the agreement rule for adding people are still there.
+free" and the agreement rule for adding people are still there. It runs in
+`npm run check` too, beside the App Store check (owner, Oct 8).
 
 ## What every claim rests on
 
@@ -97,12 +99,11 @@ and the rest is the system sans.
 
 ## Open calls for the owner
 
-1. **Category.** Lifestyle is the suggestion; nothing decides it yet.
-2. **Name.** Web search found no app called "Together Ledger" on Play (Oct 6).
+1. **Name.** Web search found no app called "Together Ledger" on Play (Oct 6).
    Play itself is blocked from the session that checked, so look once in
    Play Console before the first upload. There is an unrelated GitHub project
    called `together-ledger` (a shared expense tracker), not on Play.
-3. **Screenshots** aren't taken yet. They must be of the real app, so they
+2. **Screenshots** aren't taken yet. They must be of the real app, so they
    wait on a build. `SCREENSHOTS.md` is the shot list: seven shots of the
    review account's sample journey, what each must show and keep out, and
    the sizes Play and the App Store take.
