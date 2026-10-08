@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
 // The phone asks for nothing it does not use (#258). Expo's Android template grants
 // SYSTEM_ALERT_WINDOW, VIBRATE and READ/WRITE_EXTERNAL_STORAGE unless told otherwise, and
 // expo-file-system, which Expo itself depends on, merges the storage pair back in from its own
-// manifest. `permissions` sets what is granted; `blockedPermissions` writes tools:node="remove",
-// which is the only thing that keeps a library's permission out of the merged manifest.
+// manifest. expo-secure-store depends on androidx.biometric, which merges in USE_BIOMETRIC and
+// USE_FINGERPRINT; the phone never asks for biometric unlock (no requireAuthentication).
+// `permissions` sets what is granted; `blockedPermissions` writes tools:node="remove", which is
+// the only thing that keeps a library's permission out of the merged manifest.
 //
 // To check a change: `npx expo prebuild --platform android --no-install` in apps/mobile, read
 // android/app/src/main/AndroidManifest.xml, then delete android/ (it is generated, never committed).
@@ -18,7 +20,7 @@ const require = createRequire(import.meta.url);
 
 // The phone talks to the API. Nothing else.
 const GRANTED = ['android.permission.INTERNET'];
-const BLOCKED = ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.SYSTEM_ALERT_WINDOW', 'android.permission.VIBRATE'];
+const BLOCKED = ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.SYSTEM_ALERT_WINDOW', 'android.permission.VIBRATE', 'android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT'];
 
 test('the phone is granted only the network on Android, and gaining a permission fails here first', () => {
   assert.deepEqual(app.android.permissions, GRANTED, 'A new Android permission is a privacy decision: say what it is for, check the generated manifest, and update this list in the same change.');
@@ -27,6 +29,19 @@ test('the phone is granted only the network on Android, and gaining a permission
 test('what the template and libraries would add on their own is blocked', () => {
   for (const permission of BLOCKED) assert.ok(app.android.blockedPermissions.includes(permission), `${permission} must stay blocked`);
   for (const permission of app.android.blockedPermissions) assert.equal(GRANTED.includes(permission), false, `${permission} is both granted and blocked`);
+});
+
+test('nothing asks for biometric unlock, so blocking USE_BIOMETRIC and USE_FINGERPRINT takes nothing away', async () => {
+  const files = [];
+  for (const directory of ['app', 'src']) {
+    for (const entry of await readdir(new URL(directory, mobile), { recursive: true, withFileTypes: true })) {
+      if (entry.isFile() && /\.(tsx?|jsx?)$/.test(entry.name)) files.push(`${entry.parentPath ?? entry.path}/${entry.name}`);
+    }
+  }
+  assert.ok(files.some((file) => file.endsWith('token-storage.ts')), 'the phone\'s own code is read');
+  for (const file of files) {
+    assert.doesNotMatch(await readFile(file, 'utf8'), /requireAuthentication/, `${file}: biometric unlock needs USE_BIOMETRIC unblocked in app.json, and a privacy decision first.`);
+  }
 });
 
 test('iOS asks for no permission either', () => {
