@@ -6,7 +6,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "Effective 28 September 2026."
+          "text": "Effective 8 October 2026."
         }
       ]
     },
@@ -99,6 +99,11 @@
         [
           {
             "text": "your email address, username, display name, an Argon2id hash of your password, whether your email is verified, and, after deletion, the pseudonymized state described under Deletion;"
+          }
+        ],
+        [
+          {
+            "text": "if you sign in with Apple or Google, the identifier that company gives us for you, as described under Signing in with Apple or Google;"
           }
         ],
         [
@@ -219,7 +224,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "The Event Manager is shared journey data. Private and share-later moments do not enter that shared stream or reveal their existence to anyone else. Their creator-only visibility changes are recorded separately without moment text. When a moment is deliberately shared, the shared stream records the change without copying its title or detail. Practical or preserved expense events omit notes, payment-account labels, and references, and return-to events do not duplicate the conversation. The people in a journey can still read the underlying shared records."
+          "text": "The Event Manager is shared journey data. Private and share-later moments do not enter that shared stream or reveal their existence to anyone else. Their creator-only visibility changes are recorded separately without moment text. When a moment is deliberately shared, the shared stream records the change without copying its title or detail. After that, each time a shared moment is added, changed, or deleted, the stream records its title, kind, date, places (with any coordinates), and money context as they were, but never its written detail. Those records stay in the journey's history even after the moment is deleted. Practical or preserved expense events omit notes, payment-account labels, and references, and return-to events do not duplicate the conversation. The people in a journey can still read the underlying shared records."
         }
       ]
     },
@@ -245,6 +250,35 @@
       "spans": [
         {
           "text": "Verification, invitation, proposal, and recovery messages are sent through Resend. Verification, invitation, and recovery messages contain a short-lived, single-use link. Sending email necessarily shows the destination address, message content, and routing details to Resend and to the receiving mail system. Open and click tracking are turned off for the Together Ledger sending domain; messages carry no tracking pixel and no tracking-rewritten links."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Signing in with Apple or Google"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "If you choose to sign in with Apple or Google, that company tells us an identifier it keeps for you, your email address and whether it has been verified, and, from Google, your name. If you use Apple's Hide My Email, we receive the relay address Apple makes for you instead of your own. We store the identifier, so we can recognise you next time. With Apple, we also keep a token Apple gives us, encrypted, so we can tell Apple to end the link when you delete your account. Apple or Google learns that you are signing in to Together Ledger; their own privacy policies apply to what they do with that, at "
+        },
+        {
+          "text": "apple.com/legal/privacy"
+        },
+        {
+          "text": " and "
+        },
+        {
+          "text": "policies.google.com/privacy"
+        },
+        {
+          "text": "."
         }
       ]
     },
@@ -339,6 +373,11 @@
           {
             "text": "Stripe processes payments, as described above."
           }
+        ],
+        [
+          {
+            "text": "Apple and Google, if you choose to sign in with them, as described above."
+          }
         ]
       ]
     },
@@ -396,7 +435,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "Deleting your account revokes your sessions and tokens and deletes: journeys only you were in; your private and share-later moments, with their places and photos; your private visibility history; and invitations you sent. Pending invitations to your email are revoked. Your account is pseudonymized: your email, username, and name are replaced, your password hash is removed, and the account shows as Deleted account."
+          "text": "Deleting your account revokes your sessions and tokens, removes any link to Apple or Google sign-in and asks Apple to end its token, and deletes: journeys only you were in; your private and share-later moments, with their places and photos; your private visibility history; and invitations you sent. Pending invitations to your email are revoked. Your account is pseudonymized: your email, username, and name are replaced, your password hash is removed, and the account shows as Deleted account."
         }
       ]
     },
@@ -404,7 +443,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account, without your email. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments."
+          "text": "What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account. The history also keeps what it recorded about the moments you shared, including their titles and places, as described under Who can see what, even for a moment you deleted first. The email address you were invited at stays in the journey's invitation history, and in any proposal to add you, where the people in the journey can still see it. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments."
         }
       ]
     },

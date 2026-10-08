@@ -1,6 +1,6 @@
 # Terms of use
 
-Effective 28 September 2026.
+Effective 8 October 2026.
 
 These terms are an agreement between you and Together Ledger Digital LLC, registered in Macon, Georgia, United States ("we"). They cover Together Ledger on the web at app.together-ledger.com and in its phone apps. By creating an account or using Together Ledger, you agree to them and to the [privacy policy](https://app.together-ledger.com/privacy).
 
@@ -47,14 +47,18 @@ If you find a security problem, report it privately through [the repository's se
 
 ## Paying for more
 
-- A journey of two is free. You can pay to make room for another person, and some extras, such as another place on a moment or an extra photo, may be offered. Before you pay, you see the price in US dollars and whether it repeats every month.
-- Payment is by card through Stripe, on the web. Stripe's own terms also apply to the payment.
-- A monthly payment renews each month until you end it. You can end it any time in billing settings, and what you've paid for lasts until the end of that month. We don't refund part of a month.
-- If a monthly payment fails, there's a grace period, currently 7 days. During any grace, those first 7 days included, the person who pays can ask for another 7 days, up to 7 times per journey each calendar year. While a journey is in grace, everyone in it is told. If it stays unpaid, the people beyond what's covered rest: they can still read the whole journey, but can't add to it. Nobody is removed and no history is lost. The owner chooses who rests first. When payment is restored, they're back.
-- A one-time extra, such as an extra photo, can't be refunded once it's used.
-- Anything we charged in error is refunded in full. Write to ledger-support@together-ledger.com.
-- A price change never applies to a month you've already paid for.
-- Before you delete an account that pays for capacity, that payment has to end.
+- A journey of two is free, always. A journey that holds more people is paid for per journey, in one of two sizes: up to 51 people, or up to 101, the most a journey can hold. One person pays for a journey: its owner.
+- Each size can be paid for by the month, renewing by itself until you end it, or with a week or month pass, which doesn't renew. A pass bought while another is running starts when that one ends.
+- Some extras, such as another photo or place on a moment, are paid for once. An extra stays with its moment for good, even if the journey's paid room ends.
+- Before you pay, you see the price and whether it renews by itself.
+- Payments are processed by Apple through the App Store, by Google through Google Play, or by Stripe. The terms of whichever one processes your payment also apply to it.
+- You can end a monthly payment any time: through the App Store or Google Play if it was made there, otherwise in billing settings. What you've paid for lasts until the end of that month. We don't refund part of a month.
+- If a monthly payment fails, there's a grace period of 7 days. New invitations wait, and everything else keeps working. During any grace, those first 7 days included, the person who pays can ask for another 7 days, up to 7 times per journey each calendar year. While a journey is in grace, a banner tells everyone in it.
+- If a payment stays unpaid, or a pass ends with nothing after it, the people beyond what's covered rest. Resting people can always still read the whole journey; they just can't add to it. Nobody is removed and no history is lost. The owner chooses who rests first. When payment is restored, they're back.
+- An extra can't be refunded once it's used.
+- Anything we charged in error is refunded in full. Write to ledger-support@together-ledger.com. A refund for a payment made through the App Store or Google Play comes from Apple or Google, under their own rules.
+- A price change never applies to a week or month you've already paid for.
+- Before you delete an account that pays through Stripe, that payment has to end. Deleting your account doesn't end a monthly payment made through the App Store or Google Play; end it there.
 
 ## Ending things
 
