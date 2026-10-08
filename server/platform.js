@@ -1789,6 +1789,18 @@ export class PlatformService {
     });
   }
 
+  // Who added a moment and who last changed it, by the names the journey knows them by right now
+  // (#368), so the History entry written in the same step records them. A row read straight from
+  // journey_moments has neither name, and every moment entry used to say Journey member. Anyone no
+  // longer in the journey, because they left, were removed or deleted their account, is Former
+  // journeyer, as everywhere else in History.
+  async nameMomentPeople(client, journeyId, row) {
+    const people = await client.query('SELECT u.id,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1', [journeyId]);
+    const names = new Map(people.rows.map((person) => [person.id, person.display_name]));
+    const nameOf = (id) => (id ? names.get(id) || 'Former journeyer' : null);
+    return { ...row, created_by_name: nameOf(row.created_by_user_id), updated_by_name: nameOf(row.updated_by_user_id) };
+  }
+
   async createMoment(userId, journeyId, input) {
     return (await this.holdMoment(userId, journeyId, input)).moment;
   }
@@ -1814,7 +1826,7 @@ export class PlatformService {
           if (held.rows[0].content_hash !== contentHash) throw new PlatformError(409, 'moment_key_reused', 'This moment was already sent with different details. The first one is kept, and this one was not held.');
           const found = await client.query('SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND created_by_user_id=$3', [held.rows[0].moment_id, journeyId, userId]);
           if (!found.rowCount) throw new PlatformError(409, 'moment_already_deleted', 'This moment was already held and has since been deleted, so it was not held again.');
-          return { moment: publicMoment(found.rows[0]), replayed: true };
+          return { moment: publicMoment(await this.nameMomentPeople(client, journeyId, found.rows[0])), replayed: true };
         }
         await this.requireMember(client, userId, journeyId);
       }
@@ -1824,7 +1836,7 @@ export class PlatformService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14) RETURNING *`,
         [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.theme || null, next.moneyCents, next.moneyCurrency, JSON.stringify(next.locations), userId, userId],
       );
-      const moment = publicMoment(created.rows[0]);
+      const moment = publicMoment(await this.nameMomentPeople(client, journeyId, created.rows[0]));
       if (moment.visibility === 'shared-now') {
         await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
       } else {
@@ -1843,7 +1855,7 @@ export class PlatformService {
       await this.lockJourney(client, journeyId);
       const found = await client.query("SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND (visibility='shared-now' OR created_by_user_id=$3) FOR UPDATE", [momentId, journeyId, userId]);
       if (!found.rowCount) throw notFound();
-      const before = publicMoment(found.rows[0]);
+      const before = publicMoment(await this.nameMomentPeople(client, journeyId, found.rows[0]));
       if (Number(input.version) !== before.version) throw new PlatformError(409, 'conflict', 'This moment changed on another device.');
       if (remove) {
         if (before.visibility !== 'shared-now') {
@@ -1860,7 +1872,7 @@ export class PlatformService {
         `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,visibility=$6,theme=$7,money_cents=$8,money_currency=$9,locations=$10::jsonb,updated_by_user_id=$11,version=version+1,updated_at=$12 WHERE id=$13 RETURNING *`,
         [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.theme || null, next.moneyCents, next.moneyCurrency, JSON.stringify(next.locations), userId, this.now(), momentId],
       );
-      const after = publicMoment(updated.rows[0]);
+      const after = publicMoment(await this.nameMomentPeople(client, journeyId, updated.rows[0]));
       if (before.visibility !== 'shared-now') {
         await this.appendPrivateMomentEvent(client, {
           journeyId,

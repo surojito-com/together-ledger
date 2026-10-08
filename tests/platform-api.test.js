@@ -2849,3 +2849,61 @@ test('an impossible date is refused in words, for a moment, an expense and a jou
   const redated = await patch(`/api/v1/journeys/${dated.id}`, { endDate: '2028-02-29', version: dated.version });
   assert.equal(redated.statusCode, 200, redated.body);
 });
+
+// #368: a moment's History entries named both who added it and who last changed it as Journey
+// member, because the rows they were written from carried no names. They now carry the names the
+// journey knew those people by when the entry was written, and Former journeyer for anyone who had
+// left. History is append-only: what an entry recorded never changes afterwards.
+test('a moment\'s History entries name who added it and who last changed it, as the journey knew them then', async (t) => {
+  const { app, pool, platform, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const momentInput = { kind: 'memory', title: 'The harbour', detail: 'What we said there', occurredOn: '2026-08-01', visibility: 'shared-now' };
+  const entries = async (action) => (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data.events.filter((event) => event.action === action);
+  const names = (value) => value && { createdBy: value.createdBy, updatedBy: value.updatedBy };
+
+  const added = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice), payload: momentInput });
+  assert.equal(added.statusCode, 201, added.body);
+  const moment = added.json().data.moment;
+  assert.deepEqual(names(moment), { createdBy: 'name-alice', updatedBy: 'name-alice' }, 'the reply names her too');
+  assert.deepEqual(names((await entries('moment_added'))[0].after), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+
+  const changed = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(bob), payload: { title: 'The harbour at night', version: moment.version } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const [byBob] = await entries('moment_updated');
+  assert.deepEqual(names(byBob.before), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+  assert.deepEqual(names(byBob.after), { createdBy: 'name-alice', updatedBy: 'name-bob' });
+
+  // A name changed later is not written back into entries already there.
+  await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: 'Sam' } });
+  const again = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(alice), payload: { title: 'The harbour, late', version: changed.json().data.moment.version } });
+  assert.equal(again.statusCode, 200, again.body);
+  const updates = await entries('moment_updated');
+  assert.deepEqual(names(updates[0].after), { createdBy: 'name-alice', updatedBy: 'name-bob' }, 'the earlier entry stays as it was written');
+  assert.deepEqual(names(updates[1].before), { createdBy: 'name-alice', updatedBy: 'Sam' }, 'the new one has the name used now');
+  assert.deepEqual(names(updates[1].after), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+
+  // Someone who has left the journey is Former journeyer, in what is written from then on.
+  const theirs = (await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob), payload: { ...momentInput, title: 'The ferry' } })).json().data.moment;
+  assert.deepEqual(names((await entries('moment_added'))[1].after), { createdBy: 'Sam', updatedBy: 'Sam' });
+  await platform.removeMember(alice.user.id, journey.id, bob.user.id);
+  const afterLeaving = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${theirs.id}`, headers: authHeaders(alice), payload: { title: 'The ferry home', version: theirs.version } });
+  assert.equal(afterLeaving.statusCode, 200, afterLeaving.body);
+  const left = (await entries('moment_updated'))[2];
+  assert.deepEqual(names(left.before), { createdBy: 'Former journeyer', updatedBy: 'Former journeyer' });
+  assert.deepEqual(names(left.after), { createdBy: 'Former journeyer', updatedBy: 'name-alice' });
+  assert.deepEqual(names((await entries('moment_added'))[1].after), { createdBy: 'Sam', updatedBy: 'Sam' }, 'what was written while they were here stays');
+});
+
+test('a moment added by someone who then deleted their account is recorded under Former journeyer', async (t) => {
+  const { app, pool, platform, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const theirs = (await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob), payload: { kind: 'memory', title: 'The ferry', detail: '', occurredOn: '2026-08-01', visibility: 'shared-now' } })).json().data.moment;
+  await platform.eraseAccount(bob.user.id);
+  const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/moments/${theirs.id}`, headers: authHeaders(alice), payload: { version: theirs.version } });
+  assert.equal(removed.statusCode, 204, removed.body);
+  const events = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data.events;
+  const tombstone = events.find((event) => event.action === 'moment_deleted');
+  assert.equal(tombstone.before.createdBy, 'Former journeyer', 'never Deleted account, and never the name they had');
+  assert.equal(tombstone.before.updatedBy, 'Former journeyer');
+  assert.equal(events.find((event) => event.action === 'moment_added').after.createdBy, 'name-bob', 'the entry written while they were here stays as it was');
+});
