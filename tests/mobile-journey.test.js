@@ -88,6 +88,10 @@ test('moments are newest first, carry their photos, and the list opens on three'
   assert.equal(view.seeAllLabel(1), 'See all 1 moment');
   assert.equal(view.seeAllLabel(4), 'See all 4 moments');
   assert.ok(web.includes("`See all ${countOf(recent.length, 'moment', 'moments')}`"), 'the web builds its label the same way');
+  // Shown only when the ledger is not already showing every moment (the owner, on #337).
+  assert.equal(view.seeAllShown, model.seeAllShown, 'the phone uses the web\'s own rule');
+  assert.ok(web.includes("$('#toggle-moments-button').hidden = !seeAllShown(recent.length, momentsExpanded);"));
+  assert.ok(web.includes('recent.slice(0, RECENT_MOMENTS_SHOWN)'), 'and the web shows as many as the rule counts');
   assert.deepEqual(view.momentFilters(recent).map(([value]) => value), ['all', 'promise', 'memory', 'feeling'], 'only types in use, in the web\'s order');
   assert.deepEqual(view.openThreads(snapshot).map(({ id }) => id), ['t1']);
   assert.equal(view.chooseJourney([{ id: 'x' }, { id: 'y' }], 'y'), 'y');
@@ -153,6 +157,7 @@ test('the phone asks for journeys, snapshots and photos as the signed-in app', a
 test('pull to refresh re-reads the snapshot, and the list only draws what is on screen', async () => {
   const ledger = await read('app/ledger.tsx');
   assert.match(ledger, /<FlatList/, 'a virtualised list, so photos load as their moments scroll in');
+  assert.match(ledger, /\{seeAllShown\(recent\.length, expanded\) \? <Button kind="quiet" label=\{expanded \? 'Show recent' : seeAllLabel\(recent\.length\)\}/, '"See all" only when there is more to see (#337)');
   assert.match(ledger, /<RefreshControl refreshing=\{journey\.refreshing\} onRefresh=\{journey\.refresh\}/);
   assert.match(ledger, /<EmptyState title="No moments in this view" body="A small truth is enough to begin, or choose another filter to see more\." \/>/);
   assert.ok(web.includes("emptyState('No moments in this view', 'A small truth is enough to begin, or choose another filter to see more.')"));

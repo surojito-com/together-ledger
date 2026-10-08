@@ -71,5 +71,23 @@ test('a new moment starts on the person\'s own day, and a name of only spaces is
   await page.getByRole('button', { name: 'Hold this moment' }).click();
   await expect(page.locator('#moment-timeline')).toContainText('We made room to listen');
   await expect(page.locator('#moment-timeline')).toContainText('Oct 7');
-  await expect(page.getByRole('button', { name: 'See all 1 moment', exact: true })).toBeVisible();
+  // One moment is already on the ledger, so there is nothing more to see (the owner, on #337).
+  await expect(page.locator('#toggle-moments-button')).toBeHidden();
+});
+
+test('"See all" appears only once the ledger is not showing every moment (#337)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Begin your ledger/ }).first().click();
+  const form = page.locator('#moment-form');
+  for (const [index, title] of ['First', 'Second', 'Third', 'Fourth'].entries()) {
+    if (index > 0) await page.locator('[data-open-moment]:visible').first().click();
+    await form.locator('[name="title"]').fill(`${title} moment`);
+    await page.getByRole('button', { name: 'Hold this moment' }).click();
+    await expect(page.locator('#moment-timeline')).toContainText(`${title} moment`);
+    if (index < 3) await expect(page.locator('#toggle-moments-button')).toBeHidden();
+  }
+  await expect(page.locator('#moment-timeline .moment-card')).toHaveCount(3);
+  await page.getByRole('button', { name: 'See all 4 moments', exact: true }).click();
+  await expect(page.locator('#moment-timeline .moment-card')).toHaveCount(4);
+  await expect(page.getByRole('button', { name: 'Show recent', exact: true })).toBeVisible();
 });

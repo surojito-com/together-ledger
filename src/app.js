@@ -20,7 +20,9 @@ import {
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  RECENT_MOMENTS_SHOWN,
   remainingLabel,
+  seeAllShown,
   summarize,
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
@@ -745,9 +747,9 @@ function renderSharedJourney(trip, moments, isEmptyStart) {
   $('#moment-filters').hidden = !momentsExpanded || !recent.length;
   $('#moment-filters').innerHTML = momentsExpanded ? filters.map(([value, label]) => `<button class="${momentFilter === value ? 'active' : ''}" data-moment-filter="${value}" aria-pressed="${momentFilter === value}">${label}</button>`).join('') : '';
   $$('[data-moment-filter]').forEach((button) => button.addEventListener('click', () => { momentFilter = button.dataset.momentFilter; renderSharedJourney(trip, moments); }));
-  $('#toggle-moments-button').hidden = !recent.length;
+  $('#toggle-moments-button').hidden = !seeAllShown(recent.length, momentsExpanded);
   $('#toggle-moments-button').textContent = momentsExpanded ? 'Show recent' : `See all ${countOf(recent.length, 'moment', 'moments')}`;
-  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, 3));
+  const visible = (momentsExpanded ? recent.filter((moment) => momentFilter === 'all' || moment.kind === momentFilter) : recent.slice(0, RECENT_MOMENTS_SHOWN));
   $('#moment-timeline').innerHTML = visible.length ? visible.map((moment) => {
     const attribution = `<span>Held by ${escapeHtml(moment.createdBy || 'Journey member')}</span>${moment.shapedByBoth ? '<span class="moment-collaboration-badge">Shaped by more than one journeyer</span>' : ''}`;
     const shareAction = isCloudJourney(trip) && moment.visibility === 'share-later' ? `<button data-share-moment="${escapeHtml(moment.id)}">Share now</button>` : '';

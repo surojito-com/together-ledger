@@ -11,7 +11,7 @@ import { MomentExtras } from '../src/components/store-offers';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import { MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, VISIBILITY_CUES, visibilityRole, type ShownMoment } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
-import { addPlace, CURRENCY_CHOICES, CURRENCY_LABEL, DELETE_ZONE_NOTE, DELETE_ZONE_TITLE, draftFrom, draftProblem, MOMENT_NAME_MISSING, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
+import { addPlace, CURRENCIES, CURRENCY_LABEL, DELETE_ZONE_NOTE, DELETE_ZONE_TITLE, draftFrom, draftProblem, MOMENT_NAME_MISSING, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
 import { fonts, getTheme, targetSize, useTheme } from '../src/theme';
@@ -208,7 +208,7 @@ export default function MomentScreen() {
 
       <Section title="Practical money context (Optional; never counted as a score)">
         <Field label="Amount (optional)" value={draft.money} onChangeText={(value) => set({ money: value })} keyboardType="decimal-pad" />
-        <DropDown label={CURRENCY_LABEL} options={CURRENCY_CHOICES} selected={draft.moneyCurrency} onSelect={(value) => set({ moneyCurrency: value })} />
+        <DropDown label={CURRENCY_LABEL} options={CURRENCIES} selected={draft.moneyCurrency} onSelect={(value) => set({ moneyCurrency: value })} />
       </Section>
 
       <Section title="Live preview" help={`${momentThemeLabel(draft.theme)} · exactly as this moment will appear in the ledger.`}>

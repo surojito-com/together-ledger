@@ -116,12 +116,13 @@ test('sharing and deleting go through the consequence dialog; the currencies are
 
 test('the currency is one compact drop-down, and "No currency" reads as nothing chosen (#351)', async () => {
   const form = await read('app/moment.tsx');
-  assert.match(form, /<DropDown label=\{CURRENCY_LABEL\} options=\{CURRENCY_CHOICES\} selected=\{draft\.moneyCurrency\} onSelect=\{\(value\) => set\(\{ moneyCurrency: value \}\)\} \/>/);
+  assert.match(form, /<DropDown label=\{CURRENCY_LABEL\} options=\{CURRENCIES\} selected=\{draft\.moneyCurrency\} onSelect=\{\(value\) => set\(\{ moneyCurrency: value \}\)\} \/>/);
   assert.doesNotMatch(form, /<Choices label="Currency"/, 'no longer a row of eight chips');
   assert.equal(draft.CURRENCY_LABEL, 'Currency (optional)');
-  assert.deepEqual(draft.CURRENCY_CHOICES.map(([value]) => value), draft.CURRENCIES.map(([value]) => value), 'the same values as before, in the same order');
-  assert.deepEqual(draft.CURRENCY_CHOICES[0], ['', 'No currency'], 'the empty choice is worded as no currency, not as the field\'s name');
-  assert.deepEqual(draft.CURRENCY_CHOICES.slice(1), draft.CURRENCIES.slice(1), 'every currency keeps the web\'s words');
+  assert.deepEqual(draft.CURRENCIES.map(([value]) => value), ['', 'USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'INR'], 'the same values as before, in the same order');
+  assert.deepEqual(draft.CURRENCIES[0], ['', 'No currency'], 'the empty choice is worded as no currency, not as the field\'s name');
+  assert.ok(html.includes('<select name="moneyCurrency"><option value="">No currency</option>'), 'and the web\'s empty option says the same (the owner, on #351)');
+  assert.ok(html.includes('<span class="sr-only">Currency</span><select name="moneyCurrency">'), 'the web\'s field keeps its own name for a screen reader');
   for (const currency of ['', 'INR']) assert.equal(draft.payloadFrom({ ...draft.draftFrom(null), title: 'x', moneyCurrency: currency }, null).moneyCurrency, currency, 'what is saved is unchanged');
 
   const dropDown = await read('src/components/drop-down.tsx');

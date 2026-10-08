@@ -19,7 +19,9 @@ import {
   normalizeEntry,
   normalizeMoment,
   normalizeTrip,
+  RECENT_MOMENTS_SHOWN,
   remainingLabel,
+  seeAllShown,
   summarize,
 } from '../src/model.js';
 
@@ -265,6 +267,14 @@ test('a count reads in the singular for one (#337)', () => {
   assert.equal(countOf(1, 'moment', 'moments'), '1 moment');
   assert.equal(countOf(0, 'moment', 'moments'), '0 moments');
   assert.equal(countOf(5, 'moment', 'moments'), '5 moments');
+});
+
+test('"See all" shows only when the ledger is not already showing every moment (the owner, on #337)', () => {
+  assert.equal(RECENT_MOMENTS_SHOWN, 3);
+  for (const count of [0, 1, 2, 3]) assert.equal(seeAllShown(count, false), false, `${count} moments are all already on the ledger`);
+  assert.equal(seeAllShown(4, false), true, 'a fourth moment is one the ledger does not show yet');
+  assert.equal(seeAllShown(2, true), true, 'once every moment is showing, "Show recent" stays, so the way back is never lost');
+  assert.equal(seeAllShown(0, true), false, 'with nothing to show, there is nothing to toggle');
 });
 
 test('a moment with no name says so in the form\'s own name for the field (#354)', () => {

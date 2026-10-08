@@ -159,6 +159,17 @@ export function localDay(now = new Date()) {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }
 
+/** How many of the most recent moments the ledger shows until the person asks for all. */
+export const RECENT_MOMENTS_SHOWN = 3;
+
+/**
+ * "See all" shows only when the ledger is not already showing every moment (#337). Once all are
+ * showing, its other face, "Show recent", stays, so the way back is never lost.
+ */
+export function seeAllShown(count, expanded) {
+  return count > 0 && (expanded || count > RECENT_MOMENTS_SHOWN);
+}
+
 /** A count with its noun, singular for one: "1 moment", "3 moments" (#337). */
 export function countOf(count, one, many) {
   return `${count} ${count === 1 ? one : many}`;

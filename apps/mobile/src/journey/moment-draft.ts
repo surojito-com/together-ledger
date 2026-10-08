@@ -27,9 +27,12 @@ export type Draft = {
 
 export type EditableMoment = Moment & { version: number; locations?: Place[] };
 
-/** The web's currency choices, in its order ('' is "Currency (optional)"). */
+/**
+ * The web's currency choices, in its order and its words. The empty choice reads as what it is,
+ * no currency, so it never looks like a currency that has been chosen (#351).
+ */
 export const CURRENCIES: [string, string][] = [
-  ['', 'Currency (optional)'],
+  ['', 'No currency'],
   ['USD', 'USD — US dollar'],
   ['EUR', 'EUR — Euro'],
   ['GBP', 'GBP — British pound'],
@@ -39,14 +42,8 @@ export const CURRENCIES: [string, string][] = [
   ['INR', 'INR — Indian rupee'],
 ];
 
-/**
- * The phone's drop-down (#351): the web's currencies and values, with the empty choice worded
- * as what it is, no currency, so it never reads as a currency that has been chosen. The field's
- * own label carries "(optional)", as the web's empty option does.
- */
-export const NO_CURRENCY = 'No currency';
+/** The phone's drop-down (#351) carries "(optional)" in its own label. */
 export const CURRENCY_LABEL = 'Currency (optional)';
-export const CURRENCY_CHOICES: [string, string][] = CURRENCIES.map(([value, words]) => [value, value ? words : NO_CURRENCY]);
 
 export { MOMENT_NAME_MISSING };
 
