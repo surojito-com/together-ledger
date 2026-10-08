@@ -1,16 +1,17 @@
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
-import { useEffect, useLayoutEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSession } from '../src/auth/session';
 import { extrasFor } from '../src/billing/store-products';
 import { Choices } from '../src/components/choices';
 import { DateField } from '../src/components/date-field';
+import { DropDown } from '../src/components/drop-down';
 import { MomentCard } from '../src/components/moment-card';
 import { MomentExtras } from '../src/components/store-offers';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import { MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, VISIBILITY_CUES, visibilityRole, type ShownMoment } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
-import { addPlace, CURRENCIES, draftFrom, draftProblem, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
+import { addPlace, CURRENCY_CHOICES, CURRENCY_LABEL, DELETE_ZONE_NOTE, DELETE_ZONE_TITLE, draftFrom, draftProblem, MOMENT_NAME_MISSING, removePlace, visibilityHelp, visibilityLocked, type Draft, type EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
 import { fonts, getTheme, targetSize, useTheme } from '../src/theme';
@@ -38,6 +39,11 @@ export default function MomentScreen() {
   const [draft, setDraft] = useState<Draft>(() => draftFrom(before, { kind }));
   const [place, setPlace] = useState('');
   const [pending, setPending] = useState<'save' | 'delete' | null>(null);
+  // An empty name is told at the field itself, and the form takes the person there (#354).
+  const [titleProblem, setTitleProblem] = useState<string | null>(null);
+  const scroll = useRef<ScrollView>(null);
+  const titleInput = useRef<TextInput>(null);
+  const titleTop = useRef(0);
   const set = (change: Partial<Draft>) => setDraft((current) => ({ ...current, ...change }));
 
   useLayoutEffect(() => {
@@ -59,6 +65,15 @@ export default function MomentScreen() {
 
   async function save() {
     const problem = draftProblem(draft);
+    if (problem === MOMENT_NAME_MISSING) {
+      // Not the status region, which brings the top of the form into view: the field may be far
+      // below it, so the words go on the field and the form scrolls to it instead.
+      shell.clearStatus('moment');
+      setTitleProblem(problem);
+      scroll.current?.scrollTo({ y: Math.max(0, titleTop.current - 16), animated: true });
+      titleInput.current?.focus();
+      return;
+    }
     if (problem) {
       shell.showStatus(problem, { source: 'moment' });
       return;
@@ -102,13 +117,26 @@ export default function MomentScreen() {
   };
 
   return (
-    <Screen title={before ? 'Edit this moment' : 'Hold a moment'} lead="Choose whether this stays with you, is shared now, or waits until you are ready.">
+    <Screen scrollRef={scroll} title={before ? 'Edit this moment' : 'Hold a moment'} lead="Choose whether this stays with you, is shared now, or waits until you are ready.">
       <Section title="Kind of moment" help="Choose a suggestion, or make one your own.">
         <Choices label="Kind of moment" options={MOMENT_TYPES as [string, string][]} selected={draft.kind} onSelect={(value) => set({ kind: value })} />
       </Section>
       {draft.kind === 'other' ? <Field label="Name this kind of moment" value={draft.kindLabel} onChangeText={(value) => set({ kindLabel: value })} maxLength={60} placeholder="e.g. A small win" /> : null}
       <DateField label="When" hint="Year, month and day, such as 2026-09-30." value={draft.occurredOn} onChange={(value) => set({ occurredOn: value })} />
-      <Field label="A short name" value={draft.title} onChangeText={(value) => set({ title: value })} maxLength={120} placeholder="e.g. A quiet apology after dinner" />
+      <View onLayout={(event) => { titleTop.current = event.nativeEvent.layout.y; }}>
+        <Field
+          ref={titleInput}
+          label="A short name"
+          value={draft.title}
+          onChangeText={(value) => {
+            set({ title: value });
+            if (value.trim()) setTitleProblem(null);
+          }}
+          maxLength={120}
+          placeholder="e.g. A quiet apology after dinner"
+          problem={titleProblem}
+        />
+      </View>
       <Field label="What would you like to hold? (Optional)" value={draft.detail} onChangeText={(value) => set({ detail: value })} maxLength={1200} multiline placeholder="Use your own words. Keep it simple and kind." style={styles.detail} />
 
       <Section title="Moment theme (Optional)" help="Use your theme, or choose one calm card treatment that every journeyer will see.">
@@ -180,7 +208,7 @@ export default function MomentScreen() {
 
       <Section title="Practical money context (Optional; never counted as a score)">
         <Field label="Amount (optional)" value={draft.money} onChangeText={(value) => set({ money: value })} keyboardType="decimal-pad" />
-        <Choices label="Currency" options={CURRENCIES} selected={draft.moneyCurrency} onSelect={(value) => set({ moneyCurrency: value })} />
+        <DropDown label={CURRENCY_LABEL} options={CURRENCY_CHOICES} selected={draft.moneyCurrency} onSelect={(value) => set({ moneyCurrency: value })} />
       </Section>
 
       <Section title="Live preview" help={`${momentThemeLabel(draft.theme)} · exactly as this moment will appear in the ledger.`}>
@@ -199,7 +227,17 @@ export default function MomentScreen() {
 
       <Button label={before ? 'Save moment' : 'Hold this moment'} pending={pending === 'save'} disabled={pending !== null} onPress={save} />
       <Button kind="quiet" label="Cancel" disabled={pending !== null} onPress={() => router.back()} />
-      {before ? <Button kind="destructive" label="Delete moment" pending={pending === 'delete'} disabled={pending !== null} onPress={remove} /> : null}
+
+      {/* Deleting sits apart from Save and Cancel, in its own marked box at the foot of the form,
+          and says what it does before it is tapped (#338). The button opens the consequence
+          dialog, so it takes two deliberate taps. The destructive colour stays: it can't be undone. */}
+      {before ? (
+        <View style={[styles.dangerZone, { borderColor: colors.destructive, borderRadius: theme.radius.l, backgroundColor: colors.surface }]}>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>{DELETE_ZONE_TITLE}</Text>
+          <Text style={[styles.help, { color: colors.muted }]}>{DELETE_ZONE_NOTE}</Text>
+          <Button kind="destructive" label="Delete moment" pending={pending === 'delete'} disabled={pending !== null} onPress={remove} />
+        </View>
+      ) : null}
     </Screen>
   );
 
@@ -243,4 +281,5 @@ const styles = StyleSheet.create({
   placeLabel: { fontSize: 16, fontWeight: '700' },
   remove: { borderWidth: 1, paddingHorizontal: 14, justifyContent: 'center' },
   removeText: { fontSize: 14, fontWeight: '800' },
+  dangerZone: { gap: 10, marginTop: 40, borderWidth: 1, padding: 16 },
 });

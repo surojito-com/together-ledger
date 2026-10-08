@@ -6,12 +6,15 @@ import {
   activeMoments,
   appendJourneyEvent,
   conversationPrompts,
+  countOf,
   dateRange,
   demoState,
   groupDayByCategory,
   isRetiredSyntheticDemo,
   isValidState,
+  localDay,
   migrateState,
+  MOMENT_NAME_MISSING,
   normalizeConcern,
   normalizeEntry,
   normalizeMoment,
@@ -237,4 +240,43 @@ test('a countdown says what is left in the units that are left, and stops at not
   assert.equal(remainingLabel('2026-09-18T11:59:00.000Z', now), 'No time left');
   assert.equal(remainingLabel('', now), 'No end time recorded');
   assert.equal(remainingLabel('not a date', now), 'No end time recorded');
+});
+
+// Node reads TZ again whenever it changes, so a test can stand anywhere in the world for a moment.
+function inZone(zone, work) {
+  const before = process.env.TZ;
+  process.env.TZ = zone;
+  try { return work(); } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+}
+
+test('"today" is the person\'s own calendar day, not the UTC day (#336)', () => {
+  // Oct 7 at 20:00 in New York is already Oct 8 in UTC.
+  assert.equal(inZone('America/New_York', () => localDay(new Date('2026-10-08T00:00:00Z'))), '2026-10-07');
+  // And early morning east of Greenwich is still the day before in UTC.
+  assert.equal(inZone('Asia/Kolkata', () => localDay(new Date('2026-10-07T20:00:00Z'))), '2026-10-08');
+  assert.equal(inZone('UTC', () => localDay(new Date('2026-10-08T00:00:00Z'))), '2026-10-08');
+  assert.equal(inZone('Pacific/Auckland', () => localDay(new Date('2026-12-31T11:30:00Z'))), '2027-01-01', 'the year turns with the person, too');
+});
+
+test('a count reads in the singular for one (#337)', () => {
+  assert.equal(countOf(1, 'moment', 'moments'), '1 moment');
+  assert.equal(countOf(0, 'moment', 'moments'), '0 moments');
+  assert.equal(countOf(5, 'moment', 'moments'), '5 moments');
+});
+
+test('a moment with no name says so in the form\'s own name for the field (#354)', () => {
+  assert.equal(MOMENT_NAME_MISSING, 'Give this moment a short name.');
+  assert.throws(() => normalizeMoment({ kind: 'memory', title: '   ', occurredOn: '2026-10-07', visibility: 'private', money: '' }, demoState().activeTripId), { message: MOMENT_NAME_MISSING });
+});
+
+test('a browser journey can begin on a date still to come, and still cannot end before it begins (#358)', () => {
+  const planned = { name: 'The trip we are planning', startDateStatus: 'exact', startDate: '2099-06-01', endDateStatus: 'forever', memberOne: 'Taylor', memberTwo: 'Morgan' };
+  const trip = normalizeTrip(planned);
+  assert.equal(trip.startDateStatus, 'exact');
+  assert.equal(trip.startDate, '2099-06-01');
+  assert.equal(normalizeTrip({ ...planned, endDateStatus: 'date', endDate: '2099-06-14' }).endDate, '2099-06-14');
+  assert.throws(() => normalizeTrip({ ...planned, endDateStatus: 'date', endDate: '2099-05-31' }), /The end date must be on or after the start date\./);
 });

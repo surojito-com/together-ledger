@@ -8,12 +8,9 @@
  * trip, in the server's own words.
  */
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+import { localDay } from '../../../../src/model.js';
 
-/** Today, as the web's openJourney() counts it: the UTC day. */
-function today(now: Date) {
-  return now.toISOString().slice(0, 10);
-}
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A day that exists on the calendar, written year-month-day. */
 function realDate(value: string) {
@@ -31,16 +28,23 @@ export type JourneyDraft = {
   endDate: string;
 };
 
-/** The web's #journey-form choices, in its order and its words. */
-export const START_DATE_CHOICES: [string, string][] = [['exact', 'Today'], ['unknown', 'I don’t remember exactly']];
+/**
+ * The web's #journey-form choices, in its order and its words. "I know the date" shows the date
+ * box, filled in with today, and any day can go in it, a day still to come included, so a trip
+ * can be planned ahead (#358). It is still stored as 'exact'.
+ */
+export const START_DATE_CHOICES: [string, string][] = [['exact', 'I know the date'], ['unknown', 'I don’t remember exactly']];
 export const END_DATE_CHOICES: [string, string][] = [['forever', 'Forever — no end date planned'], ['unsure', 'Not sure yet'], ['date', 'Choose an end date']];
 
 export const NAME_LIMIT = 80;
 export const LOCATION_LIMIT = 80;
 
-/** A new journey starts as the web's does: begun today, with no end planned. */
+/**
+ * A new journey starts as the web's does: begun today, with no end planned. Today is the
+ * person's own local day, as the web's openJourney() counts it too (#336).
+ */
 export function newJourneyDraft(now = new Date()): JourneyDraft {
-  const day = today(now);
+  const day = localDay(now);
   return { name: '', location: '', startDateStatus: 'exact', startDate: day, endDateStatus: 'forever', endDate: day };
 }
 

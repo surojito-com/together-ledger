@@ -5,7 +5,7 @@
  * Dates, money and the moment types come from the web's own src/model.js, imported rather than
  * copied, so a date or an amount can never read differently on the phone.
  */
-import { dateLabel, money, MOMENT_TYPES } from '../../../../src/model.js';
+import { countOf, dateLabel, money, MOMENT_TYPES } from '../../../../src/model.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
 import type { Grace } from './sharing-view';
 
@@ -110,6 +110,11 @@ export function recentMoments(snapshot: Snapshot): ShownMoment[] {
 export function momentFilters(recent: Moment[]): [string, string][] {
   const inUse = new Set(recent.map((moment) => moment.kind));
   return [['all', 'All moments'], ...momentTypes.filter(([value]) => inUse.has(value))];
+}
+
+/** The web's "See all" button, with a singular for one moment (#337). */
+export function seeAllLabel(count: number) {
+  return `See all ${countOf(count, 'moment', 'moments')}`;
 }
 
 /** Three recent moments until the person asks for all, then every moment the filter allows. */

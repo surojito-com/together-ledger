@@ -84,6 +84,10 @@ test('moments are newest first, carry their photos, and the list opens on three'
   assert.deepEqual(recent[0].removedImages.map(({ id }) => id), ['i2']);
   assert.deepEqual(view.shownMoments(recent, { expanded: false, filter: 'all' }).map(({ id }) => id), ['c', 'b', 'd']);
   assert.deepEqual(view.shownMoments(recent, { expanded: true, filter: 'memory' }).map(({ id }) => id), ['c', 'a']);
+  // "See all 1 moment", never "See all 1 moments", on the phone and the web alike (#337).
+  assert.equal(view.seeAllLabel(1), 'See all 1 moment');
+  assert.equal(view.seeAllLabel(4), 'See all 4 moments');
+  assert.ok(web.includes("`See all ${countOf(recent.length, 'moment', 'moments')}`"), 'the web builds its label the same way');
   assert.deepEqual(view.momentFilters(recent).map(([value]) => value), ['all', 'promise', 'memory', 'feeling'], 'only types in use, in the web\'s order');
   assert.deepEqual(view.openThreads(snapshot).map(({ id }) => id), ['t1']);
   assert.equal(view.chooseJourney([{ id: 'x' }, { id: 'y' }], 'y'), 'y');

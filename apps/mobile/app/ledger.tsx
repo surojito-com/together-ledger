@@ -8,7 +8,7 @@ import { GraceBanner } from '../src/components/grace-banner';
 import { CardAction, MomentCard, momentColors } from '../src/components/moment-card';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
-import { journeyPeriod, momentFilters, MOMENT_TYPES, openThreads, recentMoments, shownMoments, type Concern, type Journey } from '../src/journey/journey-view';
+import { journeyPeriod, momentFilters, MOMENT_TYPES, openThreads, recentMoments, seeAllLabel, shownMoments, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
@@ -83,7 +83,7 @@ export default function LedgerScreen() {
               <Text style={[styles.body, { color: colors.muted }]}>Hold what happened in words that feel true.</Text>
             </View>
             <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />
-            {recent.length ? <Button kind="quiet" label={expanded ? 'Show recent' : `See all ${recent.length} moments`} onPress={() => setExpanded(!expanded)} /> : null}
+            {recent.length ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
             {expanded && recent.length ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
           </View>
         }

@@ -33,7 +33,7 @@ test('the public welcome earns the first browser-only moment without making a pr
   await expect(page.locator('.trip-bar')).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Return-to conversations' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'One question, if now is a good time.' })).toBeHidden();
-  await expect(page.getByRole('button', { name: /See all \d+ moments/ })).toBeHidden();
+  await expect(page.getByRole('button', { name: /See all \d+ moments?/ })).toBeHidden();
   await expect(page.locator('body')).not.toContainText('Total trip cost');
   await expect(page.locator('body')).not.toContainText('Daily spending');
 

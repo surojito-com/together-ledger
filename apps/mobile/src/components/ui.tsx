@@ -1,7 +1,8 @@
-import { useEffect, useRef, type ReactNode, type Ref } from 'react';
+import { useEffect, useRef, type ReactNode, type Ref, type RefObject } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 import { PENDING_LABEL } from '../shell/defaults';
+import { STATUS_TONES } from '../shell/status';
 import { useShell } from '../shell/shell-provider';
 import { ScreenStatusRegion } from './status-region';
 import { fonts, targetSize, useTheme } from '../theme';
@@ -11,22 +12,25 @@ import { fonts, targetSize, useTheme } from '../theme';
  * at the top of its work (TL-M-06, #181). Every tappable thing meets the
  * 44-point minimum (#178), and colour comes from semantic roles only.
  */
-export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'], refresh }: {
+export function Screen({ title, lead, children, edges = ['bottom', 'left', 'right'], refresh, scrollRef }: {
   title: string;
   lead?: string;
   children: ReactNode;
   edges?: Edge[];
   /** Pull to refresh, as on the ledger, for a screen that shows what other journeyers change. */
   refresh?: { refreshing: boolean; onRefresh: () => void };
+  /** For a form that takes the person to a field that needs them (#354). */
+  scrollRef?: RefObject<ScrollView | null>;
 }) {
   const { theme } = useTheme();
   const { status } = useShell();
-  const scroll = useRef<ScrollView>(null);
+  const own = useRef<ScrollView>(null);
+  const scroll = scrollRef ?? own;
   // Being in the right place is not the same as being seen (the web's placeStatus): a message
   // raised at the foot of a long form brings the region at its top into view.
   useEffect(() => {
     if (status) scroll.current?.scrollTo({ y: 0, animated: true });
-  }, [status]);
+  }, [status, scroll]);
   // The header covers the top inset; a screen without one passes 'top' too, so nothing sits
   // under a notch or the status bar.
   return (
@@ -46,17 +50,29 @@ export function Screen({ title, lead, children, edges = ['bottom', 'left', 'righ
   );
 }
 
-export function Field({ label, hint, style, ...input }: { label: string; hint?: string } & TextInputProps) {
+/**
+ * A labelled text box. `problem` marks the box itself, by a shape and words under it as well as
+ * its border, so what needs the person is told where they are looking, not only at the top.
+ */
+export function Field({ label, hint, problem, style, ref, ...input }: { label: string; hint?: string; problem?: string | null; ref?: Ref<TextInput> } & TextInputProps) {
   const { theme } = useTheme();
   return (
     <View style={styles.field}>
       <Text style={[styles.label, { color: theme.colors.fg }]}>{label}</Text>
       <TextInput
+        ref={ref}
         accessibilityLabel={label}
+        accessibilityHint={problem || undefined}
         placeholderTextColor={theme.colors.muted}
-        style={[styles.input, targetSize, { color: theme.colors.fg, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.m }, style]}
+        style={[styles.input, targetSize, { color: theme.colors.fg, borderColor: problem ? theme.colors.caution : theme.colors.border, borderWidth: problem ? 2 : 1, backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.m }, style]}
         {...input}
       />
+      {problem ? (
+        <View accessibilityLiveRegion="polite" style={styles.problem}>
+          <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.problemGlyph, { color: theme.colors.caution }]}>{STATUS_TONES.caution.glyph}</Text>
+          <Text style={[styles.problemText, { color: theme.colors.fg }]}>{problem}</Text>
+        </View>
+      ) : null}
       {hint ? <Text style={[styles.hint, { color: theme.colors.muted }]}>{hint}</Text> : null}
     </View>
   );
@@ -121,6 +137,9 @@ const styles = StyleSheet.create({
   field: { gap: 6 },
   label: { fontSize: 15, fontWeight: '600' },
   hint: { fontSize: 13, lineHeight: 18 },
+  problem: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  problemGlyph: { fontSize: 13 },
+  problemText: { flex: 1, fontSize: 15, lineHeight: 21, fontWeight: '600' },
   input: { borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16 },
   button: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, borderWidth: 1 },
   buttonText: { fontSize: 16, fontWeight: '700' },
