@@ -239,6 +239,7 @@ row for one that is gone.
 | `@react-native-community/datetimepicker` | No | The system date picker |
 | `@react-native-community/netinfo` | No | Says whether the phone is connected, for the offline notice (#300). Its own check that the internet can be reached would ask `clients3.google.com` on iOS; it is switched off (`apps/mobile/src/shell/use-connection.ts`), so the library makes no request. On Android it declares `ACCESS_NETWORK_STATE`, already granted (2.4), and `ACCESS_WIFI_STATE`, which is blocked (`apps/mobile/app.json`): only connected or not is read, never the Wi-Fi network's name |
 | `expo` | No (not verified by traffic) | Core runtime. No update, analytics or notification module is installed |
+| `expo-application` | No | Reads the installed app's version and build number, shown at the foot of Settings and sent in the `x-together-build` header to our API only (#359, `apps/mobile/src/config/build.ts`) |
 | `expo-constants` | No | Reads build constants |
 | `expo-crypto` | No | Only `randomUUID()`, for the key each moment held on the phone carries so a resend is never a second moment (#352, `apps/mobile/src/journey/use-waiting-moments.ts`) |
 | `expo-dev-client` | Development only (not verified) | Connects to a dev server only in a development build (`eas.json:7-11`) |
@@ -306,7 +307,7 @@ dependency (2.4).
 | Removed photo | The most recently removed one per moment, until another is removed or the moment is deleted | Verified in code (`server/platform.js:1668-1669`) |
 | A moment's hold key: the phone's random key, the moment it made, and a keyed hash of what it said (#352) | As long as the journey and the person in it; the moment link is emptied when the moment is deleted | Verified in code (`server/migrations/033_let-a-moment-held-offline-arrive-once.sql`, `server/platform.js`, `holdMoment`) |
 | A moment waiting on the phone | Until the API has it, or the person discards it after a refusal, signs out on purpose, or deletes the account (2.3) | Verified in code (`apps/mobile/src/journey/waiting-moments.ts`) |
-| Server request logs (with network address) | Rotated: 3 files of 10 MB each, oldest overwritten | Verified in code (`compose.production.yaml:36-43`, `server/log-options.js:18-31`) |
+| Server request logs (with network address, and the phone app's build, such as `and/0.1.0+2/977f365`, #359) | Rotated: 3 files of 10 MB each, oldest overwritten | Verified in code (`compose.production.yaml:36-43`, `server/log-options.js`) |
 | Local encrypted backups | Deleted after 29 full days (`-mtime +29`) | Verified in code (`scripts/backup-postgres.sh:78-80`) |
 | Offsite backups (Google Cloud) | 30-day lifecycle rule, up to a day more for deletion to run (TL-C-04) | Decision; bucket setting not verified here (`docs/OPERATIONS.md:133-140`) |
 | Store purchase records | Kept after the journey is deleted, for refunds and reconciliation | Verified in code (`server/platform.js:1873-1876`) |
@@ -424,7 +425,7 @@ own definitions. No data is processed ephemerally; all of it is stored.
 | App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), return-to conversations (title, detail, status; `client.ts:254-263`), notes on proposals (2.2). **Decision (owner, Oct 8, 2026)** for the conversations |
 | App activity → Other actions | No | No | — | — | |
 | Web browsing | No | No | — | — | |
-| App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision (owner, Oct 8, 2026)**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics |
+| App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision (owner, Oct 8, 2026)**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics. Since #359 they also keep which build of the phone app asked (platform, version, build number, commit): a fact about the binary, the same for everyone on that build, not about the person |
 | Device or other IDs | No | No | — | — | No advertising id or device id is read |
 
 **Deletion, as Play asks it in the policy text:** everything above is deleted with the account
@@ -498,6 +499,8 @@ sentence twice, differently. What it currently gets wrong or leaves out, against
 9. **A moment held offline** (#352, 2.3): the phone keeps it, for that account only, until our
    service has it. `PRIVACY.md` says nothing about it yet; the sentence proposed for it is in the
    pull request that built it, for the owner to approve.
+10. **The phone's build in the request log** (#359, 2.7): `PRIVACY.md:61` lists what the logs
+   record; it does not yet name the build. Proposed in the same pull request.
 
 The sibling products need the same file: I'm Home and Green Light (#264). File those issues once
 this one has been through a submission.

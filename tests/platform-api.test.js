@@ -7,7 +7,7 @@ import { buildApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
-import { loggerOptions, redactUrl } from '../server/log-options.js';
+import { cleanBuild, loggerOptions, redactUrl } from '../server/log-options.js';
 import { maskEmail } from '../server/security.js';
 import { stripPhotoMetadata } from '../src/photo-metadata.js';
 import { jpegOfRestarts, webpOfEmptyChunks } from './fixtures/photos/crafted.js';
@@ -2770,4 +2770,29 @@ test('the phone keeps a moment held offline, sends it once the connection return
   const left = await store.list(accountId);
   assert.equal(left.length, 1);
   assert.deepEqual(left[0].refusal, { code: 'invalid_input', message: 'Choose a valid kind of moment.' }, 'the refusal stays with its moment, in the service\'s words');
+});
+
+// #359: every request from the phone says which build sent it, and the request log keeps that, so
+// a report can be matched to its build. It is whatever a client sends, so it is cleaned first.
+test('the request log keeps which phone build asked, cleaned and capped, and nothing else from the header', async (t) => {
+  const lines = [];
+  const logger = { ...loggerOptions, level: 'info', stream: { write: (line) => lines.push(line) } };
+  const { app, pool } = await testPlatform({ logger });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const sent = async (build) => {
+    lines.length = 0;
+    await app.inject({ method: 'GET', url: '/api/v1/session', headers: { 'x-together-client': 'app', ...(build === undefined ? {} : { 'x-together-build': build }) } });
+    const incoming = lines.map((line) => JSON.parse(line)).find((entry) => entry.req);
+    assert.ok(incoming, 'the request was logged');
+    return incoming.req.build;
+  };
+  assert.equal(await sent('and/0.1.0+2/977f365'), 'and/0.1.0+2/977f365');
+  assert.equal(await sent('ios/1.4.0+31/dev'), 'ios/1.4.0+31/dev');
+  assert.equal(await sent(undefined), undefined, 'the web sends none, and none is logged');
+  assert.equal(await sent('and/0.1.0+2/977f365 "name":"someone@example.test"'), 'and/0.1.0+2/977f365namesomeoneexample.test', 'quotes, spaces and @ never reach the log');
+  assert.equal((await sent(`and/${'9'.repeat(500)}`)).length, 64);
+  assert.equal(await sent('<<<>>>'), undefined);
+
+  assert.equal(cleanBuild(['and/1']), undefined);
+  assert.equal(cleanBuild('and/0.1.0+2/977f365\r\nInjected: yes'), 'and/0.1.0+2/977f365Injectedyes', 'no new line can start a fake log entry');
 });

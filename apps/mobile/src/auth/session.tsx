@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiBase } from '../config/api';
+import { thisBuild } from '../config/build';
 import { createAccountClient, type AccountClient, type AccountUser } from '../api/client';
 import { sessionAnswered, sessionFailed, type SessionState } from './session-state';
 import { secureTokenStore } from './token-storage';
@@ -13,7 +14,7 @@ type SessionValue = SessionState & {
 
 const SessionContext = createContext<SessionValue | null>(null);
 
-const client = createAccountClient({ base: apiBase, fetch: (url, init) => fetch(url, init), tokens: secureTokenStore });
+const client = createAccountClient({ base: apiBase, fetch: (url, init) => fetch(url, init), tokens: secureTokenStore, build: thisBuild.header });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SessionState>({ status: 'loading', user: null });

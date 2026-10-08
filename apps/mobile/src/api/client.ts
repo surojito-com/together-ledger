@@ -2,7 +2,8 @@
  * The phone's client for the account (TL-M-05, #180) and the journey it shows (TL-M-07, #182), against the bearer-token path from TL-M-04 (#179).
  *
  * Every request says it is the app (`x-together-client: app`), so the server issues tokens rather
- * than a cookie. A signed-in request carries its access token. When that token has expired, the
+ * than a cookie, and which build of it is asking (`x-together-build`, #359), so a report can be
+ * matched to its build in the API's log. A signed-in request carries its access token. When that token has expired, the
  * refresh token is spent once for a fresh pair (the server rotates, so a refresh token is never
  * reused) and the request is retried once. Only a refusal clears the stored tokens and asks the
  * person to sign in again: `/auth/refresh` answering 401 `invalid_token`. Anything else (no
@@ -68,13 +69,17 @@ type RequestOptions = { method?: string; body?: unknown; signedIn?: boolean };
 
 type Payload = { data?: unknown; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
 
-export function createAccountClient({ base, fetch, tokens }: {
+export function createAccountClient({ base, fetch, tokens, build }: {
   /** Returns the API base, or throws when this build has none configured. */
   base: () => string;
   fetch: FetchLike;
   tokens: TokenStore;
+  /** This build, as src/config/build-name.ts writes it for the header: `and/0.1.0+2/977f365`. */
+  build?: string;
 }) {
   let refreshing: Promise<Tokens | null> | null = null;
+  // The same on every request this client makes, the image loader's included.
+  const appHeaders: Record<string, string> = build ? { 'x-together-client': 'app', 'x-together-build': build } : { 'x-together-client': 'app' };
 
   async function send(path: string, { method = 'GET', body, signedIn = false }: RequestOptions, accessToken?: string) {
     let root: string;
@@ -83,7 +88,7 @@ export function createAccountClient({ base, fetch, tokens }: {
     } catch {
       throw new ApiError(UNAVAILABLE_MESSAGE, { code: 'accounts_unavailable' });
     }
-    const headers: Record<string, string> = { Accept: 'application/json', 'x-together-client': 'app' };
+    const headers: Record<string, string> = { Accept: 'application/json', ...appHeaders };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (signedIn && accessToken) headers.Authorization = `Bearer ${accessToken}`;
     let response;
@@ -224,7 +229,7 @@ export function createAccountClient({ base, fetch, tokens }: {
       }
       return {
         uri: `${root}/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}/images/${encodeURIComponent(imageId)}`,
-        headers: { Authorization: `Bearer ${held.token}`, 'x-together-client': 'app' },
+        headers: { Authorization: `Bearer ${held.token}`, ...appHeaders },
       };
     },
     /** The name journeyers see (#253); the private username never changes. */

@@ -7,6 +7,7 @@ import { useJourney } from '../src/journey/use-journey';
 import { RestorePurchases } from '../src/components/store-offers';
 import { ThemePicker } from '../src/components/theme-picker';
 import { Body, Button, Screen } from '../src/components/ui';
+import { thisBuild } from '../src/config/build';
 import { useTheme } from '../src/theme';
 
 /**
@@ -51,10 +52,13 @@ export default function SettingsScreen() {
       <Button kind="quiet" label="Privacy policy" onPress={() => router.push('/privacy')} />
       <Button kind="quiet" label="Terms of use" onPress={() => router.push('/terms')} />
       <Body selectable>For help using Together Ledger, write to ledger-support@together-ledger.com. For anything about your privacy or your data, write to legal@together-ledger.com.</Body>
+      {/* Which build this is (#359), to quote in a report: the version, build number and commit. */}
+      <Text selectable accessibilityLabel={`This build: ${thisBuild.label}`} style={[styles.build, { color: theme.colors.muted }]}>{thisBuild.label}</Text>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   section: { fontSize: 18, fontWeight: '700', marginTop: 8 },
+  build: { fontSize: 14, marginTop: 16 },
 });
