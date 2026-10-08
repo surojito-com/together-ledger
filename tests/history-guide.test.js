@@ -53,6 +53,7 @@ const MIGRATIONS = [
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted', '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
   '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time', '030_ask-for-six-weeks-a-year',
   '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days',
+  '033_let-a-moment-held-offline-arrive-once',
 ];
 
 async function harness(t, configOverrides) {
