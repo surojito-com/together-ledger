@@ -1,6 +1,6 @@
 # Privacy
 
-Effective 28 September 2026.
+Effective 8 October 2026.
 
 Together Ledger is a relationship-resilience workspace. People may record memories, feelings, boundaries, repair requests, practical details, places, photos, and conversations they want to return to. This policy explains what stays in your browser, what our private service stores, who can see it, who else handles it, how long it is kept, and what you can ask of us.
 
@@ -21,6 +21,7 @@ Without an account, the browser stores journey details and participant display n
 After you create an account and start a private journey, that journey is stored in our PostgreSQL service and synchronized to the people in it. The service stores:
 
 - your email address, username, display name, an Argon2id hash of your password, whether your email is verified, and, after deletion, the pseudonymized state described under Deletion;
+- if you sign in with Apple or Google, the identifier that company gives us for you, as described under Signing in with Apple or Google;
 - hashed session, sign-in, verification, recovery, and invitation tokens, each with an expiry;
 - journey membership and moments, including who created each one, its visibility, optional details, and money context;
 - places attached to moments. A place is either words you type or, only when you press Use my device location, the latitude, longitude, and accuracy your device reports at that moment. We never read your location in the background;
@@ -37,13 +38,17 @@ Raw passwords and raw tokens are never stored. On the web, session cookies are H
 
 In private sync, a `private` or `share later` moment is returned only to the account that created it. A `share later` moment becomes visible to the other people in the journey only after its creator deliberately changes it to `shared now`. A moment that has been shared cannot be made private again, because access that has already happened cannot be undone. Places and photos follow the visibility of the moment they belong to. Invitation history and proposals are visible to the people in the journey. In browser-only mode, `private` and `share later` are reminders on one device, not separate-account access controls.
 
-The Event Manager is shared journey data. Private and share-later moments do not enter that shared stream or reveal their existence to anyone else. Their creator-only visibility changes are recorded separately without moment text. When a moment is deliberately shared, the shared stream records the change without copying its title or detail. Practical or preserved expense events omit notes, payment-account labels, and references, and return-to events do not duplicate the conversation. The people in a journey can still read the underlying shared records.
+The Event Manager is shared journey data. Private and share-later moments do not enter that shared stream or reveal their existence to anyone else. Their creator-only visibility changes are recorded separately without moment text. When a moment is deliberately shared, the shared stream records the change without copying its title or detail. After that, each time a shared moment is added, changed, or deleted, the stream records its title, kind, date, places (with any coordinates), and money context as they were, but never its written detail. Those records stay in the journey's history even after the moment is deleted. Practical or preserved expense events omit notes, payment-account labels, and references, and return-to events do not duplicate the conversation. The people in a journey can still read the underlying shared records.
 
 We do not sell your information, share it for advertising, or use it to build profiles. We add no advertising or analytics trackers to Together Ledger.
 
 ## Email
 
 Verification, invitation, proposal, and recovery messages are sent through Resend. Verification, invitation, and recovery messages contain a short-lived, single-use link. Sending email necessarily shows the destination address, message content, and routing details to Resend and to the receiving mail system. Open and click tracking are turned off for the Together Ledger sending domain; messages carry no tracking pixel and no tracking-rewritten links.
+
+## Signing in with Apple or Google
+
+If you choose to sign in with Apple or Google, that company tells us an identifier it keeps for you, your email address and whether it has been verified, and, from Google, your name. If you use Apple's Hide My Email, we receive the relay address Apple makes for you instead of your own. We store the identifier, so we can recognise you next time. With Apple, we also keep a token Apple gives us, encrypted, so we can tell Apple to end the link when you delete your account. Apple or Google learns that you are signing in to Together Ledger; their own privacy policies apply to what they do with that, at [apple.com/legal/privacy](https://www.apple.com/legal/privacy/) and [policies.google.com/privacy](https://policies.google.com/privacy).
 
 ## Payments
 
@@ -62,6 +67,7 @@ These companies handle information for us, only to provide Together Ledger:
 - Cloudflare runs our domain names and serves the public application at `app.together-ledger.com`, and receives the standard request details any website receives, such as your network address and browser.
 - Resend delivers email, as described above.
 - Stripe processes payments, as described above.
+- Apple and Google, if you choose to sign in with them, as described above.
 
 If you use Together Ledger from outside the United States, your information is transferred to and processed in the United States, where these providers operate.
 
@@ -75,9 +81,9 @@ Encrypted backups are made daily and each is deleted 30 days after it is made; d
 
 You can delete your account in Settings after confirming your password. If you own a journey that other people are still in, you first hand it to one of them; the product will not strand it. If you pay for capacity, that payment must end first.
 
-Deleting your account revokes your sessions and tokens and deletes: journeys only you were in; your private and share-later moments, with their places and photos; your private visibility history; and invitations you sent. Pending invitations to your email are revoked. Your account is pseudonymized: your email, username, and name are replaced, your password hash is removed, and the account shows as Deleted account.
+Deleting your account revokes your sessions and tokens, removes any link to Apple or Google sign-in and asks Apple to end its token, and deletes: journeys only you were in; your private and share-later moments, with their places and photos; your private visibility history; and invitations you sent. Pending invitations to your email are revoked. Your account is pseudonymized: your email, username, and name are replaced, your password hash is removed, and the account shows as Deleted account.
 
-What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account, without your email. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments.
+What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account. The history also keeps what it recorded about the moments you shared, including their titles and places, as described under Who can see what, even for a moment you deleted first. The email address you were invited at stays in the journey's invitation history, and in any proposal to add you, where the people in the journey can still see it. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments.
 
 Deleted data leaves our backups within the backup period above.
 
@@ -97,7 +103,7 @@ When this policy changes, we update the date at the top of this page and keep th
 - Personal email addresses
 - Private service endpoints
 
-Use synthetic records in tests, issues, screenshots, and pull requests. Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md) before deploying private sync. Before changing what this policy says, check it against the code: server/platform.js, server/billing.js, server/config.js, server/start.js, and scripts/backup-postgres.sh.
+Use synthetic records in tests, issues, screenshots, and pull requests. Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md) before deploying private sync. Before changing what this policy says, check it against the code: server/platform.js, server/billing.js, server/identity.js, server/apple.js, server/config.js, server/start.js, and scripts/backup-postgres.sh.
 
 ## An honest boundary
 
