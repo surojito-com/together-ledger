@@ -2796,3 +2796,56 @@ test('the request log keeps which phone build asked, cleaned and capped, and not
   assert.equal(cleanBuild(['and/1']), undefined);
   assert.equal(cleanBuild('and/0.1.0+2/977f365\r\nInjected: yes'), 'and/0.1.0+2/977f365Injectedyes', 'no new line can start a fake log entry');
 });
+
+// #367: a date shaped like one but not on the calendar, such as 2026-02-30, reached Postgres and
+// came back as a 500. Every date the server accepts is now a real day, and an impossible one is
+// refused in the words that field is refused with already.
+test('an impossible date is refused in words, for a moment, an expense and a journey, and a leap day is not', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const impossible = ['2026-02-30', '2026-02-29', '2026-13-01', '2026-01-00', '2026-04-31', '0000-01-01'];
+  const refusedWith = (response, message, date) => {
+    assert.equal(response.statusCode, 400, `${date}: ${response.body}`);
+    assert.deepEqual(response.json().error, { code: 'invalid_input', message }, date);
+  };
+  const momentInput = { kind: 'memory', title: 'A day that is', detail: '', visibility: 'shared-now' };
+  const expenseInput = { merchant: 'Bakery', category: 'Restaurants', amountCents: 500, payerLabel: 'Alice', status: 'paid' };
+  const journeyInput = { name: 'Dated', location: '', startDateStatus: 'exact', endDateStatus: 'date', budgetCents: 0 };
+  const post = (url, payload) => app.inject({ method: 'POST', url, headers: authHeaders(alice), payload });
+  const patch = (url, payload) => app.inject({ method: 'PATCH', url, headers: authHeaders(alice), payload });
+
+  const moment = (await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: '2026-02-28' })).json().data.moment;
+  const expense = (await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: '2026-02-28' })).json().data.expense;
+  const dated = (await post('/api/v1/journeys', { ...journeyInput, startDate: '2026-02-01', endDate: '2026-02-28' })).json().data.journey;
+  for (const date of impossible) {
+    refusedWith(await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: date }), 'Choose a valid moment date.', date);
+    refusedWith(await patch(`/api/v1/journeys/${journey.id}/moments/${moment.id}`, { occurredOn: date, version: moment.version }), 'Choose a valid moment date.', date);
+    refusedWith(await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: date }), 'Choose a valid expense date.', date);
+    refusedWith(await patch(`/api/v1/journeys/${journey.id}/expenses/${expense.id}`, { occurredOn: date, version: expense.version }), 'Expense details are not valid.', date);
+    refusedWith(await post('/api/v1/journeys', { ...journeyInput, startDate: date, endDate: '2026-12-31' }), 'Choose a start date or select “I don’t remember exactly.”', date);
+    refusedWith(await post('/api/v1/journeys', { ...journeyInput, startDate: '2026-01-01', endDate: date }), 'Choose an end date or select another ending.', date);
+    refusedWith(await patch(`/api/v1/journeys/${dated.id}`, { startDate: date, version: dated.version }), 'Choose a start date or select “I don’t remember exactly.”', date);
+    refusedWith(await patch(`/api/v1/journeys/${dated.id}`, { endDate: date, version: dated.version }), 'Choose an end date or select another ending.', date);
+  }
+  const unchanged = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data;
+  assert.equal(unchanged.moments.find((one) => one.id === moment.id).occurredOn, '2026-02-28', 'nothing refused was kept');
+  assert.equal(unchanged.expenses.find((one) => one.id === expense.id).occurredOn, '2026-02-28');
+
+  // February 29 is a day in a leap year, and in a century year only when it divides by 400.
+  for (const date of ['2028-02-29', '2000-02-29']) {
+    const held = await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: date });
+    assert.equal(held.statusCode, 201, `${date}: ${held.body}`);
+    assert.equal(held.json().data.moment.occurredOn, date);
+    const paid = await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: date });
+    assert.equal(paid.statusCode, 201, `${date}: ${paid.body}`);
+    const started = await post('/api/v1/journeys', { ...journeyInput, startDate: date, endDate: date });
+    assert.equal(started.statusCode, 201, `${date}: ${started.body}`);
+  }
+  refusedWith(await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: '2100-02-29' }), 'Choose a valid moment date.', '2100-02-29');
+  const changed = await patch(`/api/v1/journeys/${journey.id}/moments/${moment.id}`, { occurredOn: '2028-02-29', version: moment.version });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const repriced = await patch(`/api/v1/journeys/${journey.id}/expenses/${expense.id}`, { occurredOn: '2028-02-29', version: expense.version });
+  assert.equal(repriced.statusCode, 200, repriced.body);
+  const redated = await patch(`/api/v1/journeys/${dated.id}`, { endDate: '2028-02-29', version: dated.version });
+  assert.equal(redated.statusCode, 200, redated.body);
+});

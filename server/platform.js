@@ -113,6 +113,19 @@ function publicUser(row) {
   };
 }
 
+// A date the server accepts is a real day on the calendar (#367), not only one shaped like it:
+// 2026-02-30 used to reach the database, which refused it, and the person got a server error
+// instead of words they could act on.
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function isCalendarDate(value) {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return day <= (month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]);
+}
+
 function dateOnly(value) {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   const text = String(value || '');
@@ -326,7 +339,7 @@ function cleanMoment(input, existing = null) {
     ? cleanText(input.kindLabel ?? existing?.kindLabel, 'A name for this kind of moment', 60)
     : '';
   const occurredOn = input.occurredOn ?? existing?.occurredOn;
-  if (!DATE_PATTERN.test(occurredOn || '')) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
+  if (!isCalendarDate(occurredOn)) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
   const moneyValue = Object.hasOwn(input, 'moneyCents') ? input.moneyCents : existing?.moneyCents;
   const moneyCents = moneyValue == null || moneyValue === '' ? null : Number(moneyValue);
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new PlatformError(400, 'invalid_input', 'Enter a valid optional money context.');
@@ -369,8 +382,8 @@ function cleanJourneyDetails(input, existing = null) {
   const suppliedEndDate = Object.hasOwn(input, 'endDate') ? input.endDate : existing?.endDate;
   const startDate = startDateStatus === 'exact' ? (suppliedStartDate ?? '') : null;
   const endDate = endDateStatus === 'date' ? (suppliedEndDate ?? '') : null;
-  if (startDateStatus === 'exact' && !DATE_PATTERN.test(startDate)) throw new PlatformError(400, 'invalid_input', 'Choose a start date or select “I don’t remember exactly.”');
-  if (endDateStatus === 'date' && !DATE_PATTERN.test(endDate)) throw new PlatformError(400, 'invalid_input', 'Choose an end date or select another ending.');
+  if (startDateStatus === 'exact' && !isCalendarDate(startDate)) throw new PlatformError(400, 'invalid_input', 'Choose a start date or select “I don’t remember exactly.”');
+  if (endDateStatus === 'date' && !isCalendarDate(endDate)) throw new PlatformError(400, 'invalid_input', 'Choose an end date or select another ending.');
   if (startDate && endDate && endDate < startDate) throw new PlatformError(400, 'invalid_input', 'The end date must be on or after the start date.');
   return { startDateStatus, endDateStatus, startDate, endDate };
 }
@@ -1736,7 +1749,7 @@ export class PlatformService {
       const amountCents = Number(input.amountCents);
       if (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 100000000) throw new PlatformError(400, 'invalid_input', 'Enter a valid amount.');
       if (!CATEGORIES.has(input.category)) throw new PlatformError(400, 'invalid_input', 'Choose a valid category.');
-      if (!DATE_PATTERN.test(input.occurredOn || '')) throw new PlatformError(400, 'invalid_input', 'Choose a valid expense date.');
+      if (!isCalendarDate(input.occurredOn)) throw new PlatformError(400, 'invalid_input', 'Choose a valid expense date.');
       const created = await client.query(
         `INSERT INTO expenses (id,journey_id,merchant,category,amount_cents,occurred_on,paid_by_user_id,payer_label,account,status,reference,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
@@ -1765,7 +1778,7 @@ export class PlatformService {
       const nextCategory = input.category ?? before.category;
       const nextDate = input.occurredOn ?? before.occurredOn;
       const nextStatus = input.status ?? before.status;
-      if (!Number.isSafeInteger(nextAmount) || nextAmount < 1 || nextAmount > 100000000 || !CATEGORIES.has(nextCategory) || !DATE_PATTERN.test(nextDate) || !STATUSES.has(nextStatus)) throw new PlatformError(400, 'invalid_input', 'Expense details are not valid.');
+      if (!Number.isSafeInteger(nextAmount) || nextAmount < 1 || nextAmount > 100000000 || !CATEGORIES.has(nextCategory) || !isCalendarDate(nextDate) || !STATUSES.has(nextStatus)) throw new PlatformError(400, 'invalid_input', 'Expense details are not valid.');
       const updated = await client.query(
         `UPDATE expenses SET merchant=$1,category=$2,amount_cents=$3,occurred_on=$4,paid_by_user_id=$5,payer_label=$6,account=$7,status=$8,reference=$9,notes=$10,version=version+1,updated_at=$11 WHERE id=$12 RETURNING *`,
         [cleanText(input.merchant ?? before.merchant, 'Expense name', 80), nextCategory, nextAmount, nextDate, input.paidByUserId ?? before.paidByUserId, cleanText(input.payerLabel ?? before.payerLabel, 'Payer', 80), String(input.account ?? before.account).slice(0, 50), nextStatus, String(input.reference ?? before.reference).slice(0, 60), String(input.notes ?? before.notes).slice(0, 300), this.now(), expenseId],
