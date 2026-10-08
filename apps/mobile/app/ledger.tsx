@@ -2,6 +2,8 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSession } from '../src/auth/session';
+import { LEDGER_WHILE_OFFLINE } from '../src/auth/session-state';
 import { Choices } from '../src/components/choices';
 import { EmptyState } from '../src/components/empty-state';
 import { GraceBanner } from '../src/components/grace-banner';
@@ -19,6 +21,7 @@ import { fonts, useTheme } from '../src/theme';
  * render() and renderSharedJourney(). Holding, editing and sharing a moment is #183, in app/moment.tsx.
  */
 export default function LedgerScreen() {
+  const session = useSession();
   const journey = useJourney();
   const actions = useMomentActions();
   const { theme } = useTheme();
@@ -27,6 +30,15 @@ export default function LedgerScreen() {
   const { state } = journey;
 
   if (state.phase === 'loading') return <Screen title="Our ledger"><Body>Loading…</Body></Screen>;
+  // Signed in, but the service could not be asked (#352): never the sign-in prompt below.
+  if (state.phase === 'offline') {
+    return (
+      <Screen title="Our ledger">
+        <Body>{LEDGER_WHILE_OFFLINE[state.reason]}</Body>
+        <Button kind="quiet" label="Try again" onPress={session.refresh} />
+      </Screen>
+    );
+  }
   if (state.phase === 'signed-out' || state.phase === 'no-journeys') return <EmptyStart signedIn={state.phase === 'no-journeys'} />;
   if (state.phase === 'failed') {
     return (

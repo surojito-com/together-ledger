@@ -35,7 +35,8 @@
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.VIBRATE",
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_WIFI_STATE"
       ]
     },
     "plugins": [

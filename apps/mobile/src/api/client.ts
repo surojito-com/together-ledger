@@ -4,11 +4,16 @@
  * Every request says it is the app (`x-together-client: app`), so the server issues tokens rather
  * than a cookie. A signed-in request carries its access token. When that token has expired, the
  * refresh token is spent once for a fresh pair (the server rotates, so a refresh token is never
- * reused) and the request is retried once. If the refresh fails, the stored tokens are cleared
- * and the person is asked to sign in again.
+ * reused) and the request is retried once. Only a refusal clears the stored tokens and asks the
+ * person to sign in again: `/auth/refresh` answering 401 `invalid_token`. Anything else (no
+ * connection, a 5xx, a 429, a reply that isn't the service's JSON) keeps them, and is reported
+ * as the service being out of reach, never as being signed out (#353). If a renewal's reply was
+ * lost, the phone still holds the spent refresh token; the server answers it again with a fresh
+ * pair as long as nobody has used the lost one (server/platform.js, refreshTokens).
  *
  * The two situations the web client keeps apart stay apart here: `offline` (the service could
- * not be reached) and `accounts_unavailable` (this build has no service to reach at all).
+ * not be reached) and `accounts_unavailable` (this build has no service to reach at all). A
+ * renewal the service answered without a pair is `unreachable`, in the offline words.
  *
  * Kept free of runtime imports so the tests can run it directly (tests/mobile-account.test.js).
  */
@@ -97,19 +102,23 @@ export function createAccountClient({ base, fetch, tokens }: {
   }
 
   // One refresh at a time: two requests that expire together must not spend the same refresh
-  // token twice, because the second spend would be refused and sign the person out.
+  // token twice. Resolves null only when the service refused the tokens; throws when it could
+  // not be asked or did not answer with a pair, and the tokens stay as they were.
   function refresh(): Promise<Tokens | null> {
     refreshing ??= (async () => {
       const held = await tokens.read();
       if (!held?.refreshToken) return null;
       const { response, payload } = await send('/auth/refresh', { method: 'POST', body: { refreshToken: held.refreshToken } });
+      if (response.status === 401 && payload?.error?.code === 'invalid_token') {
+        await tokens.clear();
+        return null;
+      }
       const fresh = (response.ok ? (payload?.data as Tokens | null) : null) ?? null;
-      if (fresh?.token && fresh.refreshToken) {
+      if (fresh?.token && fresh.refreshToken && fresh.tokenExpiresAt && fresh.refreshTokenExpiresAt) {
         await tokens.write({ token: fresh.token, tokenExpiresAt: fresh.tokenExpiresAt, refreshToken: fresh.refreshToken, refreshTokenExpiresAt: fresh.refreshTokenExpiresAt });
         return fresh;
       }
-      await tokens.clear();
-      return null;
+      throw new ApiError(OFFLINE_MESSAGE, { code: 'unreachable', status: response.status });
     })().finally(() => { refreshing = null; });
     return refreshing;
   }

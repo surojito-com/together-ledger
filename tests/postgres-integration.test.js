@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -76,6 +76,17 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.ok(await platform.tokenHolder(rotated.token));
   await assert.rejects(platform.refreshTokens(issued.refreshToken), (error) => error.code === 'invalid_token');
   assert.equal(await platform.tokenHolder(rotated.token), null);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
+
+  // A renewal whose reply was lost (#353): asked again before anyone uses the pair it issued, the
+  // spent token gets a fresh pair, and the lost one is retired with it, in the same transaction.
+  const beforeLoss = await platform.issueTokens(registration.user.id);
+  const lostPair = await platform.refreshTokens(beforeLoss.refreshToken);
+  const retriedPair = await platform.refreshTokens(beforeLoss.refreshToken);
+  assert.equal(await platform.tokenHolder(lostPair.token), null);
+  assert.ok(await platform.tokenHolder(retriedPair.token));
+  await assert.rejects(platform.refreshTokens(beforeLoss.refreshToken), (error) => error.code === 'invalid_token');
+  assert.equal(await platform.tokenHolder(retriedPair.token), null);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
 
   await pool.query(
@@ -258,9 +269,11 @@ test('real PostgreSQL keeps a seventh week already given and refuses a new one',
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   const { readdir } = await import('node:fs/promises');
   const directory = new URL('../server/migrations/', import.meta.url);
-  const before030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && name < '030').sort();
+  // Everything but 030, so migrations that come after it (031 onward) are already in place and
+  // 030 is the only one left to apply.
+  const allBut030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('030_')).sort();
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-  for (const name of before030) {
+  for (const name of allBut030) {
     await pool.query(await readFile(new URL(name, directory), 'utf8'));
     await pool.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
   }
