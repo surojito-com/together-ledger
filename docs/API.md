@@ -49,15 +49,17 @@ An account without a password can't sign in with one, and asking to recover it s
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET/POST | `/journeys` | List authorized journeys or create one. |
+| GET/POST | `/journeys` | List authorized journeys or create one. A person can be in at most 101 journeys, owned or joined; starting a 102nd answers `409 journey_limit_reached`, and nobody already past the limit loses one. |
 | PATCH | `/journeys/:journeyId` | Version-check and update journey details. |
 | POST | `/journeys/:journeyId/invitations` | Owner creates a hashed, expiring invitation token. |
 | POST | `/invitations/:token/accept` | Authenticated matching account accepts one reserved place. |
 | DELETE | `/journeys/:journeyId/members/:userId` | Owner removes a member; the removed member cannot be the owner. |
 | POST | `/journeys/:journeyId/ownership` | Owner deliberately transfers the journey to another active member. A non-terminal web subscription blocks transfer until its billing relationship is resolved. |
-| GET | `/journeys/:journeyId/snapshot?after=0` | Return authorized state, membership join times, invitation history without tokens, current capacity availability, and ordered events after a sequence cursor. A full snapshot includes `eventChainValid`. Capacity reports people, live reservations, whether another invitation is allowed, and the active mode; it does not expose the internal ceiling. |
+| GET | `/journeys/:journeyId/snapshot?after=0` | Return authorized state, membership join times, invitation history without tokens, current capacity availability, and ordered events after a sequence cursor. A full snapshot includes `eventChainValid`. Capacity reports people, live reservations, whether another invitation is allowed, and the active mode; it does not expose the internal ceiling. It also lists who is resting (`restingMemberIds`), the whole resting order for the owner only (`restOrder`, first to rest first), and `grace` whenever the journey waits on a payment: who pays, the time left, the extra weeks used this calendar year, whether another can be asked for, and who can still add if it isn't paid (`keepAdding`). `grace` is told to everyone in the journey. |
+| PATCH | `/journeys/:journeyId/unpaid-capacity` | Owner sets the resting order (`restOrder`, a list of journeyer ids, each once). The last person in it keeps adding with the owner if the journey stays unpaid. Resting is always read-only; `mode: 'paused'` is refused. |
+| POST | `/journeys/:journeyId/grace-requests` | The person who pays asks for another 7 days of grace, once 7 days or fewer are left, up to 7 times per journey per calendar year (UTC). Each request is in the journey's history. `403 not_payer`, `409 not_in_grace`, `409 grace_request_early` or `409 grace_requests_used` otherwise. |
 
-An unexpired invitation reserves its own place. Creating or accepting an invitation takes the journey lock so concurrent requests cannot exceed capacity. The default and production-safe mode remains two-person. `test-groups` permits synthetic 3–99 person verification outside production only; `billing` requires billing to be explicitly enabled and derives additional capacity from the current journey entitlement.
+An unexpired invitation reserves its own place. Creating or accepting an invitation takes the journey lock so concurrent requests cannot exceed capacity. Accepting one that would be a person's 102nd journey answers `409 journey_limit_reached` and leaves the invitation waiting, as it does for a full journey. The default and production-safe mode remains two-person. `test-groups` permits synthetic 3–99 person verification outside production only; `billing` requires billing to be explicitly enabled and derives additional capacity from the current journey entitlement.
 
 ## Journey records
 
