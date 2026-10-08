@@ -15,7 +15,7 @@ const members = [
 ];
 const grace = {
   endsAt: '2026-10-13T12:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026,
-  requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex],
+  requestsUsed: 2, requestsPerYear: 6, requestDays: 7, canRequest: true, keepAdding: [sam, alex],
 };
 
 async function openJourney(page, viewer, { role, capacity }) {
@@ -60,7 +60,7 @@ test('everyone in a journey in grace is told who pays and who can still add, in 
   await openJourney(page, bo, { role: 'member', capacity: {} });
   const banner = page.locator('#grace-banner');
   await expect(banner).toBeVisible();
-  await expect(page.locator('#grace-banner-message')).toHaveText("This journey is waiting on a payment from Sam. 5 days left · 2 of 7 extra weeks used this year. If it isn't paid, only Sam and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
+  await expect(page.locator('#grace-banner-message')).toHaveText("This journey is waiting on a payment from Sam. 5 days left · 2 of 6 extra weeks asked for this year. If it isn't paid, only Sam and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
   // Only the payer is offered the ask.
   await expect(page.locator('#grace-request-button')).toBeHidden();
 
@@ -82,6 +82,14 @@ test('the payer asks for another week from the banner', async ({ page }) => {
   expect((await ask.boundingBox()).height).toBeGreaterThanOrEqual(44);
   await ask.click();
   await expect.poll(() => requests.grace).toBe(1);
+});
+
+test('once every week has been asked for, the payer is told the count starts again on January 1', async ({ page }) => {
+  // Seven taken under the old limit of 7 still reads as all six.
+  await openJourney(page, sam, { role: 'owner', capacity: { restOrder: [bo.id, alex.id], grace: { ...grace, requestsUsed: 7, canRequest: false } } });
+  await expect(page.locator('#grace-banner-message')).toContainText('· 6 of 6 extra weeks asked for this year.');
+  await expect(page.locator('#grace-banner-note')).toHaveText('All 6 extra weeks for 2026 have been asked for. The count starts again on January 1.');
+  await expect(page.getByRole('button', { name: 'Ask for 7 more days' })).toBeHidden();
 });
 
 test('the owner sees the saved resting order, the person who keeps adding, and no choice to pause', async ({ page }) => {

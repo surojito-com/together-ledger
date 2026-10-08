@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -247,4 +247,38 @@ test('real PostgreSQL stores and serves a photo without its location and camera 
   for (const word of ['Kolkata', 'Fixture Camera Co', 'SN-FIXTURE-0042', 'ns.adobe.com/xap', 'MotionPhoto']) assert.equal(served.bytes.includes(word), false, word);
 
   await platform.deleteAccount(registration.user.id, 'correct horse battery staple');
+});
+
+// Migration 030 lowers the weeks a payer can ask for to six a year (owner, Oct 8, 2026). It must
+// keep a seventh week already given under the old limit, and refuse one from here on.
+test('real PostgreSQL keeps a seventh week already given and refuses a new one', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  const { readdir } = await import('node:fs/promises');
+  const directory = new URL('../server/migrations/', import.meta.url);
+  const before030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && name < '030').sort();
+  await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
+  for (const name of before030) {
+    await pool.query(await readFile(new URL(name, directory), 'utf8'));
+    await pool.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
+  }
+
+  const user = '11111111-1111-4111-8111-111111111111';
+  const journey = '22222222-2222-4222-8222-222222222222';
+  await pool.query("INSERT INTO users (id,email_normalized,username,display_name,password_hash) VALUES ($1,'weeks@example.test','weeks','Weeks','x')", [user]);
+  await pool.query("INSERT INTO journeys (id,owner_user_id,name,budget_cents,start_date_status,end_date_status) VALUES ($1,$2,'Weeks',0,'unknown','forever')", [journey, user]);
+  const ask = (id, number) => pool.query(
+    `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+     VALUES ($1,$2,$3,2026,$4,now(),now(),now())`,
+    [id, journey, user, number],
+  );
+  await ask('33333333-3333-4333-8333-333333333337', 7);
+
+  assert.deepEqual((await runMigrations(pool)).applied, ['030_ask-for-six-weeks-a-year.sql']);
+  const kept = await pool.query('SELECT request_number FROM journey_grace_requests WHERE journey_id=$1', [journey]);
+  assert.deepEqual(kept.rows.map((row) => row.request_number), [7], 'a week already given stays');
+  await ask('33333333-3333-4333-8333-333333333336', 6);
+  await assert.rejects(ask('33333333-3333-4333-8333-333333333338', 7), /journey_grace_requests_request_number_check/);
 });

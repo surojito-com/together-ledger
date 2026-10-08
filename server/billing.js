@@ -687,6 +687,25 @@ export class StripeBillingService {
       : new Date(this.now().getTime() + this.config.billingGraceDays * 24 * 60 * 60 * 1000);
   }
 
+  // Whenever paid room ends without being renewed, a subscription the payer cancels included, the
+  // journey gets the same 7 automatic days as a failed payment, counted from when the room ended
+  // (owner, Oct 8, 2026). Two endings get none: one Stripe made because payment failed or was
+  // disputed, since that subscription has had its grace already, and one never paid for
+  // (incomplete_expired), which had no room to end. Returns the grace's automatic end, or null.
+  async endedRoomGraceExpiry(client, subscription, period) {
+    if (subscription.status !== 'canceled') return null;
+    if (['payment_failed', 'payment_disputed'].includes(subscription.cancellation_details?.reason)) return null;
+    const existing = await client.query(
+      `SELECT reason FROM billing_entitlements
+       WHERE source='stripe' AND environment=$1 AND source_record_id=$2 AND capability=$3`,
+      [this.environment, subscription.id, CAPABILITY],
+    );
+    if (['subscription_payment_recovery', 'invoice_payment_failed'].includes(existing.rows[0]?.reason)) return null;
+    // Stripe sends null for a time it doesn't have, and unixDate(null) would be 1970.
+    const ended = (subscription.ended_at && unixDate(subscription.ended_at)) || period.end || (subscription.canceled_at && unixDate(subscription.canceled_at)) || this.now();
+    return new Date(new Date(ended).getTime() + this.config.billingGraceDays * 24 * 60 * 60 * 1000);
+  }
+
   async upsertEntitlement(client, { payerUserId, journeyId, sourceRecordId, state, quantity, eventCreatedAt, effectiveAt = null, expiresAt = null, reason = null }) {
     return client.query(
       `INSERT INTO billing_entitlements
@@ -749,8 +768,9 @@ export class StripeBillingService {
     const customerId = objectId(subscription.customer);
     const paidCapacity = this.paidCapacityFor(subscription, context.paidCapacity);
     const period = subscriptionPeriod(subscription);
-    const state = this.entitlementState(subscription);
-    const graceExpiry = state === 'grace' ? await this.graceExpiry(client, subscription.id) : null;
+    const endedRoomGrace = await this.endedRoomGraceExpiry(client, subscription, period);
+    const state = endedRoomGrace ? 'grace' : this.entitlementState(subscription);
+    const graceExpiry = endedRoomGrace || (state === 'grace' ? await this.graceExpiry(client, subscription.id) : null);
     const expiresAt = state === 'expired' ? (unixDate(subscription.canceled_at) || this.now()) : graceExpiry || period.end;
     const savedSubscription = await client.query(
       `INSERT INTO billing_subscriptions
@@ -779,7 +799,7 @@ export class StripeBillingService {
       eventCreatedAt,
       effectiveAt: period.start || unixDate(subscription.created),
       expiresAt,
-      reason: state === 'grace' ? 'subscription_payment_recovery' : state === 'expired' ? `subscription_${subscription.status}` : null,
+      reason: endedRoomGrace ? 'subscription_ended' : state === 'grace' ? 'subscription_payment_recovery' : state === 'expired' ? `subscription_${subscription.status}` : null,
     });
   }
 
