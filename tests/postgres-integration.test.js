@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-an-invitation-last-fourteen-days.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -76,6 +76,17 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.ok(await platform.tokenHolder(rotated.token));
   await assert.rejects(platform.refreshTokens(issued.refreshToken), (error) => error.code === 'invalid_token');
   assert.equal(await platform.tokenHolder(rotated.token), null);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
+
+  // A renewal whose reply was lost (#353): asked again before anyone uses the pair it issued, the
+  // spent token gets a fresh pair, and the lost one is retired with it, in the same transaction.
+  const beforeLoss = await platform.issueTokens(registration.user.id);
+  const lostPair = await platform.refreshTokens(beforeLoss.refreshToken);
+  const retriedPair = await platform.refreshTokens(beforeLoss.refreshToken);
+  assert.equal(await platform.tokenHolder(lostPair.token), null);
+  assert.ok(await platform.tokenHolder(retriedPair.token));
+  await assert.rejects(platform.refreshTokens(beforeLoss.refreshToken), (error) => error.code === 'invalid_token');
+  assert.equal(await platform.tokenHolder(retriedPair.token), null);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
 
   // A journey holds at most 101 (MAX_JOURNEY_CAPACITY). With one person here and 99 places held,
@@ -263,10 +274,11 @@ test('real PostgreSQL keeps a seventh week already given and refuses a new one',
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   const { readdir } = await import('node:fs/promises');
   const directory = new URL('../server/migrations/', import.meta.url);
-  // Every migration but 030, so the ones after it are already in place and only 030 is left.
-  const before030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('030_')).sort();
+  // Everything but 030, so migrations that come after it (031 onward) are already in place and
+  // 030 is the only one left to apply.
+  const allBut030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('030_')).sort();
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-  for (const name of before030) {
+  for (const name of allBut030) {
     await pool.query(await readFile(new URL(name, directory), 'utf8'));
     await pool.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
   }
@@ -289,7 +301,7 @@ test('real PostgreSQL keeps a seventh week already given and refuses a new one',
   await assert.rejects(ask('33333333-3333-4333-8333-333333333338', 7), /journey_grace_requests_request_number_check/);
 });
 
-// Migration 031 (#347): an invitation already waiting keeps the expiry it was sent with, and
+// Migration 032 (#347): an invitation already waiting keeps the expiry it was sent with, and
 // whatever had already run out counts as noticed, so the first read after the release writes no
 // lone "ran out" entry for something History never saw begin.
 test('real PostgreSQL leaves waiting invitations as they are and marks what had run out as noticed', { skip: !databaseUrl }, async (t) => {
@@ -299,9 +311,9 @@ test('real PostgreSQL leaves waiting invitations as they are and marks what had 
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   const { readdir } = await import('node:fs/promises');
   const directory = new URL('../server/migrations/', import.meta.url);
-  const before031 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('031_')).sort();
+  const allBut032 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('032_')).sort();
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-  for (const name of before031) {
+  for (const name of allBut032) {
     await pool.query(await readFile(new URL(name, directory), 'utf8'));
     await pool.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
   }
@@ -327,7 +339,7 @@ test('real PostgreSQL leaves waiting invitations as they are and marks what had 
   );
   const expiryBefore = (await pool.query("SELECT expires_at FROM invitations WHERE id='66666666-6666-4666-8666-666666666661'")).rows[0].expires_at;
 
-  assert.deepEqual((await runMigrations(pool)).applied, ['031_let-an-invitation-last-fourteen-days.sql']);
+  assert.deepEqual((await runMigrations(pool)).applied, ['032_let-an-invitation-last-fourteen-days.sql']);
   const rows = Object.fromEntries((await pool.query('SELECT email_normalized,expires_at,lapse_recorded_at,proposal_id,accepted_by_user_id FROM invitations')).rows.map((row) => [row.email_normalized, row]));
   assert.equal(rows['waiting@example.test'].expires_at.getTime(), expiryBefore.getTime(), 'an invitation already waiting keeps its expiry');
   assert.equal(rows['waiting@example.test'].lapse_recorded_at, null);

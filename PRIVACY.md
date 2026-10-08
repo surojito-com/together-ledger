@@ -32,7 +32,7 @@ After you create an account and start a private journey, that journey is stored 
 - membership and billing records if you pay for another person, another place, or an extra photo, as described under Payments;
 - technical timestamps and record versions.
 
-Raw passwords and raw tokens are never stored. On the web, session cookies are HTTP-only, secure, same-site, and paired with an origin-bound CSRF value, and a signed-in session lasts up to 7 days. The phone app keeps its sign-in keys in the phone's secure keychain; its access key lasts 30 minutes and is renewed with a key that lasts up to 30 days. Email links for verification and recovery expire after 30 minutes, and an invitation's link after 14 days. A signed-in browser may keep a local copy of what it last loaded; anyone with access to an unlocked signed-in device may see it.
+Raw passwords and raw tokens are never stored. On the web, session cookies are HTTP-only, secure, same-site, and paired with an origin-bound CSRF value, and a signed-in session lasts up to 7 days. The phone app keeps its sign-in keys in the phone's secure keychain; its access key lasts 30 minutes and is renewed with a key that lasts up to 30 days. The server records when each sign-in key is first used, so that a renewal whose reply was lost on the way can be asked for again without signing you out. Email links for verification and recovery expire after 30 minutes, and an invitation's link after 14 days. A signed-in browser may keep a local copy of what it last loaded; anyone with access to an unlocked signed-in device may see it.
 
 ## Who can see what
 

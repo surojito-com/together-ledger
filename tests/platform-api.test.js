@@ -54,7 +54,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   // pg-mem cannot parse NOT VALID. Real PostgreSQL runs 030 as written, and
   // tests/postgres-integration.test.js checks it keeps a week already given.
   await pool.query((await readFile(new URL('../server/migrations/030_ask-for-six-weeks-a-year.sql', import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
-  await pool.query(await readFile(new URL('../server/migrations/031_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/031_let-a-lost-renewal-reply-be-asked-again.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -2281,6 +2282,91 @@ test('a phone token expires, refreshing rotates it, and a spent refresh token re
 
   const expiredRefresh = await app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken: rotated.refreshToken } });
   assert.equal(expiredRefresh.statusCode, 401, expiredRefresh.body);
+});
+
+// #353: a renewal reaches the server but its reply never reaches the phone, which still holds the
+// spent refresh token. Asking again must not sign it out, as long as nobody has used the pair the
+// lost reply carried. Only hashes are kept, so the answer is a fresh pair, not the lost one.
+test('a spent refresh token asked again before its new pair is used gets a fresh pair in the same family', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  const phone = await registerOnPhone(app, mailer, { email: 'lost-reply@example.test', username: 'lost-reply' });
+  const refresh = (refreshToken) => app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken } });
+
+  const lost = await refresh(phone.refreshToken);
+  assert.equal(lost.statusCode, 200, lost.body);
+  const lostPair = lost.json().data;
+
+  const retried = await refresh(phone.refreshToken);
+  assert.equal(retried.statusCode, 200, retried.body);
+  const retriedPair = retried.json().data;
+  assert.equal(retriedPair.user.username, 'lost-reply');
+  assert.notEqual(retriedPair.token, lostPair.token);
+  assert.notEqual(retriedPair.refreshToken, lostPair.refreshToken);
+
+  // The pair the lost reply carried is retired, not left live beside the new one.
+  const lostAccess = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(lostPair.token) });
+  assert.equal(lostAccess.statusCode, 401, lostAccess.body);
+
+  // One family throughout, and only one pair of it live.
+  const families = await pool.query('SELECT DISTINCT family_id FROM api_tokens');
+  assert.equal(families.rowCount, 1);
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 2);
+
+  // Still only hashes at rest.
+  for (const row of (await pool.query('SELECT token_hash FROM api_tokens')).rows) {
+    assert.equal(row.token_hash.length, 64);
+    assert.ok(![phone.token, phone.refreshToken, lostPair.token, lostPair.refreshToken, retriedPair.token, retriedPair.refreshToken].includes(row.token_hash));
+  }
+
+  // A reply lost twice is answered twice.
+  const lostAgain = await refresh(phone.refreshToken);
+  assert.equal(lostAgain.statusCode, 200, lostAgain.body);
+  const third = lostAgain.json().data;
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(retriedPair.token) })).statusCode, 401, 'the pair the second reply carried is retired');
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 2);
+
+  // The pair the phone finally receives works, and the renewed line carries on as normal.
+  const signedIn = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(third.token) });
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
+  const next = await refresh(third.refreshToken);
+  assert.equal(next.statusCode, 200, next.body);
+});
+
+test('a spent refresh token asked again after its new pair was used retires the family', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const refresh = (refreshToken) => app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken } });
+
+  // Used by its access token.
+  const phone = await registerOnPhone(app, mailer, { email: 'used-access@example.test', username: 'used-access' });
+  const rotated = (await refresh(phone.refreshToken)).json().data;
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(rotated.token) })).statusCode, 200);
+  const replayed = await refresh(phone.refreshToken);
+  assert.equal(replayed.statusCode, 401, replayed.body);
+  assert.equal(replayed.json().error.code, 'invalid_token');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(rotated.token) })).statusCode, 401);
+  assert.equal((await refresh(rotated.refreshToken)).statusCode, 401);
+
+  // Used by its refresh token.
+  const second = await registerOnPhone(app, mailer, { email: 'used-refresh@example.test', username: 'used-refresh' });
+  const once = (await refresh(second.refreshToken)).json().data;
+  const twice = (await refresh(once.refreshToken)).json().data;
+  assert.ok(twice.token);
+  const stale = await refresh(second.refreshToken);
+  assert.equal(stale.statusCode, 401, stale.body);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(twice.token) })).statusCode, 401);
+
+  // The pair a retry retired is a copy if it ever turns up, so it retires the family too.
+  const third = await registerOnPhone(app, mailer, { email: 'surfaced@example.test', username: 'surfaced' });
+  const lostPair = (await refresh(third.refreshToken)).json().data;
+  const retried = (await refresh(third.refreshToken)).json().data;
+  const surfaced = await refresh(lostPair.refreshToken);
+  assert.equal(surfaced.statusCode, 401, surfaced.body);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(retried.token) })).statusCode, 401);
+
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 0);
 });
 
 test('a refresh token that has simply run out of time is refused', async (t) => {

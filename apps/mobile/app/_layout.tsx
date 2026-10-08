@@ -1,13 +1,15 @@
 import { useFonts } from 'expo-font';
 import { router, Stack } from 'expo-router';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { SessionProvider } from '../src/auth/session';
+import { SessionProvider, useSession } from '../src/auth/session';
 import { StoreProvider } from '../src/billing/store-provider';
 import { ShellOverlays } from '../src/components/dialogs';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
 import { ShellProvider, useShell } from '../src/shell/shell-provider';
+import { CONNECTION_SOURCE, OFFLINE_NOTICE } from '../src/shell/connection';
+import { useConnectionWatch } from '../src/shell/use-connection';
 import { useStoredPreferences, type SaveFailure } from '../src/storage/use-stored-preferences';
 import { fontSources, targetSize, ThemeProvider, useTheme } from '../src/theme';
 
@@ -69,6 +71,30 @@ function SaveFailureNotice({ failure }: { failure: SaveFailure }) {
   return null;
 }
 
+/**
+ * The standing offline notice, as a caution, cleared by its own source when the connection
+ * returns (#300). Coming back online, or back to the foreground, checks the session again and
+ * reloads the journeys, so an app opened offline recovers without a restart or a password (#352).
+ */
+function ConnectionWatch() {
+  const { refresh } = useSession();
+  const { reload } = useJourney();
+  const { showStatus, clearStatus } = useShell();
+  const recheck = useCallback(() => {
+    refresh();
+    reload();
+  }, [refresh, reload]);
+  useConnectionWatch({
+    onOffline: () => showStatus(OFFLINE_NOTICE, { tone: 'caution', source: CONNECTION_SOURCE }),
+    onOnline: () => {
+      clearStatus(CONNECTION_SOURCE);
+      recheck();
+    },
+    onForeground: recheck,
+  });
+  return null;
+}
+
 export default function RootLayout() {
   // The serif ships inside the app (#177), so nothing is fetched at runtime.
   const [fontsLoaded] = useFonts(fontSources);
@@ -84,6 +110,7 @@ export default function RootLayout() {
             <StoreProvider>
               <ThemedStack />
             </StoreProvider>
+            <ConnectionWatch />
           </JourneyProvider>
           <ShellOverlays />
           <SaveFailureNotice failure={failure} />

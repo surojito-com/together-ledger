@@ -414,20 +414,21 @@ export class PlatformService {
   // A phone gets a pair rather than a cookie: a short-lived access token it attaches to every
   // request, and a longer-lived refresh token it uses once to ask for the next pair. Both are
   // stamped with a shared family so that signing out, or a refresh token turning up twice,
-  // retires everything issued along that line at once.
-  async issueTokenPair(client, userId, familyId = randomUUID()) {
+  // retires everything issued along that line at once. A pair issued by spending a refresh token
+  // records which one (`issuedBy`), so a renewal whose reply was lost can be asked for again.
+  async issueTokenPair(client, userId, familyId = randomUUID(), issuedBy = null) {
     const accessToken = opaqueToken();
     const refreshToken = opaqueToken();
     const issuedAt = this.now();
     const expiresAt = new Date(issuedAt.getTime() + this.config.ACCESS_TOKEN_MINUTES * 60 * 1000);
     const refreshExpiresAt = new Date(issuedAt.getTime() + this.config.REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000);
     await client.query(
-      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at) VALUES ($1,$2,$3,'access',$4,$5,$6)`,
-      [randomUUID(), userId, familyId, sha256(accessToken), expiresAt, issuedAt],
+      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at,issued_by) VALUES ($1,$2,$3,'access',$4,$5,$6,$7)`,
+      [randomUUID(), userId, familyId, sha256(accessToken), expiresAt, issuedAt, issuedBy],
     );
     await client.query(
-      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at) VALUES ($1,$2,$3,'refresh',$4,$5,$6)`,
-      [randomUUID(), userId, familyId, sha256(refreshToken), refreshExpiresAt, issuedAt],
+      `INSERT INTO api_tokens (id,user_id,family_id,purpose,token_hash,expires_at,created_at,issued_by) VALUES ($1,$2,$3,'refresh',$4,$5,$6,$7)`,
+      [randomUUID(), userId, familyId, sha256(refreshToken), refreshExpiresAt, issuedAt, issuedBy],
     );
     return {
       token: accessToken,
@@ -447,13 +448,20 @@ export class PlatformService {
   async tokenHolder(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
-      `SELECT t.id,t.user_id,t.family_id,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
+      `SELECT t.id,t.user_id,t.family_id,t.used_at,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
        FROM api_tokens t JOIN users u ON u.id=t.user_id
        WHERE t.token_hash=$1 AND t.purpose='access' AND t.revoked_at IS NULL AND t.expires_at>$2 AND u.deleted_at IS NULL`,
       [sha256(rawToken), this.now()],
     );
     if (!found.rowCount) return null;
     const row = found.rows[0];
+    // The first time an access token is accepted, it is marked used, once: from then on the
+    // refresh token that issued it can no longer be asked again (refreshTokens). If a renewal
+    // retired this pair in the moment between reading it and marking it, it is refused.
+    if (!row.used_at) {
+      const marked = await this.pool.query('UPDATE api_tokens SET used_at=COALESCE(used_at,$1) WHERE id=$2 AND revoked_at IS NULL RETURNING id', [this.now(), row.id]);
+      if (!marked.rowCount) return null;
+    }
     return { id: row.id, userId: row.user_id, tokenFamilyId: row.family_id, bearer: true, user: publicUser({ ...row, id: row.user_id }) };
   }
 
@@ -464,13 +472,40 @@ export class PlatformService {
       const found = await client.query(`SELECT * FROM api_tokens WHERE token_hash=$1 AND purpose='refresh' FOR UPDATE`, [sha256(rawRefreshToken)]);
       if (!found.rowCount) return null;
       const row = found.rows[0];
-      // A refresh token is spent the first time it is used. A second presentation means a copy is
-      // in circulation, so the whole family stops working rather than the presented row alone.
-      await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE family_id=$2 AND revoked_at IS NULL', [this.now(), row.family_id]);
-      if (row.revoked_at || new Date(row.expires_at) <= this.now()) return null;
+      const retireFamily = () => client.query('UPDATE api_tokens SET revoked_at=$1 WHERE family_id=$2 AND revoked_at IS NULL', [this.now(), row.family_id]);
+      if (new Date(row.expires_at) <= this.now()) {
+        await retireFamily();
+        return null;
+      }
       const user = await client.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [row.user_id]);
-      if (!user.rowCount) return null;
-      return { user: publicUser(user.rows[0]), ...await this.issueTokenPair(client, row.user_id, row.family_id) };
+      if (!user.rowCount) {
+        await retireFamily();
+        return null;
+      }
+      if (!row.revoked_at) {
+        // A refresh token is spent the first time it is used: everything live in its family is
+        // retired, and the new pair records that this token issued it.
+        await retireFamily();
+        await client.query('UPDATE api_tokens SET used_at=COALESCE(used_at,$1) WHERE id=$2', [this.now(), row.id]);
+        return { user: publicUser(user.rows[0]), ...await this.issueTokenPair(client, row.user_id, row.family_id, row.id) };
+      }
+      // Presented again after it was spent. If the reply carrying the pair it issued was lost,
+      // the phone never had that pair, so nobody has presented either half: it is retired and a
+      // fresh pair is issued in its place (#353). Only hashes are kept, so the lost pair itself
+      // cannot be handed back. If either half has been presented, or the pair is gone (signed
+      // out, renewed again, retired), a copy is in circulation, and the whole family stops
+      // working rather than the presented row alone.
+      // A pair an earlier retry retired is still recorded against this token, unused; only the one
+      // live pair can be retired in its turn, so a reply lost twice is answered twice.
+      const issued = await client.query('SELECT * FROM api_tokens WHERE issued_by=$1 FOR UPDATE', [row.id]);
+      const live = issued.rows.filter((token) => !token.revoked_at);
+      const unused = live.length === 2 && issued.rows.every((token) => !token.used_at);
+      if (!unused) {
+        await retireFamily();
+        return null;
+      }
+      await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE issued_by=$2 AND revoked_at IS NULL', [this.now(), row.id]);
+      return { user: publicUser(user.rows[0]), ...await this.issueTokenPair(client, row.user_id, row.family_id, row.id) };
     }) : null;
     if (!rotated) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
     return rotated;
@@ -1290,7 +1325,7 @@ export class PlatformService {
   // So the first time the server notices that a proposal or an invitation has run out, it writes
   // that into the history, once, with the time it actually ran out. Each is noticed by a
   // conditional update: a proposal by turning open into lapsed, an invitation by setting
-  // lapse_recorded_at (migration 031). Two requests noticing at the same moment cannot both write
+  // lapse_recorded_at (migration 032). Two requests noticing at the same moment cannot both write
   // it, because only the update that still finds it unnoticed returns the row. Called with the
   // journey locked.
   async recordRunOuts(client, journeyId) {

@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { StyleSheet, Text } from 'react-native';
 import { useSession } from '../src/auth/session';
+import { STILL_SIGNED_IN } from '../src/auth/session-state';
 import { awaitingYourAnswer, waitingSuffix } from '../src/journey/sharing-view';
 import { useJourney } from '../src/journey/use-journey';
 import { RestorePurchases } from '../src/components/store-offers';
@@ -41,6 +42,8 @@ export default function SettingsScreen() {
           <RestorePurchases />
           <Button kind="quiet" label="Delete account" onPress={() => router.push('/delete-account')} />
         </>
+      ) : session.status === 'offline' ? (
+        <Body>{STILL_SIGNED_IN[session.reason]}</Body>
       ) : (
         <Body>Sign in to manage or delete your account.</Body>
       )}

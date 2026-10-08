@@ -16,8 +16,21 @@ export const STATUS_TONES: Readonly<Record<StatusTone, { glyph: string }>> = Obj
 /** `inDialog` records that the message was raised while a dialog was open, so it belongs to it. */
 export type Status = { message: string; tone: StatusTone; source: string; inDialog: boolean } | null;
 
-export function showStatus(message: string, { tone = 'problem', source = 'action', inDialog = false }: { tone?: StatusTone; source?: string; inDialog?: boolean } = {}): Status {
-  return { message, tone: tone in STATUS_TONES ? tone : 'problem', source, inDialog };
+/**
+ * Being offline, or the service being out of reach, loses nothing, so it is a caution (▲), never
+ * the destructive colour (#300, #352). These are the account client's OFFLINE_MESSAGE and
+ * UNAVAILABLE_MESSAGE (src/api/client.ts), repeated because this file has no runtime imports;
+ * tests/mobile-shell.test.js holds the two copies the same. Every other message is still a
+ * problem unless its caller says otherwise (#244 decides those).
+ */
+export const CONNECTION_MESSAGES: readonly string[] = Object.freeze([
+  'Private sync is temporarily unreachable.',
+  'Private accounts are being connected. No account details were sent.',
+]);
+
+export function showStatus(message: string, { tone, source = 'action', inDialog = false }: { tone?: StatusTone; source?: string; inDialog?: boolean } = {}): Status {
+  const chosen = tone ?? (CONNECTION_MESSAGES.includes(message) ? 'caution' : 'problem');
+  return { message, tone: chosen in STATUS_TONES ? chosen : 'problem', source, inDialog };
 }
 
 /**

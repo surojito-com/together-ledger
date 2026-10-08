@@ -234,6 +234,7 @@ row for one that is gone.
 | `@expo-google-fonts/gelasio` | No | Font files bundled into the app, imported per weight (`apps/mobile/src/theme/fonts.ts:1-5`) |
 | `@expo/metro-runtime` | Development only | Talks to the Metro dev server in development builds |
 | `@react-native-community/datetimepicker` | No | The system date picker |
+| `@react-native-community/netinfo` | No | Says whether the phone is connected, for the offline notice (#300). Its own check that the internet can be reached would ask `clients3.google.com` on iOS; it is switched off (`apps/mobile/src/shell/use-connection.ts`), so the library makes no request. On Android it declares `ACCESS_NETWORK_STATE`, already granted (2.4), and `ACCESS_WIFI_STATE`, which is blocked (`apps/mobile/app.json`): only connected or not is read, never the Wi-Fi network's name |
 | `expo` | No (not verified by traffic) | Core runtime. No update, analytics or notification module is installed |
 | `expo-constants` | No | Reads build constants |
 | `expo-dev-client` | Development only (not verified) | Connects to a dev server only in a development build (`eas.json:7-11`) |

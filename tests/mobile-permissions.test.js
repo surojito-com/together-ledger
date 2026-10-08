@@ -26,7 +26,11 @@ const require = createRequire(import.meta.url);
 // and later refuse without it. It shows no prompt and says only whether the phone is online and on
 // what kind of network. Blocking it would leave that code to fail inside Google's library.
 const GRANTED = ['android.permission.INTERNET', 'com.android.vending.BILLING', 'android.permission.ACCESS_NETWORK_STATE'];
-const BLOCKED = ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.SYSTEM_ALERT_WINDOW', 'android.permission.VIBRATE', 'android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT'];
+// ACCESS_WIFI_STATE is what @react-native-community/netinfo declares to read the Wi-Fi network's
+// name and strength (#300). The phone needs only whether it is connected, which
+// ACCESS_NETWORK_STATE already says, and the library checks for the permission before it reads
+// anything Wi-Fi, so blocking it takes nothing away.
+const BLOCKED = ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.SYSTEM_ALERT_WINDOW', 'android.permission.VIBRATE', 'android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT', 'android.permission.ACCESS_WIFI_STATE'];
 
 test('the phone is granted only the network and what Play Billing needs on Android, and gaining a permission fails here first', () => {
   assert.deepEqual(app.android.permissions, GRANTED, 'A new Android permission is a privacy decision: say what it is for, check the generated manifest, and update this list in the same change.');
