@@ -4,7 +4,7 @@
 //   node store/google-play/check-listing.mjs
 //
 // Exits non-zero on any failure, so it can run before every paste into
-// Play Console.
+// Play Console. It runs in `npm run check` too.
 
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

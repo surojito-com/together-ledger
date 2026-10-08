@@ -42,14 +42,15 @@ Local Docker is optional for unit tests; the automated API suite runs against an
 
 ## Production bundle
 
-The API has never been deployed. [API server deployment](SERVER_DEPLOY.md) holds the full
-procedure — registry, build, digest, migrations, verification, rollback — and records why
-deploying `server/` is deliberately manual while the app Worker is automated. This section
+The API is deployed, and each release is done by hand on the host. [API server deployment](SERVER_DEPLOY.md)
+holds the procedure as it was actually run on Oct 1 and Oct 8, 2026 — build on the host, rehearse the migrations on
+a throwaway copy, back up and verify, switch, confirm, roll back — and records why deploying `server/` is
+deliberately manual while the app Worker is automated. This section
 remains the summary; that document is the thing to follow on the host.
 
 `compose.production.yaml` is deliberately separate from the local `compose.yaml` file. It has no Mailpit service and exposes only Caddy on ports 80 and 443. PostgreSQL and the Node service have no host ports and communicate only on the Docker network.
 
-1. Build and review an image, then record its immutable registry digest as `TOGETHER_IMAGE`. The registry, the build, and the digest record are specified step by step in the [API server deployment procedure](SERVER_DEPLOY.md): a private Amazon ECR repository in the owner's account. That procedure has been written but never run, so treat its first execution as the review of both the release and the document.
+1. Build the image on the host from a reviewed commit, tagged with that commit, and set `TOGETHER_IMAGE` to it. No image has been pushed to a registry yet. The build is step 2 of the [API server deployment procedure](SERVER_DEPLOY.md); a private Amazon ECR repository and deploying by immutable digest are written there as a plan, not yet done (#225).
 2. Copy `.env.production.example` to a persistent, root-owned, mode-0600 file outside the repository, such as `/etc/together-ledger/production.env`. Do not use `/run`, which is cleared at reboot. In production, materialize its real values from AWS Secrets Manager; do not commit it.
 3. Set `CADDY_DOMAIN=api.together-ledger.com` and `API_ORIGIN=https://api.together-ledger.com` only after staging DNS and TLS are ready. Set `PUBLIC_ORIGIN=https://app.together-ledger.com` and `ACCOUNT_ORIGIN=https://app.together-ledger.com`. During a dual-host rollout, set `APP_ORIGINS` to the legacy app origin as a comma-separated exact-origin list. `ACCOUNT_ORIGIN` is the safe fallback for trusted non-browser jobs. Browser-issued verification, recovery, and invitation emails preserve the already allowlisted origin that requested them: app actions return to the app origin, direct API testing returns to the API client, and arbitrary origins are rejected before mail is sent.
 4. Start the bundle with `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d`. Compose needs `--env-file` for its own image and database variable substitutions; service-level `env_file` alone is not enough.
@@ -154,8 +155,8 @@ Each account deletion writes one application log line, `account deleted`, carryi
 ## Release gate
 
 1. `npm ci` and `npm run check` pass from a clean checkout.
-2. Build the immutable container image once and record its digest.
-3. Apply migrations using the same image against a pre-production copy: `docker run --rm --env-file <pre-production env file> <image>@<digest> node server/migrate.js`. That entry point runs the same migrations the server runs at startup and then exits, so the schema moves as a step someone reads the output of rather than as a side effect of a container starting. See [API server deployment](SERVER_DEPLOY.md), *Rehearse the migrations against a pre-production copy*.
+2. Build the container image once, on the host, and record its image id in `/etc/together-ledger/release-log`.
+3. Apply migrations using the same image against a throwaway copy of production's data: a temporary `postgres:16-alpine` container loaded from a `pg_dump`, with `NODE_ENV=development` and `DATABASE_URL` pointing at it, deleted afterwards. That entry point runs the same migrations the server runs at startup and then exits, so the schema moves as a step someone reads the output of rather than as a side effect of a container starting. See [API server deployment](SERVER_DEPLOY.md), *Rehearse the migrations on a throwaway copy of live data*.
 4. Exercise registration, verification, invitation, two-seat enforcement, access denial, recovery, concurrent edit conflict, Event Manager integrity, export, and deletion with synthetic data.
 5. Deploy AWS primary, run `/healthz`, then run authenticated smoke tests.
 6. Run `sudo /usr/local/lib/together-ledger/verify-production-recovery.sh`; it must pass before deployment. Confirm the encrypted pair is visible in the private GCP bucket, restore it into the standby database, deploy the same digest, and test using a private temporary hostname.
@@ -168,6 +169,9 @@ Read the companion [production readiness gate](PRODUCTION_READINESS.md) before o
 ```
 
 ### Container scan evidence
+
+No image has been pushed to ECR yet, so this applies once the registry plan in
+[API server deployment](SERVER_DEPLOY.md) is carried out.
 
 Buildx can publish an OCI image index even when the release was built explicitly for
 `linux/amd64`. ECR Basic scanning cannot scan that index directly. For each immutable
@@ -183,8 +187,8 @@ information.
 
 Use this procedure only after a deployed release. It does not replace the incident/failover plan below. [API server deployment](SERVER_DEPLOY.md) holds the commands, the release log this depends on, and how to rehearse the whole path on a pre-production copy before an incident asks for it.
 
-1. Record the failing release digest, UTC time, symptoms, and whether writes may have succeeded. Do not delete volumes, logs, backups, or the running database.
-2. If the issue is limited to the app or proxy, keep PostgreSQL running and return the application image to the last reviewed digest in the root-owned environment file. `/etc/together-ledger/releases.log` says which digest that is.
+1. Record the failing release's commit and image id, UTC time, symptoms, and whether writes may have succeeded. Do not delete volumes, logs, backups, or the running database.
+2. If the issue is limited to the app or proxy, keep PostgreSQL running and return `TOGETHER_IMAGE` in the root-owned environment file to the previous image. `/etc/together-ledger/previous-image` holds it, and `/etc/together-ledger/release-log` records each release's commit and image id.
 3. Run `TOGETHER_ENV_FILE=/etc/together-ledger/production.env docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml up -d` from the reviewed checkout.
 4. Verify `/healthz` and `/readyz` privately first. Then test one synthetic account flow; never use a real user's account as a probe.
 5. If database integrity is in doubt, freeze writes and stop. Choose the newest validated encrypted logical backup, restore it only into an isolated database, verify HMAC event chains and synthetic checks, re-apply account deletions made since that backup (see "Re-applying deletions after a restore"), then make a separate promotion decision.

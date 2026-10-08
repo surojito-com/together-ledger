@@ -23,7 +23,7 @@
     "check:themes": "node scripts/check-themes.mjs",
     "tokens:mobile": "node scripts/mobile-theme-tokens.mjs --write",
     "check:server": "node --check server/app.js && node --check server/billing.js && node --check server/platform.js && node --check server/identity.js && node --check server/apple.js && node --check server/apple-deletion-followup.js && node --check server/finish-apple-account-deletion.js && node --check server/start.js && node --check server/reapply-account-deletions.js && node --check server/review-journey.js && node --check server/seed-review-journey.js && node --check server/migrate.js && node --check server/log-options.js && node --check server/billing-environments.js && node --check server/store-apple.js && node --check server/store-google.js && node --check server/store-products.js && node --check server/store-purchases.js && node --check src/api.js && node --check scripts/configure-stripe-customer-portal.mjs && node --check scripts/reconcile-stripe-billing.mjs && node --check scripts/check-stripe-reconciliation-freshness.mjs && node --check src/app.js",
-    "check": "node scripts/check-public-safety.mjs && npm run check:themes && npm run check:server && node scripts/smoke-http.mjs && npm test"
+    "check": "node scripts/check-public-safety.mjs && node store/app-store/check-listing.mjs && node store/google-play/check-listing.mjs && npm run check:themes && npm run check:server && node scripts/smoke-http.mjs && npm test"
   },
   "keywords": [
     "relationships",

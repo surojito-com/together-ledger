@@ -103,6 +103,14 @@ const pages = {
     subject: 'Together%20Ledger%20terms',
     related: { path: 'privacy', label: 'Privacy policy' },
   },
+  support: {
+    source: 'SUPPORT.md',
+    path: 'support',
+    description: 'How to get help with Together Ledger: signing in, purchases, deleting an account, and who to write to.',
+    contact: 'For anything about your privacy or your data, write to',
+    subject: 'Together%20Ledger%20privacy',
+    related: { path: 'privacy', label: 'Privacy policy' },
+  },
 };
 
 function renderPolicyPage(markdown, page) {
@@ -146,4 +154,9 @@ export function renderPrivacyPage(markdown) {
 
 export function renderTermsPage(markdown) {
   return renderPolicyPage(markdown, pages.terms);
+}
+
+// The support URL both stores ask for (owner, Oct 8): the product's own page, next to its policies.
+export function renderSupportPage(markdown) {
+  return renderPolicyPage(markdown, pages.support);
 }

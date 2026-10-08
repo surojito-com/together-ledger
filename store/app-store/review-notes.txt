@@ -1,0 +1,22 @@
+Together Ledger is a private journal that two or more people keep together. Each person holds "moments" (a promise, a memory, a feeling, a repair request) and chooses who sees each one: Private stays with them, Shared now opens it to everyone in the journey, and Share later waits until they deliberately share it. Each moment's privacy is shown by its shape, its word and its border.
+
+SIGNING IN
+Use the email and password in this submission's Sign-in Information. On the first screen, tap Account, then sign in. That account (Sam) is already in a sample journey with a second sample account (Alex), so the shared ledger has content from both people. To see the other side, sign out (Settings > Account > Sign out) and sign in with the username app-review-alex and the same password. Sam's private moment will not be there.
+
+Settings > Journey sharing shows who is in the journey and how someone new is added: everyone already in it has to agree first. Settings > History and conversations holds the journey's record.
+
+PAYING
+A journey of two is free, always. Nothing has to be bought to use the app.
+
+The purchases are room for more people in a journey, as auto-renewable monthly subscriptions (up to 51 or up to 101 people) or as week and month passes. To reach them, sign in as Sam, who owns the sample journey, and go to Settings > Journey sharing > Room for more people. While the App Store account in use holds no Together Ledger subscription, the two monthly subscriptions are offered; once it holds one for another journey, a journey is offered the passes instead. Room belongs to the journey, so after buying, every device anyone in the journey uses sees it.
+
+Restore purchases is in Settings, and under the room offers.
+
+Please make test purchases as Sam. Our live server honours sandbox purchases only for a short list of test accounts, and Sam's is on it. A sandbox purchase from any other account, including Alex or a new account, is refused with "This was a test purchase, and test purchases don’t add anything to Together Ledger. Apple doesn’t charge for them." and nothing is added.
+
+Prices come from the App Store. The subscription offer shows its length, its price, how it renews, and links to the Terms of use and Privacy policy, which open inside the app.
+
+DELETING AN ACCOUNT
+Settings > Delete account. It says first that deleting the account doesn't cancel an App Store subscription.
+
+The app is for adults aged 18 and over. It asks for no location, camera, photos, contacts or notifications permission.

@@ -89,18 +89,18 @@ Apple's reviewers buy with a sandbox account, Google's with a licence-tester acc
 Purchases (#275). So the sample journey has to let a reviewer reach every purchase the app offers, and see what
 paid capacity looks like once it is held:
 
-- **Another person.** Sam owns the sample journey, so Sam can reach the purchase for room for another person.
-- **Another photo or another place on a moment.** These come one moment at a time, so the sample moments are where they are offered.
-- **Paid capacity already held.** The entitlement ledger accepts a `promotion` source as well as `apple`, `google` and `stripe` (`008_stripe_web_billing.sql`). So the sample journey can hold paid capacity honestly, granted by us rather than through a faked store receipt, and the paid screens have something to show before a reviewer buys anything. How many people a journey has room for already counts an entitlement from any source (`capacityFor()` in `server/platform.js`). The billing panel and Stripe reconciliation have not yet been checked against a `promotion` grant; do that when it is built.
+- **Room for more people.** Sam owns the sample journey, so Sam can reach it: Settings → Journey sharing → Room for more people. It is shown only while production runs `JOURNEY_CAPACITY_MODE=billing` (`apps/mobile/app/journey-settings.tsx`).
+- **An extra place on a moment.** It is offered on a saved moment that already holds its free first place, and only while production counts paid places (`MOMENT_LOCATION_BILLING_ENABLED`, `docs/STORE_PURCHASES.md`). Sam's moment "The walk along the canal" has one. **No extra photo** is sold on the phone until it can add photos (#187).
+- **Paid capacity already held.** The entitlement ledger accepts a `promotion` source as well as `apple`, `google` and `stripe` (`008_stripe_web_billing.sql`). So the sample journey can hold paid capacity honestly, granted by us rather than through a faked store receipt, and the paid screens have something to show before a reviewer buys anything. How many people a journey has room for already counts an entitlement from any source (`capacityFor()` in `server/platform.js`). The billing panel and Stripe reconciliation have not yet been checked against a `promotion` grant; do that when it is built. This script doesn't grant one yet (below).
 
-**Not built yet, and it blocks the first submission.** The phone has no store purchase today. It shows capacity
-read only, because the work that adds it (TL-P-02 to TL-P-08 under #267, and the tier decision in #203) has not
-landed. When it does, this script grows with it:
+**What is built, and what isn't.** The phone's store purchase landed in `977f365`: room for more people, an
+extra place, and Restore purchases in Settings (`apps/mobile/src/components/store-offers.tsx`,
+`docs/STORE_PURCHASES.md`). A reviewer's sandbox purchase is honoured because Sam's account id is in
+`STORE_SANDBOX_ACCOUNT_IDS` (above). Alex's isn't, so test purchases are made as Sam.
 
-1. It grants the sample journey some `promotion` capacity, so a reviewer sees a paid state without buying.
-2. It leaves room for a sandbox purchase to succeed, so a reviewer can also buy and restore.
-
-What is granted, and how much, is decided then, against the products as they are created in both consoles (TL-P-04).
+This script hasn't grown with it yet. It grants the sample journey no `promotion` capacity, so a reviewer sees the
+unpaid state until they buy. Whether to add that grant, and how much, is still open, decided against the products
+as they are created in both consoles (TL-P-04, #271).
 
 Two store rules shape this:
 
@@ -109,7 +109,11 @@ Two store rules shape this:
 
 ## Notes for the reviewer
 
-Paste this into the review notes field of each store:
+**App Store:** paste `store/app-store/review-notes.txt`. While production counts paid places, paste
+`store/app-store/review-notes-extra-place.txt` after it. `store/app-store/README.md` lists what must be true before
+each submission, and `npm run check` holds the notes to the code.
+
+**Google Play:** paste this. Its paragraph about purchases isn't written yet:
 
 > Together Ledger is a private journal that two or more people keep together. Each person holds "moments" (a
 > promise, a memory, a feeling, a repair request) and chooses who sees each one: **Private** stays with them,
@@ -117,10 +121,12 @@ Paste this into the review notes field of each store:
 > Each moment's privacy is shown by its shape, its word and its border.
 >
 > The account provided (Sam) is already in a sample journey with a second sample account (Alex), so the shared
-> ledger has content from both people. To see the other side, sign in with Alex's email and the same password.
-> Sam's private moment will not be there. Journey settings shows who is in the journey and how someone new is
-> added: everyone already in it has to agree first. History and conversations holds the journey's record.
+> ledger has content from both people. To see the other side, sign in with the username app-review-alex and the
+> same password. Sam's private moment will not be there. Settings > Journey sharing shows who is in the journey and
+> how someone new is added: everyone already in it has to agree first. Settings > History and conversations holds
+> the journey's record.
 >
-> *In-app purchases (to be written once the products exist, TL-P-04):* what each one adds (room for another
-> person, another photo, another place), that it belongs to the journey and works on every device, where to
-> find each purchase starting from Sam's account, and where Restore Purchases is.
+> *In-app purchases (still to be written for Google Play):* what each one adds (room for more people, an extra
+> place), that it belongs to the journey and works on every device, where to find each purchase starting from
+> Sam's account (Settings > Journey sharing > Room for more people), that test purchases count only for Sam's
+> account, and where Restore purchases is (Settings).
