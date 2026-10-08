@@ -6,7 +6,8 @@ and never from memory. When they disagree with it, this file is checked against 
 one that is wrong is corrected.
 
 - **As of:** `1cc17a6` on `main` (Oct 7, 2026, "Let a lapsed journey rest read-only…"). Every
-  section below was checked against that commit. A section checked later says so.
+  section below was checked against that commit. A section checked later says so: the phone's
+  store purchases (#340) were added on Oct 8, 2026, checked at that pull request's head.
 - **Scope of the store answers (Part 3):** the phone app in `apps/mobile`, as it builds today. Not
   the web app. The server is described because the forms ask what happens to data after it leaves
   the phone.
@@ -128,13 +129,19 @@ is, so they are honest today and say which answer changes if a fix lands.
   (`server/platform.js:642`, `:1842-1848`), so the phone's delete screen needs to change before
   either sign-in reaches the phone. Apple requires in-app deletion for every account.
 
-### 1.6 Android template permissions (fixed)
+### 1.6 Android template permissions (fixed; two added for store purchases)
 
-- **Verified in code.** The phone is granted only `INTERNET` on Android, and the template's and
-  libraries' extra permissions are blocked (`apps/mobile/app.json:27-37`), enforced by
-  `tests/mobile-permissions.test.js:21-31`. The release APK's own permission list was read in #332:
-  `INTERNET` and the app's own `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (#258, Oct 8 comment;
-  **not verified** here, since no APK was built for this file).
+- **Verified in code.** The template's and libraries' extra permissions are blocked
+  (`apps/mobile/app.json:32-39`), enforced by `tests/mobile-permissions.test.js`. The release APK's
+  own permission list was read in #332: `INTERNET` and the app's own
+  `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (#258, Oct 8 comment).
+- **Added by #340 (checked Oct 8, 2026).** Selling through Google Play brings two more, granted in
+  `apps/mobile/app.json:27-31` and listed in `tests/mobile-permissions.test.js:28`:
+  `com.android.vending.BILLING`, declared by the Play Billing library, and
+  `android.permission.ACCESS_NETWORK_STATE`, declared by Google's datatransport libraries that Play
+  Billing 9.1.0 depends on. The APK built from #340 (Phone test APK run 37737591737) asks for
+  exactly `INTERNET`, `BILLING`, `ACCESS_NETWORK_STATE` and the app's own receiver permission; the
+  workflow's check fails on anything else. Neither new permission shows a prompt (2.6).
 
 ---
 
@@ -150,7 +157,8 @@ is, so they are honest today and say which answer changes if a fix lands.
 | Display name (what journeyers see) | Optional | Starts as the username (`server/platform.js:459`); changed in the app (`client.ts:214-216`, `server/platform.js:1801-1815`). A change is written into every journey's history (`server/platform.js:1809-1812`) | Verified in code |
 | Email verified, created-at | Set by the server | `server/platform.js:99-108`, `:492` | Verified in code |
 | Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; no client uses it (1.5) | Verified in code |
-| Store purchase tokens (random UUIDs per account and per journey) | Only when a purchase starts | `server/platform.js:1824-1839`; the phone has no purchase screen yet (`apps/mobile/src/billing/store-purchase.ts:10-13`) | Verified in code |
+| Store purchase tokens (random UUIDs per account and per journey) | Only when a purchase starts | `server/platform.js:1824-1839`; fetched by the phone before each purchase (`apps/mobile/src/api/client.ts:255`) and handed to Apple or Google (`apps/mobile/src/billing/store-purchase.ts:117`, `:121`) (#340) | Verified in code |
+| Store purchases (the Apple signed transaction, or the Google product and purchase token; the moment for an extra place) | Only when the person buys | Sent by the phone after each purchase (`apps/mobile/src/api/client.ts:264-268`, `apps/mobile/src/billing/store-purchase.ts:186`) and kept as a `billing_store_purchases` row (`docs/STORE_PURCHASES.md`) (#340) | Verified in code |
 
 No birthdate, phone number, address, gender, photo of the person, contacts, or device identifier
 is asked for anywhere in the phone app (`apps/mobile/src/api/client.ts:135-268` is every call it
@@ -194,8 +202,9 @@ the phone. Losing the phone loses only the sign-in (which can be revoked by chan
 | Cloudflare | Domain names, and serves the web app; sees request details for those hosts | DNS, web app hosting | Partly: the web app deploys through Wrangler (`wrangler.jsonc`); whether `api.together-ledger.com` is proxied through Cloudflare is not verified |
 | Email sender (Resend) | Destination address, message content (verification, recovery, invitation and proposal emails) | Sending account and journey emails | The code sends through any SMTP server (`server/mailer.js:41-43`, `server/config.js:23`); that it is Resend is **not verified** in code (`PRIVACY.md:46`) |
 | Stripe | Email, internal account/journey/moment references (`server/billing.js:185-186`, `:223-240`, `:272`, `:288`) | Web payments | Verified in code. **The phone never reaches Stripe** (`tests/mobile-no-stripe.test.js`) |
-| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing today (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code; no phone purchase screen yet |
-| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing today (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code; no phone purchase screen yet |
+| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing today (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
+| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing today (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
+| Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision** for the owner: whether the forms count it as our collection or Google's |
 | Expo (EAS) | Builds and submits the phone app. The app itself makes no call to Expo: there is no `expo-updates`, `expo-insights` or notifications dependency (`apps/mobile/package.json:13-30`) | Building | Not verified by captured traffic (TL-C-03, #261) |
 
 ### 2.5 Every client-side dependency that makes a network request
@@ -229,6 +238,7 @@ row for one that is gone.
 | `expo-router` | No | Navigation |
 | `expo-secure-store` | No | Keychain/Keystore for the tokens (2.3) |
 | `expo-sqlite` | No | Local key-value store (2.3) |
+| `expo-iap` | Yes, to the store | StoreKit 2 on iOS, Play Billing on Android (#340). Talks only to the App Store or Google Play through the platform's own store services, never to a server of ours or the library author's. Our code imports it in one file (`apps/mobile/src/billing/store-kit.ts:26`). Its Android library depends on Play Billing 9.1.0, which brings Google's datatransport (2.4) and `play-services-location` 19.0.0; the built APK asks for no location permission (1.6) |
 | `expo-status-bar` | No | |
 | `react` | No | |
 | `react-native` | Yes, as the platform | Provides `fetch`, used only by our API client (above) |
@@ -267,8 +277,10 @@ dependency (2.4).
 
 | Platform | Permission | Feature that needs it | Mark |
 |---|---|---|---|
-| Android | `INTERNET` | Talking to our API | Verified in code (`apps/mobile/app.json:27-29`) |
-| Android | Storage, overlay, vibrate, biometric | Nothing: blocked from the merged manifest | Verified in code (`app.json:30-37`, `tests/mobile-permissions.test.js`) |
+| Android | `INTERNET` | Talking to our API | Verified in code (`apps/mobile/app.json:27-31`) |
+| Android | `com.android.vending.BILLING` | Buying through Google Play (#340). Declared by the Play Billing library; no prompt | Verified in code (`app.json:27-31`) and in the built APK (1.6) |
+| Android | `ACCESS_NETWORK_STATE` | Nothing of ours. Declared by Google's datatransport, which Play Billing depends on: it schedules uploads that wait for a network, which Android 9+ refuses without this. Says only whether the phone is online and on what kind of network; no prompt | Verified in code (`app.json:27-31`) and in the built APK (1.6). **Decision** (#340) to grant rather than block it; the owner to confirm |
+| Android | Storage, overlay, vibrate, biometric | Nothing: blocked from the merged manifest | Verified in code (`app.json:32-39`, `tests/mobile-permissions.test.js`) |
 | iOS | None. `Info.plist` carries no usage description, so the app cannot ask for location, camera, photos, contacts or anything else | — | Verified in code (`apps/mobile/app.json:14-16`) |
 | Both | Notifications | Not used; no notifications dependency | Verified in code (`apps/mobile/package.json:13-30`) |
 
@@ -361,7 +373,7 @@ before submitting.
 
 | Question | Answer | Why |
 |---|---|---|
-| Does your app collect or share any of the required user data types? | **Yes** | Email, name, user id, user content, precise location (1.1) |
+| Does your app collect or share any of the required user data types? | **Yes** | Email, name, user id, user content, precise location (1.1), purchase history (#340) |
 | Is all of the user data collected by your app encrypted in transit? | **Yes** | 2.11 |
 | Which ways can users create an account? | **Username and password** (and "OAuth" only once Google or Apple sign-in reaches the phone, 1.5) | `client.ts:136-142` |
 | Do you provide a way for users to request that their data is deleted? | **Yes** | 2.8 |
@@ -383,7 +395,7 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Personal info → **User IDs** | **Yes** | No | **Required** | **Account management** | The username |
 | Personal info → Address, Phone number, Race and ethnicity, Political or religious beliefs, Sexual orientation, Other info | No | No | — | — | Not asked for (2.1). **Decision** on sensitive types: the app never asks about these, though a person may write anything in a moment; that free text is declared below |
 | Financial info → User payment info, Credit score | No | No | — | — | The phone has no payment screen; Stripe is never reached from the phone |
-| Financial info → **Purchase history** | No | No | — | — | Becomes **Yes, Optional, App functionality** when store purchases ship on the phone (#267) |
+| Financial info → **Purchase history** | **Yes** | No | **Optional** | **App functionality** | Store purchases on the phone (#340): which product, for which journey or moment, kept against the account (2.1). **Decision**: card details never reach us; Apple and Google hold those |
 | Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision (owner, Oct 8, 2026)**: it is context the person types, not an account balance, but declaring it is the safer reading |
 | Health and fitness | No | No | — | — | |
 | Messages → Emails, SMS or MMS | No | No | — | — | The app sends no message content written by the person; the proposal note is declared below |
@@ -436,7 +448,7 @@ the privacy policy (Part 4).
 | Browsing History, Search History | No | — | |
 | Identifiers → **User ID** | **Yes** | **App Functionality** | The username and the account id behind the tokens |
 | Identifiers → Device ID | No | — | |
-| Purchases → **Purchase History** | No | — | Becomes **Yes, App Functionality** when store purchases ship (#267) |
+| Purchases → **Purchase History** | **Yes** | **App Functionality** | Store purchases on the phone (#340), as in 3.1 |
 | Usage Data → Product Interaction, Advertising Data, Other Usage Data | No | — | **Decision**, as for App interactions in 3.1 |
 | Diagnostics → Crash Data, Performance Data, Other Diagnostic Data | No | — | **Decision**, as in 3.1 |
 | Surroundings, Body | No | — | |
@@ -466,6 +478,10 @@ sentence twice, differently. What it currently gets wrong or leaves out, against
 6. **Backups:** `PRIVACY.md:72` says each backup is deleted 30 days after it is made; the local
    copies go after 29 full days (2.7), which is within the promise.
 7. **Export:** `PRIVACY.md:86` describes the web's export; the phone has none (2.9).
+8. **Store purchases** (#340): the policy has to say the phone sells through the App Store and
+   Google Play, what we keep about a purchase (2.1), and that deleting the account does not cancel a
+   store subscription, which is cancelled with Apple or Google (the phone already says so before
+   deleting, `apps/mobile/app/delete-account.tsx:24`).
 
 The sibling products need the same file: I'm Home and Green Light (#264). File those issues once
 this one has been through a submission.
