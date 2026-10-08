@@ -4,6 +4,7 @@ import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Choices } from '../src/components/choices';
 import { EmptyState } from '../src/components/empty-state';
+import { GraceBanner } from '../src/components/grace-banner';
 import { CardAction, MomentCard, momentColors } from '../src/components/moment-card';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
@@ -73,6 +74,7 @@ export default function LedgerScreen() {
               <Text accessibilityRole="header" style={[styles.journeyName, fonts.serif, { color: colors.fg }]}>{snapshot.journey.name}</Text>
               <Text style={[styles.body, { color: colors.muted }]}>{journeyPeriod(snapshot.journey)}</Text>
             </View>
+            <GraceBanner journeyId={snapshot.journey.id} grace={snapshot.capacity?.grace} peopleHere={snapshot.capacity?.peopleHere ?? 0} />
             {journeys.length > 1 ? <JourneyPicker journeys={journeys} activeId={activeId} onSelect={(id) => { setExpanded(false); setFilter('all'); journey.select(id); }} /> : null}
             <Button kind="quiet" label="＋ New journey" onPress={() => router.push('/new-journey')} />
             <View style={styles.section}>

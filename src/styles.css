@@ -350,6 +350,14 @@ details[open] .expando { transform: rotate(45deg); }
 .status-banner p { color: var(--fg); flex: 1 1 auto; margin: 0; }
 /* Inside a dialog the region is the first thing in the box rather than a page-width strip. */
 dialog > .status-banner { margin: 0 0 16px; }
+/* Waiting on a payment is not a failure, so the journey's grace banner takes the caution role,
+   never the destructive one (the Book, 4.7). It stays while the grace does, with nothing to dismiss. */
+.grace-banner { align-items: center; border: 1px solid var(--line); border-left: 5px solid var(--caution); border-radius: var(--radius-m); display: flex; flex-wrap: wrap; gap: 12px; margin: 16px clamp(18px, 4vw, 58px) 0; padding: 12px 14px; }
+.grace-banner-glyph { color: var(--caution); flex: 0 0 auto; font-size: 14px; }
+.grace-banner-copy { flex: 1 1 12em; min-width: 0; }
+.grace-banner-copy p { color: var(--fg); margin: 0; }
+.grace-banner-copy p + p { color: var(--muted); font-size: 14px; margin-top: 4px; }
+.rest-keeps-adding { color: var(--muted); display: block; font-size: 14px; }
 .status-banner-dismiss { background: transparent; border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--ink); flex: 0 0 auto; font-size: 14px; font-weight: 800; min-height: 44px; padding: 8px 14px; }
 
 .timeline-panel { padding: 25px; }

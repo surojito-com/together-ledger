@@ -40,6 +40,16 @@ const END_DATE_STATUSES = new Set(['date', 'unsure', 'forever']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const INCLUDED_JOURNEY_CAPACITY = 2;
 const MAX_JOURNEY_CAPACITY = 101;
+// The most journeys one person can be in, owned or joined (owner, Oct 7, 2026; the Book, 4.7). It
+// only stops a new one: nobody already past it loses a journey.
+const MAX_JOURNEYS_PER_PERSON = 101;
+// After the automatic grace, the person who pays can ask for another week, up to seven times per
+// journey per calendar year (the Book, 4.7). Only one week can wait ahead: the next can be asked
+// for once no more than a week is left.
+const GRACE_REQUEST_DAYS = 7;
+const GRACE_REQUESTS_PER_YEAR = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const CAPACITY_CAPABILITY = 'additional-journey-capacity';
 
 // A proposal to add someone waits a month. Long enough that a hard week does not decide it by
 // accident, bounded so that nobody is left indefinitely holding a question they did not ask for.
@@ -823,38 +833,36 @@ export class PlatformService {
     });
   }
 
-  // Reading is the exception, and it is passed explicitly: every other caller is a mutation,
-  // so a resting journeyer is refused by default rather than by remembering to ask.
-  // The owner decides how a lapse behaves and, when more people are here than are covered,
-  // who rests. Left alone, the queue falls back to whoever joined most recently, so an owner
-  // who never touches this is never asked to rank anyone.
-  async setUnpaidCapacityRest(userId, journeyId, { mode, restOrder }) {
-    if (mode !== undefined && !['read-only', 'paused'].includes(mode)) {
-      throw new PlatformError(400, 'invalid_unpaid_capacity_mode', 'Unpaid capacity rests either read-only or fully paused.');
+  // The owner chooses who keeps adding when a payment lapses (the Book, 4.7): the payer and one
+  // other person. The queue says who rests first, and whoever is last in it stays. Left alone it
+  // falls back to whoever joined most recently, so the person who stays is the first to have
+  // joined, and an owner who never touches this is never asked to rank anyone. Resting is always
+  // read-only, so the order is the only thing left to choose.
+  async setRestOrder(userId, journeyId, { mode, restOrder } = {}) {
+    // A phone that has not updated yet may still send the choice that was removed. Asking to keep
+    // reading asks for what always happens now; asking to pause is refused, not quietly ignored.
+    if (mode !== undefined && mode !== 'read-only') {
+      throw new PlatformError(400, 'invalid_unpaid_capacity_mode', 'Resting journeyers can always read the whole journey. Fully pausing them is no longer a choice.');
     }
-    if (restOrder !== undefined && (!Array.isArray(restOrder) || restOrder.some((id) => typeof id !== 'string' || !id))) {
-      throw new PlatformError(400, 'invalid_rest_order', 'The resting order must be a list of journeyer ids.');
+    if (restOrder !== undefined && (!Array.isArray(restOrder) || restOrder.some((id) => typeof id !== 'string' || !id) || new Set(restOrder).size !== restOrder.length)) {
+      throw new PlatformError(400, 'invalid_rest_order', 'The resting order must be a list of journeyer ids, each named once.');
     }
     return withTransaction(this.pool, async (client) => {
       const journey = await this.requireMember(client, userId, journeyId, { owner: true });
-      if (mode !== undefined) {
-        await client.query('UPDATE journeys SET unpaid_capacity_mode=$1,updated_at=$2 WHERE id=$3', [mode, this.now(), journeyId]);
+      if (restOrder === undefined) return this.capacityFor(client, journeyId, { forOwner: true });
+      const members = await client.query('SELECT user_id FROM journey_members WHERE journey_id=$1', [journeyId]);
+      const here = new Set(members.rows.map((row) => row.user_id));
+      if (restOrder.some((id) => !here.has(id))) {
+        throw new PlatformError(400, 'invalid_rest_order', 'The resting order names someone who is not in this journey.');
       }
-      if (restOrder !== undefined) {
-        const members = await client.query('SELECT user_id FROM journey_members WHERE journey_id=$1', [journeyId]);
-        const here = new Set(members.rows.map((row) => row.user_id));
-        if (restOrder.some((id) => !here.has(id))) {
-          throw new PlatformError(400, 'invalid_rest_order', 'The resting order names someone who is not in this journey.');
-        }
-        if (restOrder.includes(journey.owner_user_id)) {
-          throw new PlatformError(400, 'invalid_rest_order', 'The journey owner holds the payment and never rests.');
-        }
-        // Rewriting the whole queue keeps it unambiguous: a position left out is a person who
-        // falls back to joining order rather than one silently keeping an old place.
-        await client.query('UPDATE journey_members SET rest_order=NULL WHERE journey_id=$1', [journeyId]);
-        for (const [index, memberUserId] of restOrder.entries()) {
-          await client.query('UPDATE journey_members SET rest_order=$1 WHERE journey_id=$2 AND user_id=$3', [index + 1, journeyId, memberUserId]);
-        }
+      if (restOrder.includes(journey.owner_user_id)) {
+        throw new PlatformError(400, 'invalid_rest_order', 'The journey owner holds the payment and never rests.');
+      }
+      // Rewriting the whole queue keeps it unambiguous: a position left out is a person who
+      // falls back to joining order rather than one silently keeping an old place.
+      await client.query('UPDATE journey_members SET rest_order=NULL WHERE journey_id=$1', [journeyId]);
+      for (const [index, memberUserId] of restOrder.entries()) {
+        await client.query('UPDATE journey_members SET rest_order=$1 WHERE journey_id=$2 AND user_id=$3', [index + 1, journeyId, memberUserId]);
       }
       await this.appendEvent(client, {
         journeyId,
@@ -862,12 +870,90 @@ export class PlatformService {
         action: 'unpaid_capacity_rest_updated',
         entityType: 'journey',
         entityId: journeyId,
-        summary: 'Updated how unpaid capacity rests',
+        summary: 'Updated the resting order',
       });
-      return this.capacityFor(client, journeyId);
+      return this.capacityFor(client, journeyId, { forOwner: true });
     });
   }
 
+  // During any grace, the automatic 7 days included, the person who pays can ask for another 7
+  // days, up to 7 times per journey per calendar year (the Book, 4.7; owner, Oct 8). Each week
+  // begins where the current grace ends, and only one can wait ahead: the next can be asked for
+  // once 7 days or fewer are left. That way nobody has to rest for a moment between one week and
+  // the next, and the weeks cannot be stacked up front. Every request goes into the history.
+  async requestMoreGrace(userId, journeyId) {
+    return withTransaction(this.pool, async (client) => {
+      const membership = await this.requireMember(client, userId, journeyId, { reading: true });
+      await this.lockJourney(client, journeyId);
+      const payment = this.config.journeyCapacityMode === 'billing' ? await this.paymentFor(client, journeyId) : null;
+      const grace = payment?.grace;
+      if (!grace) throw new PlatformError(409, 'not_in_grace', 'This journey is not waiting on a payment.');
+      if (grace.payer_user_id !== userId) throw new PlatformError(403, 'not_payer', 'Only the person who pays for this journey can ask for more time.');
+      if (payment.requestsUsed >= GRACE_REQUESTS_PER_YEAR) {
+        throw new PlatformError(409, 'grace_requests_used', `All ${GRACE_REQUESTS_PER_YEAR} extra weeks for ${payment.calendarYear} have been used. The count starts again on January 1.`);
+      }
+      const now = this.now();
+      if (grace.until.getTime() - now.getTime() > GRACE_REQUEST_DAYS * DAY_MS) {
+        throw new PlatformError(409, 'grace_request_early', `More than ${GRACE_REQUEST_DAYS} days are still left. Another week can be asked for once ${GRACE_REQUEST_DAYS} days or fewer remain.`);
+      }
+      const graceUntil = new Date(grace.until.getTime() + GRACE_REQUEST_DAYS * DAY_MS);
+      const requestNumber = payment.requestsUsed + 1;
+      try {
+        await client.query(
+          `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [randomUUID(), journeyId, userId, payment.calendarYear, requestNumber, grace.expires_at, graceUntil, now],
+        );
+      } catch (error) {
+        // Another request took this number first. The journey lock makes that rare; the unique
+        // row is what decides it, and the person is told in words rather than a server error.
+        if (error?.code !== '23505') throw error;
+        throw new PlatformError(409, 'grace_request_conflict', 'More time was just asked for on this journey. Refresh to see how long is left.');
+      }
+      await this.appendEvent(client, {
+        journeyId,
+        actorUserId: userId,
+        action: 'grace_requested',
+        entityType: 'journey',
+        entityId: journeyId,
+        summary: `Asked for ${GRACE_REQUEST_DAYS} more days to pay (${requestNumber} of ${GRACE_REQUESTS_PER_YEAR} in ${payment.calendarYear})`,
+        after: { graceUntil: graceUntil.toISOString(), requestNumber, calendarYear: payment.calendarYear },
+      });
+      return this.capacityFor(client, journeyId, { forOwner: membership.role === 'owner' });
+    });
+  }
+
+  // Migration 029 took away the choice to fully pause resting journeyers and moved every journey
+  // on it to read-only. Each of those journeys' histories says so, written here because the
+  // history is signed with a key only the server holds. The entry stands under the owner's name,
+  // since every entry needs one, and its words say the product made the change, not them. Run
+  // when the server starts; a journey already recorded is never recorded twice.
+  async recordRestingMadeReadOnly() {
+    const pending = await this.pool.query('SELECT journey_id FROM journeys_made_read_only WHERE recorded_at IS NULL ORDER BY journey_id');
+    for (const { journey_id: journeyId } of pending.rows) {
+      await withTransaction(this.pool, async (client) => {
+        await this.lockJourney(client, journeyId);
+        const note = await client.query('SELECT changed_at FROM journeys_made_read_only WHERE journey_id=$1 AND recorded_at IS NULL', [journeyId]);
+        if (!note.rowCount) return;
+        const journey = await client.query('SELECT owner_user_id FROM journeys WHERE id=$1', [journeyId]);
+        await this.appendEvent(client, {
+          journeyId,
+          actorUserId: journey.rows[0].owner_user_id,
+          action: 'unpaid_capacity_rest_made_read_only',
+          entityType: 'journey',
+          entityId: journeyId,
+          summary: 'Together Ledger no longer lets resting journeyers be fully paused, so anyone resting here can read the whole journey again',
+          before: { unpaidCapacityMode: 'paused' },
+          after: { unpaidCapacityMode: 'read-only', changedAt: dateTime(note.rows[0].changed_at) },
+        });
+        await client.query('UPDATE journeys_made_read_only SET recorded_at=$1 WHERE journey_id=$2', [this.now(), journeyId]);
+      });
+    }
+    return pending.rowCount;
+  }
+
+  // Reading is the exception, and it is passed explicitly: every other caller is a mutation,
+  // so a resting journeyer is refused by default rather than by remembering to ask.
   async requireMember(client, userId, journeyId, { owner = false, reading = false } = {}) {
     const membership = await client.query(
       `SELECT jm.role,j.* FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id
@@ -877,7 +963,7 @@ export class PlatformService {
     if (!membership.rowCount) throw forbidden();
     if (owner && membership.rows[0].role !== 'owner') throw forbidden();
     if (!reading) {
-      const capacity = await this.capacityFor(client, journeyId);
+      const capacity = await this.capacityFor(client, journeyId, { brief: true });
       if (capacity.restingMemberIds.includes(userId)) {
         // Not forbidden: this is a bounded, recoverable state, and nothing of theirs is gone.
         throw new PlatformError(409, 'capacity_resting', 'This journey\u2019s paid capacity is unpaid, so changes are resting. Nothing has been removed, and the journey owner can restore it.');
@@ -927,62 +1013,140 @@ export class PlatformService {
     if (this.config.NODE_ENV !== 'test') await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [journeyId]);
   }
 
-  async capacityFor(client, journeyId) {
-    const [members, invitations] = await Promise.all([
+  // Everyone who could rest, in the order they would: never the owner, who holds the payment.
+  // People the owner has not placed come first, newest first, so someone joining later never
+  // takes the place of the person the owner chose to keep adding.
+  async restQueue(client, journeyId, ownerUserId) {
+    const queue = await client.query(
+      `SELECT user_id FROM journey_members
+       WHERE journey_id=$1 AND user_id<>$2
+       ORDER BY rest_order ASC NULLS FIRST, joined_at DESC, user_id`,
+      [journeyId, ownerUserId],
+    );
+    return queue.rows.map((row) => row.user_id);
+  }
+
+  // What the journey's payment allows now. Room can be paid for on the web or in a store (#267,
+  // #272), and a pass can be bought to start when the running one ends, so only what has started
+  // counts. Until the rules for holding more than one are settled (#274, #276), the journey has
+  // the most generous room it holds that is fully paid, then the most generous in grace.
+  //
+  // A grace lasts until its automatic end, or until the last week the payer asked for during this
+  // lapse. Once that has passed the journey rests: no banner and no asking, even while Stripe has
+  // neither been paid nor cancelled (its 'unpaid' and 'paused' states), so a payment given up on
+  // cannot keep a grace alive year after year. A store row stays 'active' past its end, so every
+  // row is judged by its own dates, never by its place in the order.
+  async paymentFor(client, journeyId) {
+    const paid = paidEnvironments(this.config, { from: 3 });
+    const entitlements = await client.query(
+      `SELECT id,state,quantity,effective_at,expires_at,payer_user_id FROM billing_entitlements
+       WHERE journey_id=$1 AND capability=$2 AND ${paid.sql} AND state IN ('active','grace')
+       ORDER BY CASE WHEN state='active' THEN 0 ELSE 1 END, quantity DESC, updated_at DESC`,
+      [journeyId, CAPACITY_CAPABILITY, ...paid.params],
+    );
+    const now = this.now();
+    const calendarYear = now.getUTCFullYear();
+    const requests = entitlements.rows.some((row) => row.state === 'grace')
+      ? (await client.query('SELECT calendar_year,grace_basis,grace_until FROM journey_grace_requests WHERE journey_id=$1', [journeyId])).rows
+      : [];
+    const rows = entitlements.rows.map((row) => {
+      if (!row.expires_at) return { ...row, until: null };
+      const automaticEnd = new Date(row.expires_at);
+      let until = automaticEnd;
+      if (row.state === 'grace') {
+        for (const request of requests) {
+          const asked = new Date(request.grace_until);
+          if (new Date(request.grace_basis).getTime() === automaticEnd.getTime() && asked > until) until = asked;
+        }
+      }
+      return { ...row, until };
+    });
+    const started = (row) => !row.effective_at || new Date(row.effective_at) <= now;
+    const current = rows.filter((row) => started(row) && (!row.until || row.until > now));
+    const live = current[0] || null;
+    // Paid room that is running means the journey is not waiting on a payment. Otherwise the
+    // grace is the first one still running, found by its state rather than taken from the top.
+    const grace = live?.state === 'grace' ? current.find((row) => row.state === 'grace') : null;
+    return {
+      live,
+      grace,
+      calendarYear,
+      requestsUsed: requests.filter((request) => Number(request.calendar_year) === calendarYear).length,
+    };
+  }
+
+  // brief is for the checks every change makes: who rests and whether an invitation can wait for
+  // room. The snapshot asks for the rest, and only the owner is told the whole resting order.
+  async capacityFor(client, journeyId, { forOwner = false, brief = false } = {}) {
+    const [members, invitations, journey] = await Promise.all([
       client.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [journeyId]),
       client.query(
         `SELECT count(*)::int AS count FROM invitations
          WHERE journey_id=$1 AND reservation_active=true AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>$2`,
         [journeyId, this.now()],
       ),
+      client.query('SELECT owner_user_id FROM journeys WHERE id=$1', [journeyId]),
     ]);
     const peopleHere = Number(members.rows[0].count);
     const openInvitations = Number(invitations.rows[0].count);
+    const ownerUserId = journey.rows[0]?.owner_user_id || null;
     let availableCapacity = INCLUDED_JOURNEY_CAPACITY;
-    let entitlementState = null;
+    let payment = null;
     if (this.config.journeyCapacityMode === 'test-groups') availableCapacity = MAX_JOURNEY_CAPACITY;
     if (this.config.journeyCapacityMode === 'billing') {
-      // Room can be paid for on the web or in a store (#267, #272), and a pass can be bought to
-      // start when the running one ends, so only what has started counts. Until the rules for
-      // holding more than one are settled (#274, #276), the journey has the most generous room it
-      // holds that is fully paid, then the most generous in grace.
-      const paid = paidEnvironments(this.config, { from: 3 });
-      const entitlement = await client.query(
-        `SELECT state,quantity FROM billing_entitlements
-         WHERE journey_id=$1 AND capability='additional-journey-capacity' AND ${paid.sql}
-           AND state IN ('active','grace') AND (expires_at IS NULL OR expires_at>$2) AND (effective_at IS NULL OR effective_at<=$2)
-         ORDER BY CASE WHEN state='active' THEN 0 ELSE 1 END, quantity DESC, updated_at DESC LIMIT 1`,
-        [journeyId, this.now(), ...paid.params],
-      );
-      entitlementState = entitlement.rows[0]?.state || null;
-      availableCapacity = Math.min(MAX_JOURNEY_CAPACITY, INCLUDED_JOURNEY_CAPACITY + Number(entitlement.rows[0]?.quantity || 0));
+      payment = await this.paymentFor(client, journeyId);
+      availableCapacity = Math.min(MAX_JOURNEY_CAPACITY, INCLUDED_JOURNEY_CAPACITY + Number(payment.live?.quantity || 0));
     }
     const occupiedCapacity = peopleHere + openInvitations;
-    const paymentAllowsInvitation = this.config.journeyCapacityMode !== 'billing' || entitlementState !== 'grace';
+    // While a payment is in grace, new invitations wait.
+    const paymentAllowsInvitation = payment?.live?.state !== 'grace';
 
     // When paid capacity lapses, nobody is removed. The journeyers beyond what is covered rest
-    // instead, and the owner — who holds the journey and the payment — never does.
+    // instead, and the owner, who holds the journey and the payment, never does.
     const overflow = Math.max(0, peopleHere - availableCapacity);
-    const journey = await client.query('SELECT owner_user_id, unpaid_capacity_mode FROM journeys WHERE id=$1', [journeyId]);
-    let restingMemberIds = [];
-    if (overflow > 0 && journey.rows[0]) {
-      const resting = await client.query(
-        `SELECT user_id FROM journey_members
-         WHERE journey_id=$1 AND user_id<>$2
-         ORDER BY rest_order ASC NULLS LAST, joined_at DESC
-         LIMIT $3`,
-        [journeyId, journey.rows[0].owner_user_id, overflow],
-      );
-      restingMemberIds = resting.rows.map((row) => row.user_id);
-    }
-
-    return {
+    const needsQueue = overflow > 0 || (!brief && (forOwner || payment?.grace));
+    const queue = needsQueue && ownerUserId ? await this.restQueue(client, journeyId, ownerUserId) : [];
+    const capacity = {
       peopleHere,
       openInvitations,
       canInvite: paymentAllowsInvitation && occupiedCapacity < availableCapacity,
       mode: this.config.journeyCapacityMode,
-      unpaidCapacityMode: journey.rows[0]?.unpaid_capacity_mode || 'read-only',
-      restingMemberIds,
+      restingMemberIds: queue.slice(0, overflow),
+    };
+    if (brief) return capacity;
+    if (forOwner) capacity.restOrder = queue;
+    capacity.grace = payment?.grace ? await this.publicGrace(client, journeyId, payment, queue, peopleHere, ownerUserId) : null;
+    return capacity;
+  }
+
+  // What everyone in the journey is told while it waits on a payment: who pays, the time left,
+  // the weeks asked for this year, and who can still add if it isn't paid. Naming the payer to
+  // the whole group is deliberate (the Book, 4.7): everyone knows, and the payer can't quietly
+  // lean on the group's trust. Only the person who stays is named, never the rest of the order.
+  async publicGrace(client, journeyId, payment, queue, peopleHere, ownerUserId) {
+    const { grace } = payment;
+    const people = await client.query(
+      'SELECT u.id,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1',
+      [journeyId],
+    );
+    const names = new Map(people.rows.map((row) => [row.id, row.display_name]));
+    if (!names.has(grace.payer_user_id)) {
+      const payer = await client.query('SELECT id,display_name FROM users WHERE id=$1', [grace.payer_user_id]);
+      if (payer.rowCount) names.set(payer.rows[0].id, payer.rows[0].display_name);
+    }
+    const wouldRest = new Set(queue.slice(0, Math.max(0, peopleHere - INCLUDED_JOURNEY_CAPACITY)));
+    const keepAdding = [ownerUserId, ...[...queue].reverse()].filter((id) => id && names.has(id) && !wouldRest.has(id));
+    const msLeft = grace.until.getTime() - this.now().getTime();
+    return {
+      endsAt: dateTime(grace.until),
+      daysLeft: Math.ceil(msLeft / DAY_MS),
+      payer: { id: grace.payer_user_id, displayName: names.get(grace.payer_user_id) || 'Former journeyer' },
+      calendarYear: payment.calendarYear,
+      requestsUsed: payment.requestsUsed,
+      requestsPerYear: GRACE_REQUESTS_PER_YEAR,
+      requestDays: GRACE_REQUEST_DAYS,
+      canRequest: payment.requestsUsed < GRACE_REQUESTS_PER_YEAR && msLeft <= GRACE_REQUEST_DAYS * DAY_MS,
+      keepAdding: keepAdding.map((id) => ({ id, displayName: names.get(id) })),
     };
   }
 
@@ -994,6 +1158,17 @@ export class PlatformService {
     return result.rows.map(publicJourney);
   }
 
+  // Every journey a person is in counts, owned or joined, up to 101 (owner, Oct 7, 2026). Counted
+  // under a lock on the person, so two journeys started or joined at once cannot both be the
+  // 101st. The limit only stops a new one: nobody already past it loses a journey.
+  async journeysHeldBy(client, userId, { besides = null } = {}) {
+    if (this.config.NODE_ENV !== 'test') await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`journeys-held-by:${userId}`]);
+    const held = besides
+      ? await client.query('SELECT count(*)::int AS count FROM journey_members WHERE user_id=$1 AND journey_id<>$2', [userId, besides])
+      : await client.query('SELECT count(*)::int AS count FROM journey_members WHERE user_id=$1', [userId]);
+    return Number(held.rows[0].count);
+  }
+
   async createJourney(userId, input) {
     const name = cleanText(input.name, 'Journey name', 80);
     const location = cleanOptionalText(input.location, 80);
@@ -1001,6 +1176,9 @@ export class PlatformService {
     if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new PlatformError(400, 'invalid_input', 'Enter a valid budget.');
     const dates = cleanJourneyDetails(input);
     return withTransaction(this.pool, async (client) => {
+      if (await this.journeysHeldBy(client, userId) >= MAX_JOURNEYS_PER_PERSON) {
+        throw new PlatformError(409, 'journey_limit_reached', `One person can be in at most ${MAX_JOURNEYS_PER_PERSON} journeys, and you've reached that, so a new one can't be started. Every journey you're in stays as it is.`);
+      }
       const id = randomUUID();
       const created = await client.query(
         `INSERT INTO journeys (id,owner_user_id,name,location,start_date,start_date_status,end_date,end_date_status,budget_cents) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -1114,7 +1292,7 @@ export class PlatformService {
       // one. What it may not do is hold two open questions about the same person.
       const openProposal = await client.query('SELECT 1 FROM journey_invite_proposals WHERE journey_id=$1 AND email_normalized=$2 AND status=$3 AND expires_at>$4', [journeyId, emailNormalized, 'open', this.now()]);
       if (openProposal.rowCount) throw new PlatformError(409, 'proposal_exists', 'This journey is already deciding about that person.');
-      const capacity = await this.capacityFor(client, journeyId);
+      const capacity = await this.capacityFor(client, journeyId, { brief: true });
       if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
       const now = this.now();
       proposalId = randomUUID();
@@ -1177,7 +1355,7 @@ export class PlatformService {
       }
       const consent = await this.requiredConsent(client, proposalId, journeyId, now);
       if (!consent.everyoneAgreed) return;
-      const capacity = await this.capacityFor(client, journeyId);
+      const capacity = await this.capacityFor(client, journeyId, { brief: true });
       if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'Everyone agreed, but there is no open place in this journey now.');
       ready = { token: await this.mintInvitationForProposal(client, proposal), email: proposal.email_normalized };
     });
@@ -1198,7 +1376,7 @@ export class PlatformService {
       if (proposal.status !== 'open') throw new PlatformError(409, 'proposal_closed', 'This proposal has already been settled.');
       const consent = await this.requiredConsent(client, proposalId, journeyId, this.now());
       if (!consent.everyoneAgreed) throw new PlatformError(409, 'consent_incomplete', 'Not everyone in this journey has agreed yet.');
-      const capacity = await this.capacityFor(client, journeyId);
+      const capacity = await this.capacityFor(client, journeyId, { brief: true });
       if (!capacity.canInvite) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
       ready = { token: await this.mintInvitationForProposal(client, proposal), email: proposal.email_normalized };
     });
@@ -1234,6 +1412,10 @@ export class PlatformService {
       if (!invitation.rowCount || invitation.rows[0].email_normalized !== user.rows[0].email_normalized) throw new PlatformError(400, 'invalid_invitation', 'This invitation is invalid, expired, or belongs to another email address.');
       const members = await client.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [invitation.rows[0].journey_id]);
       if (Number(members.rows[0].count) >= MAX_JOURNEY_CAPACITY) throw new PlatformError(409, 'journey_full', 'There is no open place in this journey right now.');
+      // Like a full journey, this leaves the invitation waiting rather than spending it.
+      if (await this.journeysHeldBy(client, userId, { besides: invitation.rows[0].journey_id }) >= MAX_JOURNEYS_PER_PERSON) {
+        throw new PlatformError(409, 'journey_limit_reached', `One person can be in at most ${MAX_JOURNEYS_PER_PERSON} journeys, and you've reached that. This invitation keeps waiting for you until it expires, and nothing in the journey changes.`);
+      }
       await client.query(`INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member') ON CONFLICT DO NOTHING`, [invitation.rows[0].journey_id, userId]);
       await client.query('UPDATE invitations SET accepted_at=$1,reservation_active=false WHERE id=$2', [this.now(), invitation.rows[0].id]);
       await this.appendEvent(client, { journeyId: invitation.rows[0].journey_id, actorUserId: userId, action: 'member_joined', entityType: 'membership', entityId: userId, summary: 'Accepted journey invitation', after: { userId } });
@@ -1553,28 +1735,23 @@ export class PlatformService {
       if (this.config.NODE_ENV !== 'test') await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const journey = await this.requireMember(client, userId, journeyId, { reading: true });
 
-      // Capacity has to be known before the rest is read, because a fully paused journeyer is
-      // shown their own moments and nothing of the shared journey. Their own writing is never
-      // hidden from them: resting withholds the shared record, not a person's own words.
-      const capacity = await this.capacityFor(client, journeyId);
-      const paused = capacity.unpaidCapacityMode === 'paused' && capacity.restingMemberIds.includes(userId);
-      const visibleMoments = paused
-        ? 'm.created_by_user_id=$2'
-        : "(m.visibility='shared-now' OR m.created_by_user_id=$2)";
-      const none = { rows: [] };
+      // Resting is always read-only (the Book, 4.7): a resting journeyer reads everything anyone
+      // else here can. Only the owner is told the whole resting order (#281).
+      const capacity = await this.capacityFor(client, journeyId, { forOwner: journey.role === 'owner' });
+      const visibleMoments = "(m.visibility='shared-now' OR m.created_by_user_id=$2)";
 
       const [members, invitations, proposals, proposalConsents, expenses, moments, images, concerns, milestones, events] = await Promise.all([
         client.query(`SELECT u.id,u.display_name,jm.role,jm.joined_at FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1 ORDER BY jm.joined_at,jm.user_id`, [journeyId]),
-        paused ? none : client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
-        paused ? none : client.query(`SELECT p.*,u.display_name AS proposed_by_display_name,u.email_normalized AS proposed_by_email
+        client.query(`SELECT i.*,u.display_name AS invited_by_display_name FROM invitations i JOIN users u ON u.id=i.invited_by_user_id WHERE i.journey_id=$1 ORDER BY i.created_at,i.id`, [journeyId]),
+        client.query(`SELECT p.*,u.display_name AS proposed_by_display_name,u.email_normalized AS proposed_by_email
           FROM journey_invite_proposals p JOIN users u ON u.id=p.proposed_by_user_id
           WHERE p.journey_id=$1 ORDER BY p.created_at DESC,p.id`, [journeyId]),
-        paused ? none : client.query(`SELECT c.*,u.display_name,u.email_normalized
+        client.query(`SELECT c.*,u.display_name,u.email_normalized
           FROM journey_invite_consents c
           JOIN journey_invite_proposals p ON p.id=c.proposal_id
           JOIN users u ON u.id=c.user_id
           WHERE p.journey_id=$1 ORDER BY c.requested_at,c.user_id`, [journeyId]),
-        paused ? none : client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
+        client.query('SELECT * FROM expenses WHERE journey_id=$1 ORDER BY occurred_on,id', [journeyId]),
         client.query(`SELECT m.*,creator.display_name AS created_by_name,editor.display_name AS updated_by_name
           FROM journey_moments m
           LEFT JOIN users creator ON creator.id=m.created_by_user_id
@@ -1582,9 +1759,9 @@ export class PlatformService {
           WHERE m.journey_id=$1 AND ${visibleMoments}
           ORDER BY m.occurred_on,m.created_at,m.id`, [journeyId, userId]),
         client.query(`SELECT mi.id,mi.moment_id,mi.original_filename,mi.content_type,mi.created_at,mi.deleted_at FROM moment_images mi JOIN journey_moments m ON m.id=mi.moment_id WHERE mi.journey_id=$1 AND ${visibleMoments} ORDER BY mi.created_at,mi.id`, [journeyId, userId]),
-        paused ? none : client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
-        paused ? none : client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
-        paused ? none : client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
+        client.query('SELECT * FROM concerns WHERE journey_id=$1 ORDER BY updated_at DESC', [journeyId]),
+        client.query('SELECT key,completed,updated_at FROM journey_milestones WHERE journey_id=$1', [journeyId]),
+        client.query('SELECT * FROM journey_events WHERE journey_id=$1 AND sequence>$2 ORDER BY sequence', [journeyId, Number(afterSequence) || 0]),
       ]);
       const publicEvents = events.rows.map(publicEvent);
       let previousHash = '0'.repeat(64);

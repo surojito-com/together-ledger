@@ -26,6 +26,8 @@ const platform = new PlatformService({
   mailer,
   onDeliveryFailure: ({ kind, errorName }) => process.stderr.write(`${JSON.stringify({ level: 'error', message: 'email delivery failed', kind, errorName })}\n`),
 });
+// Journeys migration 029 moved from fully paused to read-only get their history entry here, once.
+await platform.recordRestingMadeReadOnly();
 const billing = createBillingService({ pool, config });
 const store = config.storePurchasesConfigured ? createStorePurchaseService({ pool, config, platform }) : null;
 const app = await buildApp({
