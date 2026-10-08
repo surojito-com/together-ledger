@@ -352,8 +352,7 @@ A journey owner with others still in it must hand the journey over first
 
 These are written to be pasted. They describe the build that `apps/mobile` makes at `1cc17a6`.
 Each answer that rests on a judgement rather than a plain fact is marked **Decision**, with the
-date the owner confirmed it. All were confirmed on Oct 8, 2026, except one question that is still
-open and says so: which Apple type journey conversations belong to (3.2).
+date the owner confirmed it. All were confirmed on Oct 8, 2026.
 
 ### 3.1 Google Play: Data safety
 
@@ -429,10 +428,10 @@ the privacy policy (Part 4).
 | Location → Coarse Location | No | — | |
 | Sensitive Info | No | — | **Decision (owner, Oct 8, 2026)**, as in 3.1 |
 | Contacts | No | — | |
-| User Content → Emails or Text Messages | **Open** | **App Functionality** if declared | Apple has no in-app messages type. Return-to conversations are counted under Other User Content until the owner decides whether, as on Play, they are messages between people and belong here instead. **Not decided** |
+| User Content → **Emails or Text Messages** | **Yes** | **App Functionality** | Return-to conversations, which journeyers write to each other (`client.ts:254-263`). Apple has no in-app messages type; this is the same answer as Play's Other in-app messages, for the same reason. **Decision (owner, Oct 8, 2026)** |
 | User Content → **Photos or Videos** | No | — | Becomes **Yes, App Functionality** with #187 |
 | User Content → Audio Data, Gameplay Content, Customer Support | No | — | Support is by email, outside the app |
-| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1, plus return-to conversations unless they move to Emails or Text Messages |
+| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1. Return-to conversations are declared under Emails or Text Messages |
 | Browsing History, Search History | No | — | |
 | Identifiers → **User ID** | **Yes** | **App Functionality** | The username and the account id behind the tokens |
 | Identifiers → Device ID | No | — | |
