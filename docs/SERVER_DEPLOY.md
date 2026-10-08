@@ -2,47 +2,34 @@
 
 ## Status of this document
 
-**This procedure was run for the first time on 2026-09-29**, releasing `76221ea`. It was first
-written without anyone having looked at the running host, and the survey that preceded that
-release found the deployment in a materially different state than the document assumed. The
-corrections are recorded here rather than quietly folded in, because the difference is the
-substance.
+**This describes the release as it was actually done on 2026-10-01, and twice on 2026-10-08**,
+from the account in #356 and from what this guide already said. Production is on migration
+`030`.
 
-What that first run covered: a verified current backup, a build from a clean checkout, the
-migrations rehearsed against a restored copy and then applied to production ahead of the image
-swap, and confirmation from outside. What it did not cover, and why, is tracked in #225 — no
-image has been pushed to the registry, so the release is still pinned by tag and the rollback
-anchor is a local build.
+The guide used to describe a different release: build and push to Amazon ECR, deploy by digest,
+rehearse on a pre-production network, and roll back by digest. None of that is how a release has
+been done. The image is built on the host and never pushed, migrations are rehearsed on a
+throwaway copy of live data, and the rollback anchor is the previous local image. Those plans
+are still wanted, so they are kept at the end, under [Planned, not yet done](#planned-not-yet-done),
+and marked as plans rather than steps.
 
-**The API is deployed, and has been since 2026-09-14.** It runs on a single EC2 host in
-`<AWS_REGION>` from `compose.production.yaml`, behind Caddy, with a healthy daily encrypted
-backup timer. Issue #198 was filed against this repository's own documentation, which said no
-registry was configured and left every Deployment box unticked. The documentation was behind the
-machine, not the other way round.
+**What #356 confirmed and what it didn't.** #356 records five facts about those releases: where
+the release log is, that the image is built on the host with nothing pushed, how migrations were
+rehearsed, where the rollback anchor is, and that the backup plus `verify-production-recovery.sh`
+before the switch matched this guide. Every other step below is carried over from the earlier
+guide, which #356 did not flag. Where the exact command used on the host isn't written down
+anywhere, this guide does not guess at one: it says what the step does and leaves an
+`<OWNER: …>` placeholder for the command, to be filled in from the host by the person who ran it.
 
-What the survey found, and what this document now assumes:
+**Earlier history, briefly.** The API has run on a single EC2 host in `<AWS_REGION>`, from
+`compose.production.yaml` behind Caddy, since 2026-09-14. The first recorded release was
+2026-09-29 (`76221ea`). The survey before it found an image built on the host and tagged with a
+registry address, with nothing ever pushed, and no record of what had been released. That is
+still the shape of a release, now written down.
 
-- **A procedure already exists, and it lives in one person's habit.** The host holds a clone of
-  this repository at `<REPO_DIR>`. An image is built there, tagged with the registry address, and
-  started with `docker compose up -d`. Nothing is written down, and nothing is recorded after.
-- **The ECR repository is named but has never been used.** `TOGETHER_IMAGE` points at a registry
-  address, but the image behind it was built on the host: it carries no registry digest, and the
-  AWS CLI is not installed there, so nothing has been pushed or pulled. The registry address is
-  decoration.
-- **Images are pinned by tag, not by digest.** The rollback path below depends on immutable
-  digests. Until a build is genuinely pushed and pinned by digest, that rollback is a plan and
-  not a capability.
-- **Production drifts silently.** At the survey the running image was 47 commits, 8 server-side
-  pull requests and 4 migrations behind `main`, and nothing reported that anywhere. The API
-  publishes no release marker, so the gap was only visible by probing routes from outside and
-  reading `schema_migrations` on the host.
-
-So the first run of this procedure is not a first deploy. It is the first *recorded* one, and the
-first that leaves the service in a state a later operator can reason about.
-
-Every step that needs a value only the owner holds is written as `<A_PLACEHOLDER>` and listed in
+Every value only the owner holds is written as `<A_PLACEHOLDER>` and listed in
 [Values the owner supplies](#values-the-owner-supplies). Nothing in this repository invents a
-registry address, a host name, a secret ARN, or an account identifier.
+registry address, a host name, a secret ARN, an account identifier, or a command nobody ran.
 
 Tick the [production readiness gate](PRODUCTION_READINESS.md) as each item becomes true by
 having been done, not by having been read here.
@@ -89,10 +76,7 @@ Revisit this decision when any of these becomes true:
 
 | Placeholder | What it is | Where it comes from |
 | --- | --- | --- |
-| `<AWS_ACCOUNT_ID>` | The AWS account that holds the registry and the host | AWS console |
-| `<AWS_REGION>` | The region of the registry and the host | AWS console |
-| `<REGISTRY>` | `<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com` | derived from the two above |
-| `<ECR_REPOSITORY>` | The repository name inside that registry | AWS console; one already exists |
+| `<AWS_REGION>` | The region of the host and its secrets | AWS console |
 | `<HOST>` | SSH target of the production host | the owner's SSH configuration |
 | `<REPO_DIR>` | The reviewed checkout on the host, for example `/srv/together-ledger` | chosen at first deploy |
 | `<SECRET_ID_SESSION>` | Secrets Manager name or ARN holding `SESSION_SECRET` | AWS Secrets Manager |
@@ -102,75 +86,32 @@ Revisit this decision when any of these becomes true:
 | `<SECRET_ID_APPLE_SIGN_IN>` | Secrets Manager name or ARN holding `APPLE_SIGN_IN_PRIVATE_KEY`: the Sign in with Apple key `985BDXJP8S`'s `.p8` contents, on one line | AWS Secrets Manager |
 | `<SECRET_ID_APPLE_TOKENS>` | Secrets Manager name or ARN holding `APPLE_TOKEN_ENCRYPTION_KEY`: 32 random bytes, base64 (`openssl rand -base64 32`) | AWS Secrets Manager |
 | `<COMMIT>` | The reviewed `main` commit being released | `git rev-parse HEAD` in a clean checkout |
-| `<DIGEST>` | The immutable image digest recorded in step 2 | printed by the build |
+| `<IMAGE>` | The name and tag the host-built image is given, which `TOGETHER_IMAGE` names | the build in step 2 |
+| `<PREVIOUS_IMAGE>` | The image that was running before the switch | `/etc/together-ledger/previous-image` |
+
+Commands nobody has written down yet, to be filled in from the host by whoever ran the
+Oct 1 and Oct 8 releases:
+
+| Placeholder | The step |
+| --- | --- |
+| `<OWNER: BUILD_COMMAND>` | Building the image on the host, and the tag it is given (step 2) |
+| `<OWNER: DUMP_AND_LOAD_COMMANDS>` | Taking the `pg_dump` of live data and loading it into the throwaway container (step 3) |
+| `<OWNER: REHEARSAL_RUN_COMMAND>` | Running the new image's `node server/migrate.js` against that container (step 3) |
+| `<OWNER: CLEANUP_COMMANDS>` | Deleting the throwaway container and the dump (step 3) |
+| `<OWNER: RECORD_PREVIOUS_IMAGE_COMMAND>` | Writing the running image into `/etc/together-ledger/previous-image` (step 5) |
+| `<OWNER: SWITCH_COMMAND>` | Pointing `TOGETHER_IMAGE` at the new image, if a release changes it (step 6) |
+| `<OWNER: RELEASE_LOG_LINE>` | The line appended to `/etc/together-ledger/release-log`, and its format (step 7) |
+| `<OWNER: RUNNING_IMAGE_CHECK>` | Showing which image the app container is running (step 8) |
+
+The registry values (`<AWS_ACCOUNT_ID>`, `<REGISTRY>`, `<ECR_REPOSITORY>`, `<DIGEST>`) belong to
+the plan, and are listed there.
 
 Do not paste a real value into an issue, a pull request, a commit, or a chat window. The
 readiness gate treats a secret that appeared in any of those as burned.
 
-## Why Amazon ECR
-
-The registry was not a settled fact anywhere in this repository, so it is settled here: **a
-private Amazon ECR repository in `<AWS_REGION>`, the same account as the host.** One already
-exists there and is named by `TOGETHER_IMAGE`; what has never happened is an image being pushed
-to it. Choosing ECR is therefore a ratification of what the host already points at, not a move.
-
-- `docs/OPERATIONS.md` already documents how to read scan evidence out of **ECR Basic scanning**,
-  including the OCI-index caveat. That procedure was written for ECR and works nowhere else.
-- The image never leaves the account that runs it, and the host pulls over the AWS network.
-- It needs no third-party credential in addition to the AWS one already required for Secrets
-  Manager and backups.
-
-GitHub Container Registry is the reasonable alternative and would pair more naturally with a
-future build workflow. It is not chosen because it would strand the scan-evidence procedure and
-add a second credential holder for no benefit at this size. If it is ever adopted, the scan
-evidence section of `OPERATIONS.md` has to be rewritten at the same time, not afterwards.
-
 ## One-time setup
 
-### 1. The registry
-
-**A repository already exists in the owner's account. Look before creating one**, and if it is
-there, confirm its settings rather than making a second:
-
-```sh
-aws ecr describe-repositories --region <AWS_REGION> \
-  --query 'repositories[].[repositoryName,imageTagMutability,encryptionConfiguration.encryptionType]' \
-  --output table
-```
-
-If it is missing, create it. Immutable tags, so a tag can never be moved to a different image
-behind a recorded digest:
-
-```sh
-aws ecr create-repository \
-  --repository-name <ECR_REPOSITORY> \
-  --region <AWS_REGION> \
-  --image-tag-mutability IMMUTABLE \
-  --image-scanning-configuration scanOnPush=true \
-  --encryption-configuration encryptionType=AES256
-```
-
-If it exists with mutable tags, fix that before relying on a recorded digest:
-
-```sh
-aws ecr put-image-tag-mutability --repository-name <ECR_REPOSITORY> \
-  --region <AWS_REGION> --image-tag-mutability IMMUTABLE
-```
-
-**The host needs an AWS CLI to pull from the registry, and may not have one.** Check with
-`command -v aws` on the host before assuming a pull is possible. Without it the host cannot
-authenticate to ECR, and an image tagged with a registry address is a local build wearing a
-registry's name — which is exactly the state the 2026-09-29 survey found. Either install it, or
-record here that the build happens on the host, rather than describing a pull that does not
-happen.
-
-Give the host an IAM principal that can pull from this one repository and nothing else
-(`ecr:GetAuthorizationToken`, plus `ecr:BatchGetImage` and
-`ecr:GetDownloadUrlForLayer` on this repository's ARN). It must not be able to push, delete, or
-read any other repository. Keep its credential in a root-owned mode-0600 file on the host, as
-the backup uploader's credential already is.
-
-### 2. Create the production environment file
+### 1. Create the production environment file
 
 Follow `OPERATIONS.md` step 2. The file is root-owned, mode `0600`, outside the repository:
 
@@ -270,18 +211,20 @@ sudo TOGETHER_ENV_FILE="$F" docker compose --env-file "$F" -f compose.production
 No restart is needed when only these two lines are added: code before #249 ignores them, and the
 next release's `up -d` picks them up.
 
-### 3. Create the release log
+### 2. The release log and the rollback anchor
 
-Rollback needs to know what the last good release was. Nothing records that today:
+Two root-owned files on the host record what is running. Neither holds a secret, so either can be
+read aloud during an incident.
 
-```sh
-sudo install -m 600 /dev/null /etc/together-ledger/releases.log
-```
+- **`/etc/together-ledger/release-log`**: one line per release, appended in step 7. Started on
+  2026-09-29. It records a tag rather than a digest, because no image has a registry digest
+  (`PRODUCTION_READINESS.md`, #225). Its line format is `<OWNER: RELEASE_LOG_LINE>`.
+- **`/etc/together-ledger/previous-image`**: the image that was running before the last switch,
+  written in step 5. This is what a rollback returns to.
 
-One line per release, appended in step 5. It holds a UTC timestamp, a commit, a digest, and the
-migrations that release applied — no secrets, so it can be read aloud during an incident.
+The earlier guide named the log `releases.log`. It is `release-log` on the host; use that name.
 
-### 4. Preflight the host
+### 3. Preflight the host
 
 ```sh
 cd <REPO_DIR> && ./scripts/verify-production-host.sh
@@ -291,10 +234,14 @@ Read-only. It deploys nothing and opens no port.
 
 ## Releasing
 
+In order. Each step says whether #356 confirmed it was done this way.
+
 ### 1. Start from a clean reviewed checkout
 
+*Carried over from the earlier guide.*
+
 Build from the exact commit that CI passed, with nothing uncommitted. A dirty tree produces an
-image whose digest corresponds to no reviewed revision:
+image that corresponds to no reviewed revision:
 
 ```sh
 git fetch origin main
@@ -303,7 +250,338 @@ test -z "$(git status --porcelain)" || { echo "Working tree is dirty. Stop."; ex
 npm ci && npm run check
 ```
 
-### 2. Build and publish, recording the digest
+### 2. Build the image on the host
+
+*As done on Oct 1 and Oct 8 (#356).*
+
+The image is built on the host, in `<REPO_DIR>` at `<COMMIT>`, and stays there. **Nothing is
+pushed to a registry, and nothing is pulled.** No image has ever carried a registry digest
+(#225).
+
+```sh
+<OWNER: BUILD_COMMAND>
+```
+
+The result is `<IMAGE>`, a local image. `compose.production.yaml` runs whatever `TOGETHER_IMAGE`
+names, so that is the name the app container starts from.
+
+**Never run `docker compose pull app` in a release.** It asks a registry for an image that was
+never pushed there.
+
+### 3. Rehearse the migrations on a throwaway copy of live data
+
+*As done on Oct 1 and Oct 8 (#356). This replaces the earlier guide's
+`--env-file /etc/together-ledger/preproduction.env --network together-preproduction`: neither
+exists on the host.*
+
+This is `OPERATIONS.md` release gate step 3. The migrations are run from **the image just built**
+against a copy of production's data, never against production itself:
+
+1. Start a temporary `postgres:16-alpine` container, the same PostgreSQL the production compose
+   file runs.
+2. Take a `pg_dump` of the live database and load it into that container.
+3. Run `node server/migrate.js` from the new image against it, with
+   - `DATABASE_URL` pointing at the temporary container, and
+   - `NODE_ENV=development`. The image sets `production`, and in production the server refuses a
+     `PUBLIC_ORIGIN` that isn't HTTPS. The rehearsal has no HTTPS origin and needs none: it only
+     migrates.
+4. Delete the temporary container, and the dump with it.
+
+```sh
+<OWNER: DUMP_AND_LOAD_COMMANDS>
+<OWNER: REHEARSAL_RUN_COMMAND>
+<OWNER: CLEANUP_COMMANDS>
+```
+
+The dump and the copy are live personal data. Keep them on the host, readable by root only, and
+gone when the rehearsal is over. Never print a value from the environment file while doing this.
+
+`node server/migrate.js` prints the migrations it applied and exits non-zero if any of them
+fails. All migrations run in one transaction, so a failure leaves the copy on the schema it
+started from.
+
+Read the list. Then check each new migration against the rule in
+[Rollback](#rollback): a release whose migrations are not additive cannot be undone by putting
+the previous image back, and has to be planned as two releases instead of one.
+
+### 4. Back up, and verify the backup
+
+*As done on Oct 1 and Oct 8, matching the earlier guide (#356). This gates the switch.*
+
+The pre-migration backup is the only thing that can undo a schema change, so take it before
+anything moves:
+
+```sh
+sudo systemctl start together-ledger-backup.service
+sudo /usr/local/lib/together-ledger/verify-production-recovery.sh
+```
+
+**Do not go on to the switch unless that passes.**
+
+### 5. Record the rollback anchor
+
+*As done on Oct 1 and Oct 8 (#356).*
+
+Write the image running right now into `/etc/together-ledger/previous-image`. This is what a
+rollback returns to:
+
+```sh
+<OWNER: RECORD_PREVIOUS_IMAGE_COMMAND>
+```
+
+The previous image exists only on this host. **Don't prune images while it is the rollback
+anchor**, or there is nothing to roll back to.
+
+### 6. Switch
+
+*Carried over from the earlier guide, without its registry pull.*
+
+On the host, in the reviewed checkout at the same commit. If the release changes what
+`TOGETHER_IMAGE` names, change it first:
+
+```sh
+<OWNER: SWITCH_COMMAND>
+sudo grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env
+```
+
+Then apply migrations as their own visible step, and start:
+
+```sh
+cd <REPO_DIR>
+export COMPOSE="docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml"
+
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE run --rm app node server/migrate.js
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d
+```
+
+`run --rm app` brings PostgreSQL up and waits for it to be healthy first, then applies the
+migrations and exits. Starting the app afterwards finds nothing left to apply. Compose needs
+both `TOGETHER_ENV_FILE` and `--env-file`: the first satisfies the services' `env_file`, the
+second its own variable substitution.
+
+Caddy only starts once the app reports healthy, and the app only reports healthy once `/readyz`
+answers. A deploy that fails to become healthy therefore fails loudly — the API returns errors
+rather than quietly serving the previous release. That is the intended behaviour and it is also
+why there is an interruption: there is no second app container to fall back to.
+
+### 7. Append the release to the log
+
+*The log is `/etc/together-ledger/release-log` (#356).*
+
+```sh
+<OWNER: RELEASE_LOG_LINE>
+```
+
+One line: the UTC time, `<COMMIT>`, `<IMAGE>`, and the migrations the release applied, or none.
+
+### 8. Confirm against production, not against the deploy
+
+*Carried over from the earlier guide.*
+
+Privately on the host first:
+
+```sh
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps
+```
+
+Then from outside, over the real internet path, from a machine that is not the host:
+
+```sh
+curl -fsS https://api.together-ledger.com/healthz
+curl -fsS https://api.together-ledger.com/readyz
+```
+
+`/readyz` answering `{"status":"ready"}` means the app reached PostgreSQL. It does **not** mean
+the release you intended is the one running. Confirm on the host that the app container runs
+`<IMAGE>`:
+
+```sh
+<OWNER: RUNNING_IMAGE_CHECK>
+```
+
+Finally, confirm the *change*. A health check proves a server is up; it proves nothing about
+what merged. Exercise the thing the release added, with a synthetic account, never a real one.
+The earlier guide's example, for the release that let a phone get a token instead of a cookie
+(#179):
+
+```sh
+curl -fsS https://api.together-ledger.com/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -H 'x-together-client: app' \
+  --data '{"email":"<SYNTHETIC_ACCOUNT_EMAIL>","password":"<SYNTHETIC_ACCOUNT_PASSWORD>"}' \
+  | jq 'has("data") and (.data | has("token") and has("refreshToken"))'
+```
+
+A `404`, or a reply of the wrong shape, means the deploy did not land whatever the health check
+says.
+
+The API publishes no release marker, so unlike `app.together-ledger.com`, which serves
+`release.json`, there is no way to ask production from outside which revision it is running.
+Until there is, the image check above is a host-side check, and the behavioural probe is the only
+outside evidence. Adding a revision to `/healthz` would close that gap; it is a change for its own
+story.
+
+### 9. Record it
+
+Write down the UTC time, the commit, the migrations applied, the verification results, and
+anything that did not go as written, and correct this document where it was wrong.
+
+## Rollback
+
+The Worker's rollback replaces a static bundle. This one does not: the container and its
+database move together on the way forward, and only the container can move back.
+
+### The rule that makes rollback possible
+
+**A migration must be safe for the previous image to run against.** Add tables, add nullable
+columns, add indexes. Do not drop, rename, or narrow anything in the same release that stops
+writing to it. A change that must remove something is two releases — one that stops using it,
+one that removes it — and the second cannot ship until the first is the version you would roll
+back to.
+
+When a release breaks the rule, say so in the release log line, and accept that its rollback is
+a database restore rather than an image change.
+
+### Returning to the previous image
+
+*The anchor is the previous local image in `/etc/together-ledger/previous-image` (#356). The
+steps around it are carried over from the earlier guide, without its registry pull.*
+
+No data loss, provided the rule above held.
+
+1. Record first: the failing image, UTC time, symptoms, and whether writes may have landed.
+   Delete nothing — not volumes, logs, backups, images, or the database.
+
+   ```sh
+   sudo tail -5 /etc/together-ledger/release-log
+   ```
+
+   `/etc/together-ledger/previous-image` names the image to return to.
+
+2. Point `TOGETHER_IMAGE` back at `<PREVIOUS_IMAGE>`, the same way step 6 points it forward
+   (`<OWNER: SWITCH_COMMAND>`).
+3. Start that image. PostgreSQL keeps running; only the app container is replaced.
+
+   ```sh
+   cd <REPO_DIR>
+   TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d app
+   ```
+
+4. Verify privately, then from outside, then one synthetic account flow.
+
+   ```sh
+   curl -fsS https://api.together-ledger.com/healthz
+   curl -fsS https://api.together-ledger.com/readyz
+   ```
+
+The schema does not move backwards. The rolled-back image simply never runs the newer
+migrations, and `schema_migrations` keeps recording them as applied — so redeploying the newer
+image later applies nothing and starts cleanly. The extra table or column sits unused. That is
+the intended outcome, not a defect to tidy up during an incident.
+
+Append the rollback to the release log the same way a release is appended, so the log reads as
+what is running rather than what was last attempted.
+
+### When the image is not the problem
+
+If data looks wrong, or a migration that broke the additive rule has run, stop. Freeze writes,
+do not roll the image, and follow *AWS rollback procedure* step 5 in `OPERATIONS.md`: choose the
+newest validated encrypted backup, restore it into an **isolated** database, verify the HMAC
+event chains and the synthetic checks, and make promotion a separate, deliberate decision.
+
+### Rehearsing it
+
+*Not done yet.* The readiness gate asks for a rollback rehearsal without production user data:
+
+1. Restore a synthetic-data backup into an isolated database.
+2. Run image A there, with a synthetic environment file.
+3. Run image B (the newer commit) and its migrations.
+4. Return to image A, and confirm it starts and serves against the newer schema.
+5. Record how long steps 2 to 4 took. That number is the rollback budget during an incident.
+
+Only after that rehearsal passes should the Deployment and Recoverability items in
+`PRODUCTION_READINESS.md` be ticked.
+
+## Planned, not yet done
+
+**Nothing in this section has been run on the host. These are plans, not steps.** They are kept
+because they are still wanted (#225): an image pushed to a registry and deployed by its immutable
+digest, a scan read before each release, a pre-production copy that releases pass through, and a
+rollback by digest. When any of them is first done, move it into [Releasing](#releasing) and
+record the date.
+
+Registry values, for when the plan is carried out:
+
+| Placeholder | What it is | Where it comes from |
+| --- | --- | --- |
+| `<AWS_ACCOUNT_ID>` | The AWS account that holds the registry and the host | AWS console |
+| `<REGISTRY>` | `<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com` | derived from the account and region |
+| `<ECR_REPOSITORY>` | The repository name inside that registry | AWS console; one already exists |
+| `<DIGEST>` | The immutable image digest a push reports | printed by the build |
+| `<PREVIOUS_DIGEST>` | The digest a rollback would return to | the release log |
+
+### Plan: Amazon ECR
+
+The registry was not a settled fact anywhere in this repository, so it is settled here: **a
+private Amazon ECR repository in `<AWS_REGION>`, the same account as the host.** One already
+exists there and is named by `TOGETHER_IMAGE`; what has never happened is an image being pushed
+to it. Choosing ECR is therefore a ratification of what the host already points at, not a move.
+
+- `docs/OPERATIONS.md` already documents how to read scan evidence out of **ECR Basic scanning**,
+  including the OCI-index caveat. That procedure was written for ECR and works nowhere else.
+- The image never leaves the account that runs it, and the host pulls over the AWS network.
+- It needs no third-party credential in addition to the AWS one already required for Secrets
+  Manager and backups.
+
+GitHub Container Registry is the reasonable alternative and would pair more naturally with a
+future build workflow. It is not chosen because it would strand the scan-evidence procedure and
+add a second credential holder for no benefit at this size. If it is ever adopted, the scan
+evidence section of `OPERATIONS.md` has to be rewritten at the same time, not afterwards.
+
+#### Creating or confirming the repository
+
+**A repository already exists in the owner's account. Look before creating one**, and if it is
+there, confirm its settings rather than making a second:
+
+```sh
+aws ecr describe-repositories --region <AWS_REGION> \
+  --query 'repositories[].[repositoryName,imageTagMutability,encryptionConfiguration.encryptionType]' \
+  --output table
+```
+
+If it is missing, create it. Immutable tags, so a tag can never be moved to a different image
+behind a recorded digest:
+
+```sh
+aws ecr create-repository \
+  --repository-name <ECR_REPOSITORY> \
+  --region <AWS_REGION> \
+  --image-tag-mutability IMMUTABLE \
+  --image-scanning-configuration scanOnPush=true \
+  --encryption-configuration encryptionType=AES256
+```
+
+If it exists with mutable tags, fix that before relying on a recorded digest:
+
+```sh
+aws ecr put-image-tag-mutability --repository-name <ECR_REPOSITORY> \
+  --region <AWS_REGION> --image-tag-mutability IMMUTABLE
+```
+
+**Pulling needs the host to reach ECR with its own AWS credentials.** Since Oct 1, the `aws`
+that runs under `sudo` on the host is the IAM role `together-ledger-host-image-pull` (see
+[Adding the two Sign in with Apple values](#adding-the-two-sign-in-with-apple-values-218)), but
+nothing has ever been pulled with it. Until an image is pushed and pulled, an image tagged with a
+registry address is a local build wearing a registry's name: the state the 2026-09-29 survey
+found, and still the state today.
+
+Give the host an IAM principal that can pull from this one repository and nothing else
+(`ecr:GetAuthorizationToken`, plus `ecr:BatchGetImage` and
+`ecr:GetDownloadUrlForLayer` on this repository's ARN). It must not be able to push, delete, or
+read any other repository. Keep its credential in a root-owned mode-0600 file on the host, as
+the backup uploader's credential already is.
+
+#### Building, pushing and recording the digest
 
 Build for the host's architecture explicitly. `--provenance=false --sbom=false` keeps buildx
 from publishing an OCI image index around a single-platform image, which is what makes ECR Basic
@@ -342,7 +620,7 @@ aws ecr describe-images \
 
 If that differs from `$DIGEST`, stop and find out why before going further.
 
-### 3. Read the scan before deciding
+#### Reading the scan before deciding
 
 ```sh
 aws ecr describe-image-scan-findings \
@@ -353,16 +631,33 @@ aws ecr describe-image-scan-findings \
 ```
 
 `status` must be `COMPLETE`. A scan that is missing, `IN_PROGRESS`, or `FAILED` is not a clean
-scan — see *Container scan evidence* in `OPERATIONS.md`, including what to do if an older image
-was built without `--provenance=false` and ECR is holding an index it will not scan. Record the
-counts and the decision; do not publish the registry address or the digest outside the host and
-the release log.
+scan — see *Container scan evidence* in `OPERATIONS.md`. Record the counts and the decision; do
+not publish the registry address or the digest outside the host and the release log.
 
-### 4. Rehearse the migrations against a pre-production copy
+#### Deploying and rolling back by digest
 
-This is `OPERATIONS.md` release gate step 3, and until now there was no command for it. Restore
-the newest verified encrypted backup into an isolated database — never the production one — and
-run the migrations from **the same image** you are about to deploy:
+Step 6 would point the environment file at the digest, never a tag, and pull it:
+
+```sh
+sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<DIGEST>|" /etc/together-ledger/production.env'
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
+```
+
+Step 8 would confirm the running digest:
+
+```sh
+TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps -q app \
+  | xargs docker inspect --format '{{index .RepoDigests 0}}'
+```
+
+A rollback would point `TOGETHER_IMAGE` at `<REGISTRY>/<ECR_REPOSITORY>@<PREVIOUS_DIGEST>`, pull,
+and `up -d app`. The release log would record the digest instead of a tag.
+
+### Plan: a pre-production copy
+
+Migrations would be rehearsed on a standing pre-production database that releases pass through,
+rather than on a throwaway container. Neither the environment file nor the network below exists
+on the host:
 
 ```sh
 docker run --rm \
@@ -372,194 +667,7 @@ docker run --rm \
   node server/migrate.js
 ```
 
-It prints the migrations it applied and exits non-zero if any of them fails. All migrations run
-in one transaction, so a failure leaves the copy on the schema it started from.
-
-Read the list. Then check each new migration against the rule in
-[Rollback](#rollback): a release whose migrations are not additive cannot be undone by putting
-the previous image back, and has to be planned as two releases instead of one.
-
-For the release that carries `023_let-a-phone-carry-its-own-key.sql`, the list will contain that
-one migration, and it is additive — `CREATE TABLE IF NOT EXISTS api_tokens` plus two indexes. No
-existing table, column, or constraint changes, so the previous image runs against the new schema
-unharmed.
-
-### 5. Deploy
-
-On the host, in the reviewed checkout at the same commit.
-
-First, a restore point. The pre-migration backup is the only thing that can undo a schema
-change, so take it before anything moves:
-
-```sh
-sudo systemctl start together-ledger-backup.service
-sudo /usr/local/lib/together-ledger/verify-production-recovery.sh
-```
-
-Do not continue unless that passes.
-
-Record the digest that is live right now — this is what you will roll back to:
-
-```sh
-grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env    # via sudo; empty on a first deploy
-```
-
-Point the environment file at the new digest, by digest and never by tag:
-
-```sh
-sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<DIGEST>|" /etc/together-ledger/production.env'
-sudo grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env
-```
-
-Pull, apply migrations as their own visible step, then start:
-
-```sh
-cd <REPO_DIR>
-export COMPOSE="docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml"
-
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE run --rm app node server/migrate.js
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d
-```
-
-`run --rm app` brings PostgreSQL up and waits for it to be healthy first, then applies the
-migrations and exits. Starting the app afterwards finds nothing left to apply. Compose needs
-both `TOGETHER_ENV_FILE` and `--env-file`: the first satisfies the services' `env_file`, the
-second its own variable substitution.
-
-Caddy only starts once the app reports healthy, and the app only reports healthy once `/readyz`
-answers. A deploy that fails to become healthy therefore fails loudly — the API returns errors
-rather than quietly serving the previous release. That is the intended behaviour and it is also
-why there is an interruption: there is no second app container to fall back to.
-
-Append the release to the log:
-
-```sh
-sudo sh -c 'umask 077; printf "%s %s %s %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<COMMIT>" "<DIGEST>" "<migrations-applied-or-none>" >> /etc/together-ledger/releases.log'
-```
-
-### 6. Confirm against production, not against the deploy
-
-Privately on the host first:
-
-```sh
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps
-curl -fsS http://127.0.0.1:4174/healthz    # from inside the app container, or via the compose network
-```
-
-Then from outside, over the real internet path, from a machine that is not the host:
-
-```sh
-curl -fsS https://api.together-ledger.com/healthz
-curl -fsS https://api.together-ledger.com/readyz
-```
-
-`/readyz` answering `{"status":"ready"}` means the app reached PostgreSQL. It does **not** mean
-the release you intended is the one running. Confirm the running digest on the host:
-
-```sh
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps -q app \
-  | xargs docker inspect --format '{{index .RepoDigests 0}}'
-```
-
-That must be the digest from step 2.
-
-Finally, confirm the *change*. A health check proves a server is up; it proves nothing about
-what merged. Exercise the thing the release added, with a synthetic account, never a real one.
-For the release carrying #179, the new capability is a phone getting a token instead of a
-cookie:
-
-```sh
-curl -fsS https://api.together-ledger.com/api/v1/auth/login \
-  -H 'content-type: application/json' \
-  -H 'x-together-client: app' \
-  --data '{"email":"<SYNTHETIC_ACCOUNT_EMAIL>","password":"<SYNTHETIC_ACCOUNT_PASSWORD>"}' \
-  | jq 'has("data") and (.data | has("token") and has("refreshToken"))'
-```
-
-`true` means the migrated table exists, the route is live, and this release is the one answering.
-A `404`, or a reply carrying a session cookie instead, means the deploy did not land whatever the
-health check says.
-
-There is one gap left here worth naming: the API publishes no release marker, so unlike
-`app.together-ledger.com` — which serves `release.json` — there is no way to ask production which
-revision it is running from outside. Until there is, the digest check above is a host-side check,
-and the behavioural probe is the only outside evidence. Adding a revision to `/healthz` would
-close it and is a change for its own story, not for a deploy runbook to make on the way past.
-
-### 7. Record it
-
-Write the outcome into the product journey document: the UTC time, the commit, the migrations
-applied, the scan counts, the verification results, and anything that did not go as written.
-Correct this document where it was wrong. It has never been run, and the first run is the
-review.
-
-## Rollback
-
-The Worker's rollback replaces a static bundle. This one does not: the container and its
-database move together on the way forward, and only the container can move back.
-
-### The rule that makes rollback possible
-
-**A migration must be safe for the previous image to run against.** Add tables, add nullable
-columns, add indexes. Do not drop, rename, or narrow anything in the same release that stops
-writing to it. A change that must remove something is two releases — one that stops using it,
-one that removes it — and the second cannot ship until the first is the version you would roll
-back to. `023_let-a-phone-carry-its-own-key.sql` obeys this.
-
-When a release breaks the rule, say so in the release log line, and accept that its rollback is
-a database restore rather than an image change.
-
-### Returning to the previous image
-
-Roughly ten minutes, no data loss, provided the rule above held.
-
-```sh
-# 1. Record first: the failing digest, UTC time, symptoms, and whether writes may have landed.
-#    Delete nothing — not volumes, logs, backups, or the database.
-sudo tail -5 /etc/together-ledger/releases.log
-
-# 2. Point the environment file back at the last good digest.
-sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<PREVIOUS_DIGEST>|" /etc/together-ledger/production.env'
-
-# 3. Start that image. PostgreSQL keeps running; only the app container is replaced.
-cd <REPO_DIR>
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d app
-
-# 4. Verify privately, then from outside, then one synthetic account flow.
-curl -fsS https://api.together-ledger.com/healthz
-curl -fsS https://api.together-ledger.com/readyz
-```
-
-The schema does not move backwards. The rolled-back image simply never runs the newer
-migrations, and `schema_migrations` keeps recording them as applied — so redeploying the newer
-image later applies nothing and starts cleanly. The extra table or column sits unused. That is
-the intended outcome, not a defect to tidy up during an incident.
-
-Append the rollback to the release log the same way a release is appended, so the log reads as
-what is running rather than what was last attempted.
-
-### When the image is not the problem
-
-If data looks wrong, or a migration that broke the additive rule has run, stop. Freeze writes,
-do not roll the image, and follow *AWS rollback procedure* step 5 in `OPERATIONS.md`: choose the
-newest validated encrypted backup, restore it into an **isolated** database, verify the HMAC
-event chains and the synthetic checks, and make promotion a separate, deliberate decision.
-
-### Rehearsing it
-
-The readiness gate asks for a rehearsal without production user data, and this is how to do one
-before the first real deploy — entirely on a pre-production copy:
-
-1. Restore a synthetic-data backup into the isolated database.
-2. Deploy image A there, with a synthetic environment file.
-3. Deploy image B (the newer commit) and run its migrations.
-4. Return to image A by digest, and confirm it starts and serves against the newer schema.
-5. Record how long steps 2 to 4 took. That number is the rollback budget during an incident.
-
-Only after that rehearsal passes should the Deployment and Recoverability items in
-`PRODUCTION_READINESS.md` be ticked.
+Until it exists, step 3's throwaway copy is the rehearsal.
 
 ## The drafted build workflow
 
