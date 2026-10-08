@@ -27,7 +27,7 @@ const platform = new PlatformService({
   onDeliveryFailure: ({ kind, errorName }) => process.stderr.write(`${JSON.stringify({ level: 'error', message: 'email delivery failed', kind, errorName })}\n`),
 });
 const billing = createBillingService({ pool, config });
-const store = config.storePurchasesConfigured ? createStorePurchaseService({ pool, config }) : null;
+const store = config.storePurchasesConfigured ? createStorePurchaseService({ pool, config, platform }) : null;
 const app = await buildApp({
   platform,
   billing,

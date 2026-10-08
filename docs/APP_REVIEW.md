@@ -65,6 +65,11 @@ docker compose --env-file /etc/together-ledger/production.env -f compose.product
 and the shell history. The script prints the ids, names and counts it made, and never the password. It exits
 non-zero, having changed nothing, if a check above fails.
 
+It also prints a `STORE_SANDBOX_ACCOUNT_IDS=…` line. App Review buys in the sandbox against the live app, and the live
+server honours that only for the accounts in that setting (#272, docs/STORE_PURCHASES.md). The reviewer's account id
+is new after every run, so set that line in `/etc/together-ledger/production.env` and restart the app before the
+review, or the reviewer's test purchases will be refused.
+
 The same email and password go in App Store Connect (App Review Information, Sign-in required) and in Play
 Console (App content, App access). The credentials do not expire. Rebuilding with the same file leaves them
 unchanged, so a review re-run months later still signs in.

@@ -138,7 +138,7 @@ test('real PostgreSQL grants a store purchase once, and a failed grant leaves no
   await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
   const journey = await platform.createJourney(user.id, { name: 'Store proof', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
   const { appAccountToken } = await platform.storePurchaseIdentity(user.id, journey.id);
-  const store = new StorePurchaseService({ pool, config, apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }), log: () => {} });
+  const store = new StorePurchaseService({ pool, config, history: (client, event) => platform.appendEvent(client, event), apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }), log: () => {} });
   const purchase = (transactionId) => signTransaction(chain, transactionPayload({ appAccountToken, transactionId, originalTransactionId: transactionId, purchaseDate: Date.now() }));
 
   const twice = purchase(`race-${suffix}`);
@@ -171,6 +171,21 @@ test('real PostgreSQL grants a store purchase once, and a failed grant leaves no
   const retried = await store.verifyApple(user.id, { signedTransaction: halfway });
   assert.equal(retried.granted, true);
   assert.equal(retried.room.people, 51);
+
+  // A subscription upgraded from another journey moves there, with grace and history for the first.
+  const other = await platform.createJourney(user.id, { name: 'Store proof, moved', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const otherToken = (await platform.storePurchaseIdentity(user.id, other.id)).appAccountToken;
+  const monthly = (token, transactionId, productId, days) => signTransaction(chain, transactionPayload({
+    appAccountToken: token, transactionId, originalTransactionId: `sub-${suffix}`, productId, type: 'Auto-Renewable Subscription',
+    purchaseDate: Date.now(), expiresDate: Date.now() + days * 24 * 60 * 60 * 1000, transactionReason: 'PURCHASE',
+  }));
+  await store.verifyApple(user.id, { signedTransaction: monthly(appAccountToken, `sub-a-${suffix}`, 'room_51_monthly', 30) });
+  const moved = await store.verifyApple(user.id, { signedTransaction: monthly(otherToken, `sub-b-${suffix}`, 'room_101_monthly', 31) });
+  assert.equal(moved.journeyId, other.id);
+  const graces = await pool.query("SELECT count(*)::int AS count FROM billing_entitlements WHERE journey_id=$1 AND state='grace'", [journey.id]);
+  assert.equal(graces.rows[0].count, 1);
+  const history = await pool.query("SELECT action FROM journey_events WHERE journey_id IN ($1,$2) AND action LIKE 'paid_room%' ORDER BY action", [journey.id, other.id]);
+  assert.deepEqual(history.rows.map((row) => row.action), ['paid_room_moved_in', 'paid_room_moved_out']);
 
   // A slot can now be a sandbox one: the environment check migration 028 replaced, on real Postgres.
   const moment = await platform.createMoment(user.id, journey.id, { kind: 'memory', title: 'A photo more', detail: '', occurredOn: '2026-10-01', visibility: 'shared-now', moneyCents: null, moneyCurrency: '', locations: [] });

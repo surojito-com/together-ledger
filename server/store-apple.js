@@ -128,11 +128,14 @@ export function parseRootCertificates(value) {
 
 function decodeSegment(segment, what) {
   if (!/^[A-Za-z0-9_-]+$/.test(segment)) throw new AppleVerificationError(`its ${what} is not base64url`);
+  let value;
   try {
-    return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+    value = JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
   } catch {
     throw new AppleVerificationError(`its ${what} is not JSON`);
   }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppleVerificationError(`its ${what} is not a JSON object`);
+  return value;
 }
 
 function certificateFrom(value) {

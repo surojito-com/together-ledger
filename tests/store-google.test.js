@@ -82,6 +82,10 @@ test('Google’s answers become the three outcomes the purchase service acts on'
     status = answer;
     await assert.rejects(api.productPurchase('extra_place', 'opaque.token'), (error) => error instanceof GooglePlayError && error.kind === kind && error.status === answer);
   }
+  // A 200 that is not JSON (a proxy's error page) is Google being unavailable, never a purchase.
+  const garbled = { ok: true, status: 200, text: async () => '<html>Bad gateway</html>' };
+  const proxied = new GooglePlayDeveloperApi({ serviceAccount, packageName: 'p', fetch: async (url) => (tokenEndpoint(url) ? { ok: true, status: 200, json: async () => ({ access_token: 'ya29.fake' }) } : garbled) });
+  await assert.rejects(proxied.productPurchase('extra_place', 'opaque.token'), (error) => error instanceof GooglePlayError && error.kind === 'unavailable');
   const offline = new GooglePlayDeveloperApi({ serviceAccount, packageName: 'p', fetch: async () => { throw new Error('ECONNRESET'); } });
   await assert.rejects(offline.subscriptionPurchase('t'), (error) => error.kind === 'unavailable');
   const refusedKey = new GooglePlayDeveloperApi({ serviceAccount, packageName: 'p', fetch: fakeGoogle(() => ({ status: 400, body: { error: 'invalid_grant' } })).fetch });

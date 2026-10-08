@@ -129,7 +129,14 @@ export class GooglePlayDeveloperApi {
     }
     if (!response.ok) throw new GooglePlayError('unavailable', response.status);
     const text = await response.text();
-    return text ? JSON.parse(text) : {};
+    if (!text) return {};
+    // A 200 that is not JSON (a proxy's page, a cut-off body) is Google being unavailable, not an
+    // answer about the purchase.
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new GooglePlayError('unavailable', response.status);
+    }
   }
 
   productPurchase(productId, token) {

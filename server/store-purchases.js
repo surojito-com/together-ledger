@@ -40,6 +40,11 @@ const ACKNOWLEDGE_WINDOW_MS = 3 * DAY_MS;
 // Waits between acknowledgement attempts. The longest stays well inside the three days.
 const ACKNOWLEDGE_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000, 2 * 60 * 60_000];
 const MAX_QUANTITY = 10;
+// The reason on a subscription's room once a newer purchase has replaced it (Google's
+// linkedPurchaseToken). Such a row is never made active again, whatever is sent later.
+const REPLACED = 'store_subscription_replaced';
+// The reason on the grace a journey is given when its subscription's room moves to another.
+const MOVED = 'store_subscription_moved';
 
 // Every refusal says whether trying again could change it. A phone finishes a transaction only on
 // success, so `retryable: true` is the phone's cue to keep it and send it again later.
@@ -72,8 +77,11 @@ function fingerprint(value) {
 }
 
 export class StorePurchaseService {
-  constructor({ pool, config, apple = null, google = null, now = () => new Date(), log = null }) {
+  // `history` writes an event into a journey's own record (PlatformService.appendEvent): paid room
+  // moving between journeys is something both journeys' people should be able to see.
+  constructor({ pool, config, apple = null, google = null, history = null, now = () => new Date(), log = null }) {
     this.pool = pool;
+    this.history = history;
     this.config = config;
     this.apple = apple;
     this.google = google;
@@ -118,6 +126,9 @@ export class StorePurchaseService {
       store: 'apple',
       environment,
       testerOnly,
+      // Apple marks each automatic renewal; a renewal has a new transactionId, so this is how it is
+      // told apart from a first purchase, a resubscription or an upgrade ('PURCHASE').
+      renewal: payload.transactionReason === 'RENEWAL',
       transactionId: String(payload.transactionId),
       originalTransactionId: String(payload.originalTransactionId || payload.transactionId),
       productId: payload.productId,
@@ -298,28 +309,12 @@ export class StorePurchaseService {
       if (seen.rowCount) return this.replay(client, seen.rows[0], purchase);
 
       await this.lockJourney(client, owner.journeyId);
-      const membership = await client.query(
-        'SELECT jm.role FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.journey_id=$1 AND jm.user_id=$2',
-        [owner.journeyId, userId],
-      );
-      if (!membership.rowCount) {
-        this.log('warn', 'store purchase refused', { store, code: 'store_purchase_journey_gone', productId: purchase.productId, ...purchase.logRef });
-        throw refuse(409, 'store_purchase_journey_gone', `The journey this was bought for has ended, or you’re no longer in it, so nothing could be added. ${refundHint(store)}`);
-      }
-      // One person pays for a journey, and owning a journey means paying for it (4.7). Extras are
-      // anyone's to buy, for a moment they can see, as on the web.
-      if (product.kind !== 'extra' && membership.rows[0].role !== 'owner') {
-        this.log('warn', 'store purchase refused', { store, code: 'store_purchase_not_owner', productId: purchase.productId, ...purchase.logRef });
-        throw refuse(409, 'store_purchase_not_owner', `Only the person who holds this journey can make room in it, so nothing was added. ${refundHint(store)}`);
-      }
-      if (product.kind === 'extra') {
-        if (!UUID.test(String(momentId || ''))) throw refuse(400, 'store_extra_needs_moment', `Choose the moment this ${product.extra} is for. Nothing has been lost.`, true);
-        const moment = await client.query(
-          `SELECT id FROM journey_moments WHERE id=$1 AND journey_id=$2 AND (visibility='shared-now' OR created_by_user_id=$3)`,
-          [momentId, owner.journeyId, userId],
-        );
-        if (!moment.rowCount) throw refuse(409, 'store_extra_moment_missing', `That moment isn’t there any more. Choose another moment for this ${product.extra}; nothing has been lost.`, true);
-      }
+      // A renewal of a subscription already granted for this journey extends it, whoever holds the
+      // journey now: the person is still paying, and refusing it would leave them paying for
+      // nothing. Ownership is checked when a subscription is first bought, resubscribed or moved.
+      // Google's renewals keep their purchase token, so they arrive as a replay and are the same.
+      const renewal = product.kind === 'subscription' && await this.isRenewal(client, purchase, owner.journeyId);
+      if (!renewal) await this.assertMayBuy(client, purchase, owner, userId, momentId);
 
       const now = this.now();
       const inserted = await client.query(
@@ -344,9 +339,53 @@ export class StorePurchaseService {
       if (product.kind === 'pass') await this.grantPass(client, row, purchase);
       if (product.kind === 'extra') await this.grantExtra(client, row, purchase);
       const saved = await client.query('SELECT * FROM billing_store_purchases WHERE id=$1', [row.id]);
-      this.log('info', 'store purchase granted', { store, environment, productId: purchase.productId, ...purchase.logRef });
+      this.log('info', 'store purchase granted', { store, environment, productId: purchase.productId, renewal, ...purchase.logRef });
       return this.describe(client, saved.rows[0], true);
     });
+  }
+
+  // Whether the person may buy this, for this journey, now: still in it; holding it, for room;
+  // able to see the moment, for an extra. Each refusal about the journey is logged.
+  async assertMayBuy(client, purchase, owner, userId, momentId) {
+    const { store, product } = purchase;
+    const membership = await client.query(
+      'SELECT jm.role FROM journey_members jm JOIN journeys j ON j.id=jm.journey_id WHERE jm.journey_id=$1 AND jm.user_id=$2',
+      [owner.journeyId, userId],
+    );
+    if (!membership.rowCount) {
+      this.log('warn', 'store purchase refused', { store, code: 'store_purchase_journey_gone', productId: purchase.productId, ...purchase.logRef });
+      throw refuse(409, 'store_purchase_journey_gone', `The journey this was bought for has ended, or you\u2019re no longer in it, so nothing could be added. ${refundHint(store)}`);
+    }
+    // One person pays for a journey, and owning a journey means paying for it (4.7). Extras are
+    // anyone's to buy, for a moment they can see, as on the web.
+    if (product.kind !== 'extra' && membership.rows[0].role !== 'owner') {
+      this.log('warn', 'store purchase refused', { store, code: 'store_purchase_not_owner', productId: purchase.productId, ...purchase.logRef });
+      throw refuse(409, 'store_purchase_not_owner', `Only the person who holds this journey can make room in it, so nothing was added. ${refundHint(store)}`);
+    }
+    if (product.kind === 'extra') {
+      if (!UUID.test(String(momentId || ''))) throw refuse(400, 'store_extra_needs_moment', `Choose the moment this ${product.extra} is for. Nothing has been lost.`, true);
+      const moment = await client.query(
+        `SELECT id FROM journey_moments WHERE id=$1 AND journey_id=$2 AND (visibility='shared-now' OR created_by_user_id=$3)`,
+        [momentId, owner.journeyId, userId],
+      );
+      if (!moment.rowCount) throw refuse(409, 'store_extra_moment_missing', `That moment isn\u2019t there any more. Choose another moment for this ${product.extra}; nothing has been lost.`, true);
+    }
+  }
+
+  // A renewal is Apple's word that this continues a subscription, for a subscription already
+  // granted here, to this same journey, and not one a newer purchase has replaced.
+  async isRenewal(client, purchase, journeyId) {
+    if (!purchase.renewal) return false;
+    const held = await this.entitlementFor(client, purchase.store, purchase.environment, purchase.originalTransactionId);
+    return Boolean(held && held.journey_id === journeyId && held.reason !== REPLACED);
+  }
+
+  async entitlementFor(client, store, environment, recordId) {
+    const found = await client.query(
+      'SELECT * FROM billing_entitlements WHERE source=$1 AND environment=$2 AND source_record_id=$3 AND capability=$4',
+      [store, environment, recordId, ROOM_CAPABILITY],
+    );
+    return found.rows[0] || null;
   }
 
   // The same transaction again. Nothing more is granted. A subscription's latest verified expiry is
@@ -357,45 +396,120 @@ export class StorePurchaseService {
     return this.describe(client, saved.rows[0], false);
   }
 
-  async writeEntitlement(client, row, { recordId, quantity, effectiveAt, expiresAt, onlyForward }) {
+  // The purchase row names the entitlement it wrote, and what it granted.
+  async linkPurchase(client, row, { recordId, effectiveAt, expiresAt }) {
+    await client.query(
+      'UPDATE billing_store_purchases SET effective_at=COALESCE(effective_at,$1),expires_at=$2,entitlement_record_id=$3,updated_at=$4 WHERE id=$5',
+      [effectiveAt, expiresAt, recordId, this.now(), row.id],
+    );
+  }
+
+  async insertEntitlement(client, { payerUserId, journeyId, store, environment, recordId, state = 'active', quantity, effectiveAt, expiresAt, eventAt, reason = null }) {
     const now = this.now();
     await client.query(
       `INSERT INTO billing_entitlements
        (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,effective_at,expires_at,last_verified_at,provider_event_created_at,reason,created_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,NULL,$11,$11)
-       ON CONFLICT (source,environment,source_record_id,capability) DO UPDATE
-       SET quantity=EXCLUDED.quantity,state=EXCLUDED.state,expires_at=EXCLUDED.expires_at,last_verified_at=EXCLUDED.last_verified_at,
-           provider_event_created_at=EXCLUDED.provider_event_created_at,reason=NULL,updated_at=EXCLUDED.updated_at
-       WHERE ${onlyForward ? 'billing_entitlements.expires_at IS NULL OR EXCLUDED.expires_at >= billing_entitlements.expires_at' : 'false'}`,
-      [randomUUID(), row.payer_user_id, row.journey_id, ROOM_CAPABILITY, row.store, row.environment, recordId, quantity, effectiveAt, expiresAt, now, row.purchased_at],
-    );
-    await client.query(
-      'UPDATE billing_store_purchases SET effective_at=COALESCE(effective_at,$1),expires_at=$2,entitlement_record_id=$3,updated_at=$4 WHERE id=$5',
-      [effectiveAt, expiresAt, recordId, now, row.id],
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$12,$12)`,
+      [randomUUID(), payerUserId, journeyId, ROOM_CAPABILITY, store, environment, recordId, state, quantity, effectiveAt, expiresAt, now, eventAt, reason],
     );
   }
 
   // A monthly subscription is one entitlement for its whole life, keyed by the store's id for the
-  // subscription rather than for this payment, and it only ever moves forward: an older renewal
-  // arriving late never shortens it. An upgrade from 51 to 101 is the same subscription at a new
-  // size (Apple keeps the originalTransactionId).
+  // subscription rather than for this payment (Apple's originalTransactionId, Google's purchase
+  // token), and it only ever moves forward: an older renewal arriving late never shortens it or
+  // takes it anywhere. An upgrade from 51 to 101 is the same subscription at a new size.
+  //
+  // Apple keeps the originalTransactionId when someone resubscribes or upgrades, and they may do it
+  // from another journey. The room follows the journey they have just paid from (owner, Oct 8,
+  // 2026): the entitlement moves there, both journeys' records say so, and the journey it left goes
+  // into the usual grace rather than losing its room at once.
   async grantSubscription(client, row, purchase) {
-    await this.writeEntitlement(client, row, {
-      recordId: purchase.originalTransactionId,
-      quantity: roomFor(purchase.product),
-      effectiveAt: purchase.purchasedAt,
-      expiresAt: purchase.expiresAt,
-      onlyForward: true,
-    });
-    // On Google an upgrade or downgrade is a new purchase token naming the one it replaces, which
-    // Google ends; its room ends here too, rather than lingering to its old expiry.
-    if (purchase.replacesToken) {
-      await client.query(
-        `UPDATE billing_entitlements SET state='expired',expires_at=$1,reason='store_subscription_replaced',updated_at=$1
-         WHERE source='google' AND environment=$2 AND source_record_id=$3 AND capability=$4 AND state IN ('active','grace')`,
-        [this.now(), row.environment, purchase.replacesToken, ROOM_CAPABILITY],
-      );
+    const recordId = purchase.originalTransactionId;
+    const held = await this.entitlementFor(client, row.store, row.environment, recordId);
+    const link = { recordId, effectiveAt: purchase.purchasedAt, expiresAt: purchase.expiresAt };
+    const room = roomFor(purchase.product);
+    if (!held) {
+      await this.insertEntitlement(client, {
+        payerUserId: row.payer_user_id, journeyId: row.journey_id, store: row.store, environment: row.environment, recordId,
+        quantity: room, effectiveAt: purchase.purchasedAt, expiresAt: purchase.expiresAt, eventAt: row.purchased_at,
+      });
+    } else {
+      const moving = held.journey_id !== row.journey_id;
+      const heldUntil = held.expires_at ? new Date(held.expires_at) : null;
+      // A replaced subscription never comes back; anything not newer than what is held changes
+      // nothing; and moving to another journey takes a strictly newer payment.
+      const newer = !heldUntil || purchase.expiresAt > heldUntil || (!moving && purchase.expiresAt >= heldUntil);
+      if (held.reason !== REPLACED && newer) {
+        const now = this.now();
+        await client.query(
+          `UPDATE billing_entitlements SET payer_user_id=$1,journey_id=$2,state='active',quantity=$3,effective_at=$4,expires_at=$5,
+             last_verified_at=$6,provider_event_created_at=$7,reason=NULL,updated_at=$6
+           WHERE id=$8`,
+          [row.payer_user_id, row.journey_id, room, moving ? purchase.purchasedAt : held.effective_at, purchase.expiresAt, now, row.purchased_at, held.id],
+        );
+        if (moving) await this.moveRoom(client, held, row, room);
+      }
     }
+    await this.linkPurchase(client, row, link);
+    if (purchase.replacesToken) await this.endReplaced(client, row, purchase);
+  }
+
+  // Paid room left `held.journey_id` for `row.journey_id`. The journey it left keeps what it had
+  // for the usual grace (BILLING_GRACE_DAYS), if its room was still running, and both journeys'
+  // records say what happened, without naming the other journey to people who may not be in it.
+  async moveRoom(client, held, row, room) {
+    if (!this.history) throw new Error('Moving paid room between journeys needs the journeys\u2019 history.');
+    const now = this.now();
+    const from = held.journey_id;
+    const running = ['active', 'grace'].includes(held.state) && (!held.expires_at || new Date(held.expires_at) > now);
+    const graceUntil = running ? new Date(now.getTime() + this.config.billingGraceDays * DAY_MS) : null;
+    const leftJourney = await client.query('SELECT 1 FROM journeys WHERE id=$1', [from]);
+    if (graceUntil && leftJourney.rowCount) {
+      await this.insertEntitlement(client, {
+        payerUserId: held.payer_user_id, journeyId: from, store: held.source, environment: held.environment,
+        recordId: `${held.source_record_id}:moved:${row.id}`, state: 'grace', quantity: Number(held.quantity),
+        effectiveAt: now, expiresAt: graceUntil, eventAt: row.purchased_at, reason: MOVED,
+      });
+    }
+    if (leftJourney.rowCount) {
+      await this.history(client, {
+        journeyId: from, actorUserId: row.payer_user_id, action: 'paid_room_moved_out', entityType: 'journey', entityId: from,
+        summary: graceUntil ? 'Paid room moved to another journey; this journey has its days of grace' : 'Lapsed paid room renewed for another journey',
+        before: { people: Number(held.quantity) + INCLUDED_PEOPLE },
+        after: graceUntil ? { graceUntil: graceUntil.toISOString() } : null,
+      });
+    }
+    await this.history(client, {
+      journeyId: row.journey_id, actorUserId: row.payer_user_id, action: 'paid_room_moved_in', entityType: 'journey', entityId: row.journey_id,
+      summary: 'Paid room moved here from another journey',
+      after: { people: room + INCLUDED_PEOPLE },
+    });
+  }
+
+  // Google names, on an upgrade, downgrade or resubscription, the purchase token it replaces. That
+  // subscription's room ends when the new one starts, which for a deferred downgrade is the end of
+  // the period already paid for, not now; and it is marked replaced, so sending the old token again,
+  // while Google still reports it active, never brings it back. A token we never saw is recorded as
+  // replaced too, for the same reason.
+  async endReplaced(client, row, purchase) {
+    const startsAt = purchase.purchasedAt;
+    const old = await this.entitlementFor(client, 'google', row.environment, purchase.replacesToken);
+    const now = this.now();
+    if (!old) {
+      await this.insertEntitlement(client, {
+        payerUserId: row.payer_user_id, journeyId: row.journey_id, store: 'google', environment: row.environment, recordId: purchase.replacesToken,
+        state: 'expired', quantity: 0, effectiveAt: startsAt, expiresAt: startsAt, eventAt: row.purchased_at, reason: REPLACED,
+      });
+      return;
+    }
+    if (old.reason === REPLACED) return;
+    const oldEnd = old.expires_at ? new Date(old.expires_at) : null;
+    const ends = oldEnd && oldEnd < startsAt ? oldEnd : startsAt;
+    await client.query(
+      `UPDATE billing_entitlements SET expires_at=$1,state=$2,reason=$3,updated_at=$4 WHERE id=$5`,
+      [ends, ends <= now ? 'expired' : old.state, REPLACED, now, old.id],
+    );
+    if (old.journey_id !== row.journey_id && ends <= now) await this.moveRoom(client, old, row, roomFor(purchase.product));
   }
 
   // A pass starts now, or, when the journey already has a pass running that holds at least as many
@@ -414,13 +528,12 @@ export class StorePurchaseService {
       [row.journey_id, ROOM_CAPABILITY, row.environment, room, now],
     );
     const start = running.rows.reduce((latest, { expires_at: end }) => (new Date(end) > latest ? new Date(end) : latest), now);
-    await this.writeEntitlement(client, row, {
-      recordId: purchase.transactionId,
-      quantity: room,
-      effectiveAt: start,
-      expiresAt: passEnd(purchase.product, start, purchase.quantity),
-      onlyForward: false,
+    const end = passEnd(purchase.product, start, purchase.quantity);
+    await this.insertEntitlement(client, {
+      payerUserId: row.payer_user_id, journeyId: row.journey_id, store: row.store, environment: row.environment, recordId: purchase.transactionId,
+      quantity: room, effectiveAt: start, expiresAt: end, eventAt: row.purchased_at,
     });
+    await this.linkPurchase(client, row, { recordId: purchase.transactionId, effectiveAt: start, expiresAt: end });
   }
 
   // An extra is the moment's for good: an active slot that never lapses, one per unit bought.
@@ -486,23 +599,29 @@ export class StorePurchaseService {
       else await this.google.consumeProduct(row.product_id, row.transaction_id);
       return await done();
     } catch (error) {
-      if (!(error instanceof GooglePlayError)) throw error;
       // Google refuses to acknowledge twice. If it already has it (the phone did, or an earlier
       // attempt landed but its answer did not), it is done.
       if (await this.alreadyAcknowledged(row)) return done();
-      const attempts = Number(row.acknowledge_attempts) + 1;
-      const now = this.now();
-      const wait = ACKNOWLEDGE_BACKOFF_MS[Math.min(attempts - 1, ACKNOWLEDGE_BACKOFF_MS.length - 1)];
-      await this.pool.query(
-        `UPDATE billing_store_purchases SET acknowledge_attempts=$1,next_acknowledge_at=$2,last_acknowledge_error=$3,updated_at=$4 WHERE id=$5`,
-        [attempts, new Date(now.getTime() + wait), `${error.kind}${error.status ? ` ${error.status}` : ''}`, now, row.id],
-      );
-      const late = row.acknowledge_by && new Date(row.acknowledge_by) <= now;
-      this.log(late ? 'error' : 'warn', late ? 'google acknowledgement window missed' : 'google acknowledgement failed, will retry', {
-        purchaseId: row.id, productId: row.product_id, attempts, error: error.kind,
-      });
+      await this.backOff(row, error);
       return false;
     }
+  }
+
+  // Any failure, of whatever kind, puts this one row back in the queue with a longer wait, so it can
+  // never hold up the rows behind it.
+  async backOff(row, error) {
+    const attempts = Number(row.acknowledge_attempts) + 1;
+    const now = this.now();
+    const wait = ACKNOWLEDGE_BACKOFF_MS[Math.min(attempts - 1, ACKNOWLEDGE_BACKOFF_MS.length - 1)];
+    const kind = error instanceof GooglePlayError ? `${error.kind}${error.status ? ` ${error.status}` : ''}` : String(error?.name || 'error').slice(0, 100);
+    await this.pool.query(
+      `UPDATE billing_store_purchases SET acknowledge_attempts=$1,next_acknowledge_at=$2,last_acknowledge_error=$3,updated_at=$4 WHERE id=$5`,
+      [attempts, new Date(now.getTime() + wait), kind, now, row.id],
+    );
+    const late = row.acknowledge_by && new Date(row.acknowledge_by) <= now;
+    this.log(late ? 'error' : 'warn', late ? 'google acknowledgement window missed' : 'google acknowledgement failed, will retry', {
+      purchaseId: row.id, productId: row.product_id, attempts, error: kind,
+    });
   }
 
   async alreadyAcknowledged(row) {
@@ -530,17 +649,23 @@ export class StorePurchaseService {
       [this.now(), limit],
     );
     for (const row of due.rows) {
-      if (await this.acknowledge(row)) tally.acknowledged += 1;
+      let acknowledged = false;
+      try {
+        acknowledged = await this.acknowledge(row);
+      } catch (error) {
+        await this.backOff(row, error).catch(() => {});
+      }
+      if (acknowledged) tally.acknowledged += 1;
       else tally.retrying += 1;
     }
     return tally;
   }
 }
 
-export function createStorePurchaseService({ pool, config, fetch = globalThis.fetch, log }) {
+export function createStorePurchaseService({ pool, config, platform, fetch = globalThis.fetch, log }) {
   const apple = config.appleRootCertificates.length ? new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }) : null;
   const google = config.googlePlayServiceAccount
     ? new GooglePlayDeveloperApi({ serviceAccount: config.googlePlayServiceAccount, packageName: config.GOOGLE_PLAY_PACKAGE_NAME, fetch })
     : null;
-  return new StorePurchaseService({ pool, config, apple, google, log });
+  return new StorePurchaseService({ pool, config, apple, google, log, history: (client, event) => platform.appendEvent(client, event) });
 }

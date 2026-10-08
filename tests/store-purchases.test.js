@@ -112,7 +112,7 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
   const google = new RecordedGooglePlay();
   const logged = [];
   const store = new StorePurchaseService({
-    pool, config, now: () => clock.now, google,
+    pool, config, now: () => clock.now, google, history: (client, event) => platform.appendEvent(client, event),
     apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }),
     log: (level, message, fields) => logged.push({ level, message, ...fields }),
   });
@@ -225,6 +225,8 @@ test('a forged or tampered transaction is refused, and nothing is written', asyn
     'an unsigned token': `${Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url')}.${bigger}.`,
     'a token with no chain': signTransaction(h.chain, transactionPayload({ appAccountToken }), { header: { x5c: [] } }),
     'not a token at all': 'not-a-signed-transaction',
+    'a header that is null': `${Buffer.from('null').toString('base64url')}.${bigger}.${signature}`,
+    'a payload that is a list': `${head}.${Buffer.from('[1]').toString('base64url')}.${signature}`,
   };
   for (const [what, jws] of Object.entries(attempts)) {
     const answer = await h.apple(sam, jws);
@@ -426,6 +428,124 @@ test('a month pass from the 31st ends on the last day of the next month', () => 
   assert.equal(passEnd(month, new Date('2028-01-31T09:30:00Z')).toISOString(), '2028-02-29T09:30:00.000Z');
   assert.equal(passEnd(month, new Date('2026-12-15T00:00:00Z')).toISOString(), '2027-01-15T00:00:00.000Z');
   assert.equal(passEnd(storeProduct('room_51_week_pass'), new Date('2026-10-08T12:00:00Z'), 2).toISOString(), '2026-10-22T12:00:00.000Z');
+});
+
+test('a subscription resubscribed or upgraded from another journey moves its room there, and the journey it left gets its grace', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-buyer');
+  const alex = await h.person('alex-joins');
+  const ana = await h.person('ana-joins');
+  const first = await h.journey(sam, 'First');
+  const second = await h.journey(sam, 'Second');
+  for (const journey of [first, second]) {
+    await h.join(journey.id, alex);
+    await h.join(journey.id, ana);
+  }
+  const firstToken = (await h.identity(sam, first.id)).appAccountToken;
+  const secondToken = (await h.identity(sam, second.id)).appAccountToken;
+  const monthly = (appAccountToken, transactionId, expiresDate, productId = 'room_51_monthly', transactionReason = 'PURCHASE') => h.signed({
+    appAccountToken, transactionId, originalTransactionId: 'sub-moving', productId, type: 'Auto-Renewable Subscription', expiresDate, transactionReason,
+  });
+  const events = async (journeyId) => (await h.pool.query("SELECT action,summary,after_value FROM journey_events WHERE journey_id=$1 AND action LIKE 'paid_room%' ORDER BY sequence", [journeyId])).rows;
+
+  assert.equal((await h.apple(sam, monthly(firstToken, 'move-1', Date.parse('2026-11-08T12:00:00Z')))).statusCode, 201);
+  assert.equal((await h.capacity(first.id)).restingMemberIds.length, 0);
+
+  // Upgraded from the second journey: the room goes there, at its new size.
+  const upgraded = await h.apple(sam, monthly(secondToken, 'move-2', Date.parse('2026-11-09T12:00:00Z'), 'room_101_monthly'));
+  assert.equal(upgraded.statusCode, 201, upgraded.body);
+  assert.equal(upgraded.json().data.journeyId, second.id);
+  assert.equal(upgraded.json().data.room.people, 101);
+  const subscription = await h.pool.query("SELECT journey_id,payer_user_id,state,quantity FROM billing_entitlements WHERE source_record_id='sub-moving'");
+  assert.deepEqual(subscription.rows, [{ journey_id: second.id, payer_user_id: sam.id, state: 'active', quantity: 99 }]);
+  assert.equal((await h.capacity(second.id)).restingMemberIds.length, 0);
+
+  // The first journey keeps its room through the usual grace, with invitations waiting, and then rests.
+  const grace = await h.pool.query("SELECT state,quantity,expires_at,reason FROM billing_entitlements WHERE journey_id=$1 AND state='grace'", [first.id]);
+  assert.equal(grace.rowCount, 1);
+  assert.equal(grace.rows[0].quantity, 49);
+  assert.equal(grace.rows[0].reason, 'store_subscription_moved');
+  assert.equal(new Date(grace.rows[0].expires_at).toISOString(), new Date(h.clock.now.getTime() + 7 * DAY).toISOString());
+  const during = await h.capacity(first.id);
+  assert.deepEqual([during.restingMemberIds.length, during.canInvite], [0, false]);
+  h.clock.now = new Date(h.clock.now.getTime() + 7 * DAY + 60_000);
+  assert.equal((await h.capacity(first.id)).restingMemberIds.length, 1, 'after grace, one of three rests; nobody is removed');
+  sam.token = (await h.platform.issueTokens(sam.id)).token;
+
+  // Both journeys' records say what happened.
+  const left = await events(first.id);
+  assert.deepEqual(left.map((event) => event.action), ['paid_room_moved_out']);
+  assert.match(left[0].summary, /grace/);
+  assert.deepEqual((await events(second.id)).map((event) => event.action), ['paid_room_moved_in']);
+
+  // The older transaction, from the first journey, arriving late takes nothing back.
+  const late = await h.apple(sam, monthly(firstToken, 'move-1b', Date.parse('2026-11-08T12:00:00Z'), 'room_51_monthly', 'RENEWAL'));
+  assert.ok([200, 201].includes(late.statusCode), late.body);
+  assert.equal((await h.pool.query("SELECT journey_id FROM billing_entitlements WHERE source_record_id='sub-moving'")).rows[0].journey_id, second.id);
+
+  // Lapsed, then resubscribed from the first journey: the room comes back there. The second
+  // journey's room had already ended, so there is no grace to give, only the record.
+  h.clock.now = new Date(Date.parse('2026-11-20T12:00:00Z'));
+  sam.token = (await h.platform.issueTokens(sam.id)).token;
+  const back = await h.apple(sam, monthly(firstToken, 'move-3', Date.parse('2026-12-20T12:00:00Z')));
+  assert.equal(back.statusCode, 201, back.body);
+  assert.equal(back.json().data.journeyId, first.id);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS n FROM billing_entitlements WHERE journey_id=$1 AND state='grace'", [second.id])).rows[0].n, 0);
+  assert.equal((await events(second.id)).at(-1).summary, 'Lapsed paid room renewed for another journey');
+});
+
+test('a renewal extends the subscription whoever holds the journey now; buying it again checks', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-buyer');
+  const alex = await h.person('alex-joins');
+  const ours = await h.journey(sam);
+  await h.join(ours.id, alex);
+  const ids = await h.identity(sam, ours.id);
+  const monthly = (transactionId, expiresDate, transactionReason) => h.signed({
+    appAccountToken: ids.appAccountToken, transactionId, originalTransactionId: 'sub-renewing', productId: 'room_51_monthly',
+    type: 'Auto-Renewable Subscription', expiresDate, transactionReason,
+  });
+  assert.equal((await h.apple(sam, monthly('renew-1', Date.parse('2026-11-08T12:00:00Z'), 'PURCHASE'))).statusCode, 201);
+  h.google.record('tok-renewing', await googleRecord('subscription-active', ids));
+  assert.equal((await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-renewing' })).statusCode, 201);
+
+  // Sam hands the journey to Alex, and keeps paying.
+  await h.platform.transferOwnership(sam.id, ours.id, alex.id);
+
+  const renewed = await h.apple(sam, monthly('renew-2', Date.parse('2026-12-08T12:00:00Z'), 'RENEWAL'));
+  assert.equal(renewed.statusCode, 201, renewed.body);
+  assert.equal(renewed.json().data.room.until, '2026-12-08T12:00:00.000Z');
+  // Google's renewal keeps its token, and is the same.
+  const googleRenewal = await googleRecord('subscription-active', ids);
+  googleRenewal.lineItems = [{ ...googleRenewal.lineItems[0], expiryTime: '2026-12-08T12:00:00.000Z' }];
+  h.google.record('tok-renewing', googleRenewal);
+  const googleRenewed = await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-renewing' });
+  assert.equal(googleRenewed.statusCode, 200, googleRenewed.body);
+  assert.equal(googleRenewed.json().data.room.until, '2026-12-08T12:00:00.000Z');
+
+  // Buying it again (an upgrade, a resubscription) is a purchase, and Sam no longer holds the journey.
+  const rebought = await h.apple(sam, h.signed({
+    appAccountToken: ids.appAccountToken, transactionId: 'renew-3', originalTransactionId: 'sub-renewing', productId: 'room_101_monthly',
+    type: 'Auto-Renewable Subscription', expiresDate: Date.parse('2027-01-08T12:00:00Z'), transactionReason: 'PURCHASE',
+  }));
+  assert.equal(rebought.json().error.code, 'store_purchase_not_owner');
+  // A "renewal" of a subscription never granted here is a first purchase, and checked as one.
+  const stranger = await h.apple(sam, h.signed({
+    appAccountToken: ids.appAccountToken, transactionId: 'renew-4', originalTransactionId: 'sub-unknown', productId: 'room_51_monthly',
+    type: 'Auto-Renewable Subscription', expiresDate: Date.parse('2026-12-08T12:00:00Z'), transactionReason: 'RENEWAL',
+  }));
+  assert.equal(stranger.json().error.code, 'store_purchase_not_owner');
+});
+
+test('the web billing page shows only the web’s own entitlement', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-buyer');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  await h.apple(sam, h.signed({ appAccountToken }));
+  await h.apple(sam, h.signed({ appAccountToken, transactionId: 'queued-week' }));
+  const web = new StripeBillingService({ pool: h.pool, config: h.store.config, stripe: {}, now: () => h.clock.now });
+  assert.equal((await web.status(sam.id, ours.id)).entitlement, null);
 });
 
 test('a monthly subscription is one entitlement that only moves forward as it renews', async (t) => {
@@ -712,6 +832,83 @@ test('a Google upgrade ends the room of the subscription it replaces', async (t)
     { source_record_id: 'token-101', state: 'active', quantity: 99 },
     { source_record_id: 'token-51', state: 'expired', quantity: 49 },
   ]);
+  // Sending the old token again, while Google still reports it active, never brings it back.
+  assert.equal((await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'token-51' })).statusCode, 200);
+  const again = await h.pool.query("SELECT state,reason FROM billing_entitlements WHERE source_record_id='token-51'");
+  assert.deepEqual(again.rows, [{ state: 'expired', reason: 'store_subscription_replaced' }]);
+});
+
+test('a deferred Google downgrade runs the paid-for size to its end, and a replaced subscription never comes back', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-buyer');
+  const ours = await h.journey(sam);
+  const ids = await h.identity(sam, ours.id);
+  const big = await googleRecord('subscription-active', ids);
+  big.lineItems = [{ ...big.lineItems[0], productId: 'room_101_monthly', expiryTime: '2026-11-08T12:00:00.000Z' }];
+  h.google.record('tok-101', big);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_monthly', purchaseToken: 'tok-101' })).statusCode, 201);
+
+  // Downgraded with DEFERRED replacement: the 51 starts when the paid-for 101 period ends.
+  const small = await googleRecord('subscription-active', ids, { linkedPurchaseToken: 'tok-101', startTime: '2026-11-08T12:00:00.000Z' });
+  small.lineItems = [{ ...small.lineItems[0], productId: 'room_51_monthly', expiryTime: '2026-12-08T12:00:00.000Z' }];
+  h.google.record('tok-51', small);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-51' })).statusCode, 201);
+  const rows = async () => (await h.pool.query('SELECT source_record_id,state,quantity,effective_at,expires_at,reason FROM billing_entitlements WHERE journey_id=$1 ORDER BY source_record_id', [ours.id])).rows
+    .map((row) => ({ ...row, effective_at: new Date(row.effective_at).toISOString(), expires_at: new Date(row.expires_at).toISOString() }));
+  assert.deepEqual(await rows(), [
+    { source_record_id: 'tok-101', state: 'active', quantity: 99, effective_at: '2026-10-08T12:00:00.000Z', expires_at: '2026-11-08T12:00:00.000Z', reason: 'store_subscription_replaced' },
+    { source_record_id: 'tok-51', state: 'active', quantity: 49, effective_at: '2026-11-08T12:00:00.000Z', expires_at: '2026-12-08T12:00:00.000Z', reason: null },
+  ]);
+  const held = async () => (await h.pool.query(
+    `SELECT quantity FROM billing_entitlements WHERE journey_id=$1 AND state IN ('active','grace') AND effective_at<=$2 AND expires_at>$2 ORDER BY quantity DESC LIMIT 1`,
+    [ours.id, h.clock.now],
+  )).rows[0]?.quantity;
+  assert.equal(await held(), 99, 'the 101 room runs to the end of what was paid for');
+
+  // Google still reports the old token active, and later than before: it stays replaced.
+  big.lineItems = [{ ...big.lineItems[0], expiryTime: '2026-12-08T12:00:00.000Z' }];
+  h.google.record('tok-101', big);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_monthly', purchaseToken: 'tok-101' })).statusCode, 200);
+  assert.deepEqual((await rows())[0].expires_at, '2026-11-08T12:00:00.000Z');
+  assert.equal((await rows())[0].reason, 'store_subscription_replaced');
+
+  h.clock.now = new Date('2026-11-09T12:00:00Z');
+  assert.equal(await held(), 49);
+  sam.token = (await h.platform.issueTokens(sam.id)).token;
+
+  // A replaced token we had never seen is recorded as replaced, and sending it later grants nothing.
+  const after = await googleRecord('subscription-active', ids, { linkedPurchaseToken: 'tok-never-sent', startTime: '2026-11-09T12:00:00.000Z' });
+  after.lineItems = [{ ...after.lineItems[0], expiryTime: '2026-12-09T12:00:00.000Z' }];
+  h.google.record('tok-after', after);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-after' })).statusCode, 201);
+  const unseen = await googleRecord('subscription-active', ids);
+  unseen.lineItems = [{ ...unseen.lineItems[0], expiryTime: '2026-12-09T12:00:00.000Z' }];
+  h.google.record('tok-never-sent', unseen);
+  await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-never-sent' });
+  const tombstone = await h.pool.query("SELECT state,quantity,reason FROM billing_entitlements WHERE source_record_id='tok-never-sent'");
+  assert.deepEqual(tombstone.rows, [{ state: 'expired', quantity: 0, reason: 'store_subscription_replaced' }]);
+});
+
+test('one acknowledgement that fails in an unexpected way never holds up the rest', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-buyer');
+  const ours = await h.journey(sam);
+  const ids = await h.identity(sam, ours.id);
+  h.google.record('tok-first', await googleRecord('product-pass', ids));
+  h.google.record('tok-second', await googleRecord('product-pass', ids, { orderId: 'GPA.3300-0000-0000-00010' }));
+  h.google.failNext.push(new GooglePlayError('unavailable', 503), new GooglePlayError('unavailable', 503));
+  await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-first' });
+  await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-second' });
+  h.clock.now = new Date(h.clock.now.getTime() + 10 * 60 * 1000);
+  // The first row's call blows up with something that is not a Google answer at all.
+  h.google.failNext.push(new TypeError('Unexpected token < in JSON'));
+  assert.deepEqual(await h.store.acknowledgePending(), { acknowledged: 1, retrying: 1 });
+  const rows = (await h.pool.query('SELECT transaction_id,acknowledgement,last_acknowledge_error,next_acknowledge_at FROM billing_store_purchases ORDER BY created_at,transaction_id')).rows;
+  const byToken = Object.fromEntries(rows.map((row) => [row.transaction_id, row]));
+  assert.equal(byToken['tok-second'].acknowledgement, 'done');
+  assert.equal(byToken['tok-first'].acknowledgement, 'pending');
+  assert.equal(byToken['tok-first'].last_acknowledge_error, 'TypeError');
+  assert.ok(new Date(byToken['tok-first'].next_acknowledge_at) > h.clock.now, 'it waits its turn again, rather than blocking the queue');
 });
 
 test('a store that is not configured says so, and asks for the purchase again later', async (t) => {

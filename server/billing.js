@@ -341,12 +341,14 @@ export class StripeBillingService {
     }
   }
 
+  // The web billing page, about the web's subscription. Room bought in a store, or a pass waiting
+  // to start, is not this page's to show as "the" entitlement; capacity reads every source.
   async status(userId, journeyId) {
     const owner = await this.requireJourneyOwner(userId, journeyId);
     const [entitlements, subscriptions, invoices] = await Promise.all([
       this.pool.query(
         `SELECT capability,source,state,quantity,effective_at,expires_at,last_verified_at,reason
-         FROM billing_entitlements WHERE journey_id=$1 AND environment=$2 ORDER BY updated_at DESC`,
+         FROM billing_entitlements WHERE journey_id=$1 AND environment=$2 AND source='stripe' ORDER BY updated_at DESC`,
         [journeyId, this.environment],
       ),
       this.pool.query(

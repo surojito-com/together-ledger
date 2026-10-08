@@ -128,3 +128,17 @@ test('the command ships in the image, prints no password, and the notes carry no
   assert.match(notes, /node server\/seed-review-journey\.js/);
   assert.doesNotMatch(notes, /REVIEW_PASSWORD=(?!…|\.\.\.|<)\S/, 'the password lives in the env file and the store form, never here');
 });
+
+test('a rebuild says exactly which sandbox testers to set, since the reviewer\u2019s account id changes (#272)', async (t) => {
+  const db = await database();
+  t.after(() => db.pool.end());
+  const first = await seed(db);
+  assert.equal(first.storeSandboxAccountIds, `STORE_SANDBOX_ACCOUNT_IDS=${first.reviewer.id}`);
+
+  // The owner's own test account stays on the list; the deleted reviewer comes off it.
+  const { user: owner } = await db.platform.register({ email: 'owner-tester@example.test', username: 'owner-tester', password: 'a long enough password' }, 'http://127.0.0.1:4174', { issueSession: false });
+  db.config.storeSandboxAccountIds = [first.reviewer.id, owner.id];
+  const second = await seed(db);
+  assert.notEqual(second.reviewer.id, first.reviewer.id);
+  assert.equal(second.storeSandboxAccountIds, `STORE_SANDBOX_ACCOUNT_IDS=${owner.id},${second.reviewer.id}`);
+});

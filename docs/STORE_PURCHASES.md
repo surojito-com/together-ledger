@@ -119,7 +119,7 @@ it means paying for it (the Book, 4.7); anyone in the journey can buy an extra f
 
 | Product | Becomes |
 |---|---|
-| `room_51_monthly`, `room_101_monthly` | One `billing_entitlements` row (`source` `apple` or `google`) for the life of the subscription, keyed by Apple's `originalTransactionId` or Google's purchase token. Each renewal sent moves its end forward; a late, older one never moves it back. An Apple upgrade from 51 to 101 is the same row at the new size. A Google upgrade is a new token naming the old one, and the old one's room ends. |
+| `room_51_monthly`, `room_101_monthly` | One `billing_entitlements` row (`source` `apple` or `google`) for the life of the subscription, keyed by Apple's `originalTransactionId` or Google's purchase token. Each renewal sent moves its end forward; a late, older one never moves it back. An Apple upgrade from 51 to 101 is the same row at the new size. A Google upgrade or downgrade is a new token naming the old one; see "Subscriptions over time" below. |
 | `room_51_week_pass`, `room_101_week_pass` | Its own row, 7 days long. |
 | `room_51_month_pass`, `room_101_month_pass` | Its own row, a calendar month long: the same day next month, or the month's last day when there is no such day (Jan 31 runs to Feb 28 or 29). |
 | `extra_photo`, `extra_place` | An active slot on the moment, `moment_image_slots` or `moment_location_slots`, the same slot a web payment makes. It never lapses. |
@@ -132,6 +132,33 @@ people: a second week adds a week rather than overlapping the first. A bigger pa
 starts straight away, because making room for more people is why it was bought, and the smaller one runs on
 beneath it. Passes from either store count, because the room is the journey's. A pass starts when our server
 honours it, never earlier, so a purchase that reaches us late loses none of its days.
+
+### Subscriptions over time
+
+Decided by the owner, Oct 8, 2026, after review of #335:
+
+- **A renewal extends the subscription without checking ownership again.** On Google a renewal keeps its purchase
+  token, so it arrives as the same purchase. On Apple it has a new `transactionId`, and counts as a renewal when Apple
+  marks it `transactionReason: RENEWAL` and it continues a subscription already granted to the same journey. Either
+  way it extends the room even if the payer has since handed the journey to someone else. Refusing it would leave
+  them paying Apple or Google for nothing. Ownership is checked when a subscription is first bought, resubscribed,
+  upgraded or moved, all of which Apple marks `PURCHASE`.
+- **The room follows the journey the person has just paid from.** Apple keeps the `originalTransactionId` across a
+  resubscription or an upgrade, and the person may make it from another journey (that journey's `appAccountToken`).
+  - The entitlement moves to that journey.
+  - The journey it left goes into the usual grace (`BILLING_GRACE_DAYS`, 7) if its room was still running:
+    invitations wait, and when grace ends the people beyond two rest. Nobody is removed.
+  - Both journeys' records get an event, `paid_room_moved_out` and `paid_room_moved_in`, without naming the other
+    journey.
+  - A move needs a strictly newer payment, so an older transaction from the first journey arriving late moves
+    nothing back.
+- **A replaced Google subscription never comes back.** An upgrade, downgrade or resubscription on Google is a new
+  token naming the one it replaces (`linkedPurchaseToken`).
+  - The old token's room ends when the new purchase starts. For a deferred downgrade from 101 to 51, that is the end
+    of the 101 period already paid for, not the moment of the downgrade.
+  - The old token's room is marked `store_subscription_replaced` and is never made active again, even if the old
+    token is sent while Google still reports it active.
+  - A replaced token we had never seen is recorded the same way, so sending it later grants nothing.
 
 While a journey holds more than one entitlement, it has the most generous one that has started and not ended,
 fully paid ahead of in grace. That is a placeholder for the rules #274 and #276 will settle.
@@ -164,10 +191,10 @@ still honours: the App Review sample account (#260) and the owner's own test acc
 - An id that is not a UUID stops the server from starting.
 
 **The review account's id changes when it is rebuilt.** `server/seed-review-journey.js` deletes both sample accounts
-and makes them again on every run, so each run gives the reviewer a new account id. After rebuilding it, look the new
-id up (`SELECT id FROM users WHERE username='app-review-sam' AND deleted_at IS NULL`) and put it in
-`STORE_SANDBOX_ACCOUNT_IDS` before the next review. The old id belongs to a deleted account, which no purchase can
-use anyway.
+and makes them again on every run (#260), so each run gives the reviewer a new account id. The script prints the exact
+line to set: `STORE_SANDBOX_ACCOUNT_IDS=…`, which keeps the configured ids that still belong to an account (your own
+test accounts), drops the deleted reviewer, and adds the new one. Set it in the live server's environment and restart
+before the next review. Until then, the old id belongs to a deleted account, which no purchase can use anyway.
 
 ### Google's three days
 
@@ -177,7 +204,8 @@ a pass or extra with `purchases.products.consume`, which acknowledges it and let
 recommends consuming from a secure backend). If Google can't be reached, the row stays `pending`. The server looks
 every ten minutes for pending rows whose wait is over (1, 5, 15 and 30 minutes after successive failures, then an
 hour, then every two hours) and tries again, and it also tries again whenever the phone sends the purchase. One already acknowledged or consumed, by the phone or an earlier attempt, is
-recorded as done without asking twice. A purchase still pending at its deadline is logged as an error, `google
+recorded as done without asking twice. Any failure on one purchase, of whatever kind (a Google error, an answer that
+is not JSON, a bug), puts only that purchase back in the queue with a longer wait, so it never holds up the others. A purchase still pending at its deadline is logged as an error, `google
 acknowledgement window missed`.
 
 ### When the store has the money and our write fails
