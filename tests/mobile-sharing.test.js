@@ -154,6 +154,7 @@ test('the grace banner says the same on the phone as on the web, in the caution 
     [{ ...waiting, daysLeft: 1, canRequest: false }, 'sam', 5],
     [{ ...waiting, keepAdding: [sam] }, 'bo', 1],
     [{ ...waiting, requestsUsed: 6, canRequest: false }, 'sam', 5],
+    [{ ...waiting, requestsUsed: 7, canRequest: false }, 'sam', 5],
     [{ ...waiting, keepAdding: [sam, alex, bo] }, 'alex', 3],
   ];
   for (const [grace, viewerId, peopleHere] of cases) {
@@ -167,6 +168,8 @@ test('the grace banner says the same on the phone as on the web, in the caution 
   assert.equal(view.graceRequestNote({ ...waiting, canRequest: false }, 'bo'), '', 'only the payer is told when they can ask');
   assert.equal(view.graceRequestNote({ ...waiting, requestsUsed: 6, canRequest: false }, 'sam'), 'All 6 extra weeks for 2026 have been asked for. The count starts again on January 1.');
   assert.equal(view.graceRequestNote({ ...waiting, requestsUsed: 6, canRequest: false }, 'alex'), '');
+  // A journey that took a seventh week under the old limit of 7 reads as all six, never 7 of 6.
+  assert.match(view.graceBannerCopy({ ...waiting, requestsUsed: 7, canRequest: false }, 'bo', 5), /· 6 of 6 extra weeks asked for this year\./);
   assert.equal(view.mayRequestGrace(waiting, 'sam'), true);
   assert.equal(view.mayRequestGrace(waiting, 'alex'), false);
   assert.equal(view.mayRequestGrace(null, 'sam'), false);

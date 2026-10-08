@@ -1465,7 +1465,7 @@ test('six weeks asked for a calendar year, and a seventh refused, counted again 
   assert.equal(capacity.grace.requestsUsed, 6);
   assert.equal(capacity.grace.requestsPerYear, 6);
   assert.equal(capacity.grace.canRequest, false);
-  await assert.rejects(ask(owner), (error) => refusedWith('grace_requests_used')(error) && /All 6 extra weeks for 2026/.test(error.message) && /starts again on January 1/.test(error.message));
+  await assert.rejects(ask(owner), (error) => refusedWith('grace_requests_used')(error) && /All 6 extra weeks for 2026 have been asked for\./.test(error.message) && /starts again on January 1/.test(error.message));
 
   // The database holds the limit too, so two requests racing cannot both be the seventh.
   await assert.rejects(pool.query(

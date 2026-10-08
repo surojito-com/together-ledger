@@ -895,7 +895,7 @@ export class PlatformService {
       if (!grace) throw new PlatformError(409, 'not_in_grace', 'This journey is not waiting on a payment.');
       if (grace.payer_user_id !== userId) throw new PlatformError(403, 'not_payer', 'Only the person who pays for this journey can ask for more time.');
       if (payment.requestsUsed >= GRACE_REQUESTS_PER_YEAR) {
-        throw new PlatformError(409, 'grace_requests_used', `All ${GRACE_REQUESTS_PER_YEAR} extra weeks for ${payment.calendarYear} have been used. The count starts again on January 1.`);
+        throw new PlatformError(409, 'grace_requests_used', `All ${GRACE_REQUESTS_PER_YEAR} extra weeks for ${payment.calendarYear} have been asked for. The count starts again on January 1.`);
       }
       const now = this.now();
       if (grace.until.getTime() - now.getTime() > GRACE_REQUEST_DAYS * DAY_MS) {

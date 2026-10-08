@@ -454,15 +454,34 @@ export class StorePurchaseService {
     if (purchase.replacesToken) await this.endReplaced(client, row, purchase);
   }
 
-  // Paid room left `held.journey_id` for `row.journey_id`. The journey it left keeps what it had
-  // for the usual grace (BILLING_GRACE_DAYS), if its room was still running, and both journeys'
-  // records say what happened, without naming the other journey to people who may not be in it.
+  // How long the journey paid room is leaving keeps it. Room still running gives the usual grace
+  // (BILLING_GRACE_DAYS) from now. Room that had already lapsed but is still inside its grace
+  // (its end plus the 7 days, plus any week the payer asked for, as paymentFor in platform.js
+  // reads it) keeps exactly the time it had left (owner, Oct 8, 2026), so the banner doesn't
+  // vanish and nobody rests early. Past that, or for a replaced subscription, nothing.
+  async graceLeftBehind(client, held, now) {
+    if (!['active', 'grace'].includes(held.state)) return null;
+    const end = held.expires_at ? new Date(held.expires_at) : null;
+    if (held.state === 'active' && (!end || end > now)) return new Date(now.getTime() + this.config.billingGraceDays * DAY_MS);
+    if (held.reason === REPLACED) return null;
+    const automaticEnd = held.state === 'active' ? new Date(end.getTime() + this.config.billingGraceDays * DAY_MS) : end;
+    const asked = await client.query('SELECT grace_basis,grace_until FROM journey_grace_requests WHERE journey_id=$1', [held.journey_id]);
+    let until = automaticEnd;
+    for (const request of asked.rows) {
+      const askedUntil = new Date(request.grace_until);
+      if (new Date(request.grace_basis).getTime() === automaticEnd.getTime() && askedUntil > until) until = askedUntil;
+    }
+    return until > now ? until : null;
+  }
+
+  // Paid room left `held.journey_id` for `row.journey_id`. The journey it left keeps a grace
+  // (graceLeftBehind), and both journeys' records say what happened, without naming the other
+  // journey to people who may not be in it.
   async moveRoom(client, held, row, room) {
     if (!this.history) throw new Error('Moving paid room between journeys needs the journeys\u2019 history.');
     const now = this.now();
     const from = held.journey_id;
-    const running = ['active', 'grace'].includes(held.state) && (!held.expires_at || new Date(held.expires_at) > now);
-    const graceUntil = running ? new Date(now.getTime() + this.config.billingGraceDays * DAY_MS) : null;
+    const graceUntil = await this.graceLeftBehind(client, held, now);
     const leftJourney = await client.query('SELECT 1 FROM journeys WHERE id=$1', [from]);
     if (graceUntil && leftJourney.rowCount) {
       await this.insertEntitlement(client, {
@@ -510,6 +529,29 @@ export class StorePurchaseService {
       [ends, ends <= now ? 'expired' : old.state, REPLACED, now, old.id],
     );
     if (old.journey_id !== row.journey_id && ends <= now) await this.moveRoom(client, old, row, roomFor(purchase.product));
+    // A deferred replacement from another journey: the old room runs on there until the period
+    // already paid for ends. Marked replaced, it gets no grace of its own, so the old journey is
+    // given the usual one, starting at that end (owner, Oct 8, 2026), and told so now.
+    if (old.journey_id !== row.journey_id && ends > now) await this.graceAfterDeferredReplacement(client, old, row, ends);
+  }
+
+  async graceAfterDeferredReplacement(client, old, row, ends) {
+    const leftJourney = await client.query('SELECT 1 FROM journeys WHERE id=$1', [old.journey_id]);
+    if (!leftJourney.rowCount) return;
+    const graceUntil = new Date(ends.getTime() + this.config.billingGraceDays * DAY_MS);
+    await this.insertEntitlement(client, {
+      payerUserId: old.payer_user_id, journeyId: old.journey_id, store: old.source, environment: old.environment,
+      recordId: `${old.source_record_id}:replaced:${row.id}`, state: 'grace', quantity: Number(old.quantity),
+      effectiveAt: ends, expiresAt: graceUntil, eventAt: row.purchased_at, reason: MOVED,
+    });
+    if (this.history) {
+      await this.history(client, {
+        journeyId: old.journey_id, actorUserId: row.payer_user_id, action: 'paid_room_moved_out', entityType: 'journey', entityId: old.journey_id,
+        summary: 'Paid room moves to another journey when this period ends; this journey then has its days of grace',
+        before: { people: Number(old.quantity) + INCLUDED_PEOPLE },
+        after: { roomUntil: ends.toISOString(), graceUntil: graceUntil.toISOString() },
+      });
+    }
   }
 
   // A pass starts now, or, when the journey already has a pass running that holds at least as many

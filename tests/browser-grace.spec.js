@@ -84,6 +84,14 @@ test('the payer asks for another week from the banner', async ({ page }) => {
   await expect.poll(() => requests.grace).toBe(1);
 });
 
+test('once every week has been asked for, the payer is told the count starts again on January 1', async ({ page }) => {
+  // Seven taken under the old limit of 7 still reads as all six.
+  await openJourney(page, sam, { role: 'owner', capacity: { restOrder: [bo.id, alex.id], grace: { ...grace, requestsUsed: 7, canRequest: false } } });
+  await expect(page.locator('#grace-banner-message')).toContainText('· 6 of 6 extra weeks asked for this year.');
+  await expect(page.locator('#grace-banner-note')).toHaveText('All 6 extra weeks for 2026 have been asked for. The count starts again on January 1.');
+  await expect(page.getByRole('button', { name: 'Ask for 7 more days' })).toBeHidden();
+});
+
 test('the owner sees the saved resting order, the person who keeps adding, and no choice to pause', async ({ page }) => {
   const requests = await openJourney(page, sam, { role: 'owner', capacity: { restOrder: [bo.id, alex.id] } });
   await page.getByRole('button', { name: 'Journey settings' }).click();
