@@ -4,6 +4,9 @@ import { createPool, runMigrations } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
+import { AppleTransactionVerifier } from '../server/store-apple.js';
+import { StorePurchaseService } from '../server/store-purchases.js';
+import { appleChain, signTransaction, transactionPayload } from './support/apple-signing.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
@@ -24,7 +27,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -107,4 +110,71 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.match(deleted.rows[0].username, /^deleted-/);
   assert.equal(deleted.rows[0].display_name, 'Deleted account');
   assert.ok(deleted.rows[0].deleted_at);
+});
+
+// pg-mem neither runs two transactions at once nor rolls one back, so the two cases a store purchase
+// most depends on are proven here (#272): the same transaction sent twice at the same moment grants
+// once, because the unique row decides it; and a grant that fails halfway leaves nothing behind for
+// a retry to trip over, so the phone sending it again on its next launch is the way back.
+test('real PostgreSQL grants a store purchase once, and a failed grant leaves nothing behind', { skip: !databaseUrl }, async (t) => {
+  const chain = appleChain();
+  const config = loadConfig({
+    NODE_ENV: 'development',
+    JOURNEY_CAPACITY_MODE: 'billing',
+    DATABASE_URL: databaseUrl,
+    SESSION_SECRET: 's'.repeat(32),
+    AUDIT_HMAC_KEY: 'a'.repeat(32),
+    APPLE_ROOT_CERTIFICATES: chain.rootBase64,
+  });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const email = `store-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `store-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Store proof', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const { appAccountToken } = await platform.storePurchaseIdentity(user.id, journey.id);
+  const store = new StorePurchaseService({ pool, config, apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }), log: () => {} });
+  const purchase = (transactionId) => signTransaction(chain, transactionPayload({ appAccountToken, transactionId, originalTransactionId: transactionId, purchaseDate: Date.now() }));
+
+  const twice = purchase(`race-${suffix}`);
+  const answers = await Promise.all([store.verifyApple(user.id, { signedTransaction: twice }), store.verifyApple(user.id, { signedTransaction: twice })]);
+  assert.deepEqual(answers.map((answer) => answer.granted).sort(), [false, true]);
+  const granted = await pool.query('SELECT count(*)::int AS count FROM billing_entitlements WHERE journey_id=$1', [journey.id]);
+  assert.equal(granted.rows[0].count, 1);
+
+  const connect = pool.connect.bind(pool);
+  pool.connect = async () => {
+    const client = await connect();
+    const { query, release } = client;
+    client.query = (text, ...rest) => {
+      if (typeof text === 'string' && text.includes('INSERT INTO billing_entitlements')) return Promise.reject(new Error('the write failed'));
+      return query.call(client, text, ...rest);
+    };
+    // The pool hands this client out again, so it goes back as it came.
+    client.release = (...args) => {
+      client.query = query;
+      client.release = release;
+      return release.call(client, ...args);
+    };
+    return client;
+  };
+  const halfway = purchase(`halfway-${suffix}`);
+  await assert.rejects(store.verifyApple(user.id, { signedTransaction: halfway }), /the write failed/);
+  pool.connect = connect;
+  const left = await pool.query('SELECT count(*)::int AS count FROM billing_store_purchases WHERE transaction_id=$1', [`halfway-${suffix}`]);
+  assert.equal(left.rows[0].count, 0, 'the purchase row rolled back with the grant it was part of');
+  const retried = await store.verifyApple(user.id, { signedTransaction: halfway });
+  assert.equal(retried.granted, true);
+  assert.equal(retried.room.people, 51);
+
+  // A slot can now be a sandbox one: the environment check migration 028 replaced, on real Postgres.
+  const moment = await platform.createMoment(user.id, journey.id, { kind: 'memory', title: 'A photo more', detail: '', occurredOn: '2026-10-01', visibility: 'shared-now', moneyCents: null, moneyCurrency: '', locations: [] });
+  const photo = signTransaction(chain, transactionPayload({ appAccountToken, transactionId: `photo-${suffix}`, productId: 'extra_photo', type: 'Consumable', purchaseDate: Date.now() }));
+  const extra = await store.verifyApple(user.id, { signedTransaction: photo, momentId: moment.id });
+  assert.equal(extra.extra.slotIds.length, 1);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
 });

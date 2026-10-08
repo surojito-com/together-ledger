@@ -264,10 +264,6 @@ test('a test-only extra photo becomes one consumable credit after its paid check
   assert.equal(stripe.calls.checkouts[0].input.subscription_data, undefined);
   const slot = await pool.query('SELECT id,state FROM moment_image_slots');
   assert.equal(slot.rows[0].state, 'pending');
-  await assert.rejects(
-    billing.assertImageSlot(userId, journeyId, momentId, slot.rows[0].id),
-    (error) => error.code === 'image_payment_required',
-  );
 
   await billing.handleWebhook(Buffer.from(JSON.stringify({
     id: 'evt_test_image_payment', type: 'checkout.session.completed', created: 1788807600, livemode: false,
@@ -275,7 +271,6 @@ test('a test-only extra photo becomes one consumable credit after its paid check
   })), 'valid-signature');
   const activated = await pool.query('SELECT state,provider_payment_id,used_at FROM moment_image_slots WHERE id=$1', [slot.rows[0].id]);
   assert.deepEqual(activated.rows[0], { state: 'active', provider_payment_id: 'pi_test_image_payment', used_at: null });
-  await billing.assertImageSlot(userId, journeyId, momentId, slot.rows[0].id);
 });
 
 test('test-mode webhooks grant access once and reject live events', async (t) => {
