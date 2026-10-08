@@ -360,7 +360,7 @@ date the owner confirmed it. All were confirmed on Oct 8, 2026.
 
 | Question | Answer | Why |
 |---|---|---|
-| Does your app collect or share any of the required user data types? | **Yes** | Email, name, user id, user content, in-app messages, precise location (1.1) |
+| Does your app collect or share any of the required user data types? | **Yes** | Email, name, user id, user content, precise location (1.1) |
 | Is all of the user data collected by your app encrypted in transit? | **Yes** | 2.11 |
 | Which ways can users create an account? | **Username and password** (and "OAuth" only once Google or Apple sign-in reaches the phone, 1.5) | `client.ts:136-142` |
 | Do you provide a way for users to request that their data is deleted? | **Yes** | 2.8 |
@@ -386,7 +386,7 @@ own definitions. No data is processed ephemerally; all of it is stored.
 | Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision (owner, Oct 8, 2026)**: it is context the person types, not an account balance, but declaring it is the safer reading |
 | Health and fitness | No | No | — | — | |
 | Messages → Emails, SMS or MMS | No | No | — | — | The app sends no message content written by the person; the proposal note is declared below |
-| Messages → **Other in-app messages** | **Yes** | No | **Optional** | **App functionality** | Return-to conversations (title, detail, status), which journeyers write to each other (`client.ts:254-263`, `apps/mobile/app/concern.tsx:34`). **Decision (owner, Oct 8, 2026)**: journey conversations are messages between people |
+| Messages → **Other in-app messages** | No | No | — | — | **Decision (owner, Oct 8, 2026)**: a return-to conversation is a titled record with a status, kept in the journey alongside moments, not a chat thread. It is declared below as user-generated content |
 | Photos and videos → **Photos** | No | No | — | — | Becomes **Yes, Optional, App functionality** when the phone can attach photos (#187), 1.2 |
 | Photos and videos → Videos | No | No | — | — | |
 | Audio files | No | No | — | — | |
@@ -395,7 +395,7 @@ own definitions. No data is processed ephemerally; all of it is stored.
 | Contacts | No | No | — | — | A proposed email is typed, never read from contacts |
 | App activity → App interactions | No | No | — | — | **Decision (owner, Oct 8, 2026)**: the journey history records what a person did to shared records so others can see it; it is the content itself, not usage measurement |
 | App activity → In-app search history, Installed apps | No | No | — | — | |
-| App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), notes on proposals (2.2). Return-to conversations are declared under Other in-app messages |
+| App activity → **Other user-generated content** | **Yes** | No | **Optional** | **App functionality** | Journey names and places, moments (title, detail, places in words), return-to conversations (title, detail, status; `client.ts:254-263`), notes on proposals (2.2). **Decision (owner, Oct 8, 2026)** for the conversations |
 | App activity → Other actions | No | No | — | — | |
 | Web browsing | No | No | — | — | |
 | App info and performance → Crash logs, Diagnostics, Other app performance data | No | No | — | — | No crash or analytics SDK (2.5). **Decision (owner, Oct 8, 2026)**: the server's request logs (address, time, route, status) are operational logs kept 2.7's limit, not app diagnostics |
@@ -428,10 +428,10 @@ the privacy policy (Part 4).
 | Location → Coarse Location | No | — | |
 | Sensitive Info | No | — | **Decision (owner, Oct 8, 2026)**, as in 3.1 |
 | Contacts | No | — | |
-| User Content → **Emails or Text Messages** | **Yes** | **App Functionality** | Return-to conversations, which journeyers write to each other (`client.ts:254-263`). Apple has no in-app messages type; this is the same answer as Play's Other in-app messages, for the same reason. **Decision (owner, Oct 8, 2026)** |
+| User Content → Emails or Text Messages | No | — | **Decision (owner, Oct 8, 2026)**: return-to conversations are records in the journey, declared under Other User Content, as on Play |
 | User Content → **Photos or Videos** | No | — | Becomes **Yes, App Functionality** with #187 |
 | User Content → Audio Data, Gameplay Content, Customer Support | No | — | Support is by email, outside the app |
-| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1. Return-to conversations are declared under Emails or Text Messages |
+| User Content → **Other User Content** | **Yes** | **App Functionality** | As "Other user-generated content" in 3.1, return-to conversations included |
 | Browsing History, Search History | No | — | |
 | Identifiers → **User ID** | **Yes** | **App Functionality** | The username and the account id behind the tokens |
 | Identifiers → Device ID | No | — | |
