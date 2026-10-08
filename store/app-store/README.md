@@ -68,12 +68,12 @@ the name.
 
 ## The subtitle
 
-**"Private moments, kept together"**, chosen by the owner on Oct 8, unless #304
-decides otherwise. #304 was decided on Oct 6: "two people" is the product's
-identity, and more people can join. The subtitle names neither "two people" nor
-"people", so it doesn't contradict that, and the description's first line still
-says "a private place for two people". If #304's decision changes, revisit the
-subtitle with it.
+**"A private place for two people"** (28 of 30 characters), decided on Oct 8.
+It follows #304, decided on Oct 6: "two people" is the product's identity, and
+more people can join. It matches the Play listing's short description, which
+opens "A private place for two people to hold what matters", so both stores say
+the same thing. ("Private moments, kept together" was considered first, on the
+mistaken belief that #304 was still open.)
 
 ## Store settings to enter alongside them
 
@@ -108,31 +108,21 @@ outside them do:
 
 ### Support URL
 
-**There is no support page on `app.together-ledger.com`.**
-`https://app.together-ledger.com/support` answers 200, but only because the
-web app serves its home page for any path it doesn't know (checked Oct 8). So
-it must not be entered.
+**`https://app.together-ledger.com/support`, on both stores** (owner, Oct 8).
+It is the product's own page, next to `/privacy` and `/terms`, and built the
+same way: `SUPPORT.md` is rendered by `scripts/render-privacy-page.mjs` and
+written as `support.html` by `scripts/build-public-site.mjs`. Before this, the
+web app answered that address with its home page, because it serves the home
+page for any path it doesn't know.
 
-**The company site has one:** `https://together-ledger.com/support`
-("Support — Together Ledger Digital", built in the `together-ledger.com`
-repository). It already gives Together Ledger's address,
-ledger-support@together-ledger.com, how to delete an account, and the privacy
-policy link.
+The page gives the support address, ledger-support@together-ledger.com, and
+says how to recover a password, restore purchases, get a refund and delete an
+account, on the phone and on the web. `tests/support-page.test.js` checks that
+every step it describes is one the web and the phone really offer.
 
-**Proposed: use `https://together-ledger.com/support` as the support URL on
-both stores**, once two lines on it are corrected in the `together-ledger.com`
-repository:
-
-- It says "Phone apps are in development." That stops being true when the
-  iPhone app ships.
-- Its deletion steps describe only the web ("open Account settings"). On the
-  phone it is Settings → Delete account (`apps/mobile/app/delete-account.tsx`),
-  which also says first that a store subscription isn't cancelled by deleting
-  the account.
-
-The alternative is a product page at `app.together-ledger.com/support`, built
-from a `SUPPORT.md` the way `/privacy` and `/terms` are built. That is more to
-keep in step for no gain at this size, so it isn't the proposal.
+`https://together-ledger.com/support` is the company's support page and stays
+the company's. It still says the phone apps are in development, which should be
+corrected in the `together-ledger.com` repository when the apps ship.
 
 ## The App Review notes
 
@@ -234,9 +224,7 @@ Oct 8 (owner decision), so neither listing can drift unnoticed.
 ## Open calls for the owner
 
 1. **Every sentence** in these files, quoted in the PR.
-2. **The support URL**: the proposal above, and the two corrections to
-   `together-ledger.com/support` it needs.
-3. **The Play "Delete account URL"**: stay on
+2. **The Play "Delete account URL"**: stay on
    `https://together-ledger.com/privacy`, or move.
-4. **Screenshots**, from a build: `store/google-play/SCREENSHOTS.md` is the
+3. **Screenshots**, from a build: `store/google-play/SCREENSHOTS.md` is the
    shot list for both stores, and they go in `store/app-store/screenshots/`.

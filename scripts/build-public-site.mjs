@@ -1,7 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { renderPrivacyPage, renderTermsPage } from './render-privacy-page.mjs';
+import { renderPrivacyPage, renderSupportPage, renderTermsPage } from './render-privacy-page.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(root, '_site');
@@ -33,6 +33,8 @@ cpSync(join(root, 'public'), output, { recursive: true });
 writeFileSync(join(output, 'privacy.html'), renderPrivacyPage(readFileSync(join(root, 'PRIVACY.md'), 'utf8')));
 // Served at /terms the same way, from TERMS.md.
 writeFileSync(join(output, 'terms.html'), renderTermsPage(readFileSync(join(root, 'TERMS.md'), 'utf8')));
+// And /support, from SUPPORT.md: the support URL on both stores.
+writeFileSync(join(output, 'support.html'), renderSupportPage(readFileSync(join(root, 'SUPPORT.md'), 'utf8')));
 writeFileSync(join(output, 'release.json'), `${JSON.stringify({ revision: releaseRevision }, null, 2)}\n`);
 
-console.log(`Assembled ${publicFiles.length} app files, public assets, the privacy and terms pages, and release marker ${releaseRevision} in _site/.`);
+console.log(`Assembled ${publicFiles.length} app files, public assets, the privacy, terms and support pages, and release marker ${releaseRevision} in _site/.`);
