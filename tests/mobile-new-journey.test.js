@@ -90,3 +90,12 @@ test('both the empty start and an open ledger lead to a new journey, and nothing
   assert.doesNotMatch(ledger, /created in Together Ledger on the web/);
   assert.match(await read('app/_layout.tsx'), /<Stack\.Screen name="new-journey" /);
 });
+
+test('the 101-journey limit reaches the phone in the server\'s own words (the Book, 4.7)', async () => {
+  const { accountMessage, NO_ROOM_ADDED_HERE } = await importMobile('src/auth/account-messages.ts');
+  const worded = server.match(/'journey_limit_reached', `([^`]+)`/)[1].replace('${MAX_JOURNEYS_PER_PERSON}', '101');
+  assert.match(worded, /^You are in 101 journeys, the most one person can be in, so a new one can't be started\./);
+  assert.equal(Object.hasOwn(NO_ROOM_ADDED_HERE, 'journey_limit_reached'), false, 'the phone does not reword it');
+  assert.equal(accountMessage({ code: 'journey_limit_reached', message: worded }), worded);
+  assert.match(screen, /showStatus\(accountMessage\(error\), \{ source: 'new-journey' \}\)/, 'a refused journey is shown, not swallowed');
+});

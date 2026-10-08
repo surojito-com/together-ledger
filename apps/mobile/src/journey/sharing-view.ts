@@ -49,12 +49,30 @@ export type Invitation = {
   expiresAt: string | null;
 };
 
+export type Person = { id: string; displayName: string };
+
+/** A journey waiting on a payment, as the server tells everyone in it (the Book, 4.7). */
+export type Grace = {
+  active: boolean;
+  endsAt: string;
+  daysLeft: number;
+  payer: Person;
+  calendarYear: number;
+  requestsUsed: number;
+  requestsPerYear: number;
+  requestDays: number;
+  canRequest: boolean;
+  keepAdding: Person[];
+};
+
 export type Capacity = {
   peopleHere: number;
   canInvite: boolean;
   mode: string;
-  unpaidCapacityMode?: 'read-only' | 'paused' | string;
   restingMemberIds?: string[];
+  /** Only the owner is told this: who rests first, ending with the one who keeps adding (#281). */
+  restOrder?: string[];
+  grace?: Grace | null;
 };
 
 export type JourneyEvent = {
@@ -249,18 +267,55 @@ export function showsUnpaidCapacityRest(snapshot: SharingSnapshot) {
   return snapshot.journey.role === 'owner' && snapshot.capacity?.mode === 'billing';
 }
 
-export function restModeCopy(mode: string | undefined) {
-  return mode === 'paused'
-    ? 'Resting journeyers keep every moment they wrote themselves. The shared journey waits until payment is restored.'
-    : 'Resting journeyers keep reading the whole journey and cannot add to it until payment is restored.';
+/** The web's restQueue: the order the server saved, never the order people joined in (#281). */
+export function restQueue(members: Member[], restOrder: string[] | undefined) {
+  const byId = new Map(members.map((member) => [member.id, member]));
+  return (restOrder || []).map((id) => byId.get(id)).filter((member): member is Member => Boolean(member));
 }
 
-export const REST_MODES: [string, string][] = [['read-only', 'Keep reading'], ['paused', 'Pause the shared journey']];
-
-/** Everyone who could rest, in rest order: not the creator, not the owner. */
-export function restQueue(members: Member[], creatorId: string) {
-  return members.filter((member) => member.id !== creatorId && member.role !== 'owner');
+/**
+ * The web's graceBannerCopy: everyone in a journey waiting on a payment is told who pays, the
+ * time left, the weeks asked for this year and who can still add if it isn't paid. The person
+ * reading is "you".
+ */
+export function graceBannerCopy(grace: Grace, viewerId: string | undefined, peopleHere: number) {
+  const name = (person: Person) => (person.id === viewerId ? 'you' : person.displayName);
+  const names = (people: Person[]) => {
+    const listed = people.map(name);
+    return listed.length > 1 ? `${listed.slice(0, -1).join(', ')} and ${listed[listed.length - 1]}` : listed[0] || '';
+  };
+  const payer = name(grace.payer);
+  const weeks = `${grace.requestsUsed} of ${grace.requestsPerYear} extra weeks used this year`;
+  const someoneRests = grace.keepAdding.length < peopleHere;
+  const whoAdds = `only ${names(grace.keepAdding)} can add new moments. Everyone else can still see everything, and nothing is lost.`;
+  if (grace.active) {
+    const days = `${grace.daysLeft} ${grace.daysLeft === 1 ? 'day' : 'days'} left`;
+    return [
+      `This journey is waiting on a payment from ${payer}.`,
+      `${days} · ${weeks}.`,
+      someoneRests ? `If it isn't paid, ${whoAdds} Paying again brings everyone back.` : 'If it isn\'t paid, everyone here can still add, and nothing is lost.',
+    ].join(' ');
+  }
+  const asker = payer === 'you' ? 'You' : payer;
+  return [
+    someoneRests ? `The payment from ${payer} has lapsed, so ${whoAdds}` : `The payment from ${payer} has lapsed. Everyone here can still add, and nothing is lost.`,
+    grace.canRequest ? `${asker} can still ask for ${grace.requestDays} more days (${weeks}).` : `All ${grace.requestsPerYear} extra weeks for ${grace.calendarYear} are used.`,
+    someoneRests ? 'Paying again brings everyone back.' : '',
+  ].filter(Boolean).join(' ');
 }
+
+/** The web's graceRequestNote: what the payer reads when another week can't be asked for yet. */
+export function graceRequestNote(grace: Grace, viewerId: string | undefined) {
+  if (grace.payer.id !== viewerId || grace.canRequest || grace.requestsUsed >= grace.requestsPerYear) return '';
+  return `Another week can be asked for once ${grace.requestDays} days or fewer are left.`;
+}
+
+/** Only the payer asks, and only when the server says another week can be asked for. */
+export function mayRequestGrace(grace: Grace | null | undefined, viewerId: string | undefined) {
+  return Boolean(grace && grace.payer.id === viewerId && grace.canRequest);
+}
+
+export const GRACE_REQUESTED = 'Asked for 7 more days. Everyone in this journey can see it.';
 
 /** The web's moveRestOrder: swap with the neighbour, or nothing at either end. */
 export function moveInOrder(order: string[], memberUserId: string, direction: -1 | 1): string[] | null {

@@ -7,6 +7,7 @@
  */
 import { dateLabel, money, MOMENT_TYPES } from '../../../../src/model.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
+import type { Grace } from './sharing-view';
 
 export { dateLabel, money, MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme };
 
@@ -47,7 +48,10 @@ export type Concern = { id: string; title: string; detail?: string | null; statu
 
 // inviteProposals is what the service already sends and the sharing screen already reads; naming
 // it here lets the ledger's chrome count what is waiting without casting the whole snapshot.
-export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[]; inviteProposals?: { viewerMayDecide?: boolean }[] };
+/** What the ledger needs of the capacity answer: the grace banner's facts (see sharing-view.ts). */
+export type SnapshotCapacity = { peopleHere: number; grace?: Grace | null };
+
+export type Snapshot = { journey: Journey; moments: Moment[]; images?: MomentImage[]; concerns: Concern[]; inviteProposals?: { viewerMayDecide?: boolean }[]; capacity?: SnapshotCapacity };
 
 /** A moment as the list draws it: its photos, and its removed photos, already attached. */
 export type ShownMoment = Moment & { images: MomentImage[]; removedImages: MomentImage[] };

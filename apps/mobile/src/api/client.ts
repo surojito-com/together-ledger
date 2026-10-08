@@ -233,8 +233,11 @@ export function createAccountClient({ base, fetch, tokens }: {
     async transferOwnership(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/ownership`, { method: 'POST', body: { userId }, signedIn: true });
     },
-    async setUnpaidCapacityRest(journeyId: string, input: { mode?: string; restOrder?: string[] }) {
-      return request(`/journeys/${encodeURIComponent(journeyId)}/unpaid-capacity`, { method: 'PATCH', body: input, signedIn: true });
+    async setRestOrder(journeyId: string, restOrder: string[]) {
+      return request(`/journeys/${encodeURIComponent(journeyId)}/unpaid-capacity`, { method: 'PATCH', body: { restOrder }, signedIn: true });
+    },
+    async requestMoreGrace(journeyId: string) {
+      return request(`/journeys/${encodeURIComponent(journeyId)}/grace-requests`, { method: 'POST', body: {}, signedIn: true });
     },
     /** Where this journey's paid capacity stands. The phone never starts a web purchase; it sells through the App Store and Google Play (#267). */
     async billingStatus<B>(journeyId: string) {

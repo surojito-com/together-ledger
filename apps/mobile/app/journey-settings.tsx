@@ -3,7 +3,6 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
-import { Choices } from '../src/components/choices';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import {
   billingGlyph,
@@ -24,8 +23,6 @@ import {
   proposalStatusLabel,
   proposeToast,
   remainingLabel,
-  REST_MODES,
-  restModeCopy,
   restQueue,
   ROOM_IS_THE_JOURNEYS,
   sharingCopy,
@@ -42,7 +39,7 @@ import { useTheme } from '../src/theme';
 
 /**
  * Journey sharing (TL-M-09, #184): who is here, proposing someone, the questions being decided,
- * the invitations sent, how unpaid capacity rests, and where paid capacity stands. The web's
+ * the invitations sent, who keeps adding if a payment lapses, and where paid capacity stands. The web's
  * #sharing-settings, #unpaid-capacity-rest and #billing-panel, in its words.
  */
 export default function JourneySettingsScreen() {
@@ -135,17 +132,16 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
     });
   };
 
-  const saveRest = (key: string, input: { mode?: string; restOrder?: string[] }) => act(key, async () => {
-    await client.setUnpaidCapacityRest(journeyId, input);
-    return 'Saved how unpaid capacity rests.';
+  const saveRest = (restOrder: string[]) => act('rest-order', async () => {
+    await client.setRestOrder(journeyId, restOrder);
+    return 'Saved the resting order.';
   });
 
   const proposals = snapshot.inviteProposals || [];
   const invitations = snapshot.invitations || [];
-  const queue = restQueue(snapshot.members, creator.userId);
+  const queue = restQueue(snapshot.members, snapshot.capacity?.restOrder);
   const resting = new Set(snapshot.capacity?.restingMemberIds || []);
   const order = queue.map((member) => member.id);
-  const restMode = snapshot.capacity?.unpaidCapacityMode || 'read-only';
 
   return (
     <Screen title="Journey sharing" lead={sharingCopy(snapshot.members.length, canPropose)} refresh={{ refreshing, onRefresh: refresh }}>
@@ -215,21 +211,19 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
       ) : null}
 
       {showsUnpaidCapacityRest(snapshot) ? (
-        <Section title="If paid capacity goes unpaid">
-          <Body>Nobody is removed and no history is lost. The journeyers beyond what is covered rest until payment is restored, and you decide what resting means.</Body>
-          <Choices label="How unpaid capacity rests" options={REST_MODES} selected={restMode} onSelect={(mode) => { if (mode !== restMode) saveRest('rest-mode', { mode }); }} />
-          <Body>{restModeCopy(restMode)}</Body>
+        <Section title="If the payment lapses">
+          <Body>Nobody is removed and no history is lost. If this journey stays unpaid, you and one person you choose can still add to it, and everyone else can still read everything.</Body>
           {queue.length ? (
             <>
-              <Body>Who rests first, if there is not room for everyone.</Body>
+              <Body>{"Who rests first, if it isn't paid. The last person here keeps adding with you."}</Body>
               {queue.map((member, index) => (
-                <Row key={member.id} title={member.displayName} meta={resting.has(member.id) ? ['Resting now'] : []}>
-                  <Button kind="quiet" label="Rest earlier" disabled={index === 0 || pending !== null} onPress={() => { const next = moveInOrder(order, member.id, -1); if (next) saveRest('rest-order', { restOrder: next }); }} />
-                  <Button kind="quiet" label="Rest later" disabled={index === queue.length - 1 || pending !== null} onPress={() => { const next = moveInOrder(order, member.id, 1); if (next) saveRest('rest-order', { restOrder: next }); }} />
+                <Row key={member.id} title={member.displayName} meta={[...(resting.has(member.id) ? ['Resting now'] : []), ...(index === queue.length - 1 ? ['Keeps adding with you'] : [])]}>
+                  <Button kind="quiet" label="Rest earlier" disabled={index === 0 || pending !== null} onPress={() => { const next = moveInOrder(order, member.id, -1); if (next) saveRest(next); }} />
+                  <Button kind="quiet" label="Rest later" disabled={index === queue.length - 1 || pending !== null} onPress={() => { const next = moveInOrder(order, member.id, 1); if (next) saveRest(next); }} />
                 </Row>
               ))}
             </>
-          ) : <Body>When another journeyer joins, you can choose who rests first.</Body>}
+          ) : <Body>When another journeyer joins, you can choose who keeps adding with you.</Body>}
         </Section>
       ) : null}
 

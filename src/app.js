@@ -365,6 +365,7 @@ function renderAccountState() {
       ? 'Your account is ready. Create a private journey to invite another journeyer.'
       : 'Sign in and create a private journey to invite another journeyer.';
   $('#journey-record').hidden = !sharing;
+  renderGraceBanner(sharing ? activeTrip(state) : null);
   if (sharing) {
     const trip = activeTrip(state);
     const members = trip.memberRecords || [];
@@ -480,7 +481,8 @@ function proposalDecisionLabel(decision) {
 
 // Only the owner sees this: they hold the journey and the payment, and the decision is theirs.
 // It is written as a consequence rather than a setting, because what it chooses is what happens
-// to another person's access when a payment lapses.
+// to another person's access when a payment lapses. Resting is always read-only (the Book, 4.7),
+// so the order is all there is to choose: the last person in it keeps adding with the owner.
 function renderUnpaidCapacityRest(trip, members) {
   const section = $('#unpaid-capacity-rest');
   if (!section) return;
@@ -489,24 +491,84 @@ function renderUnpaidCapacityRest(trip, members) {
   section.hidden = !owning;
   if (!owning) return;
 
-  const mode = capacity.unpaidCapacityMode || 'read-only';
-  $$('input[name="unpaidCapacityMode"]', section).forEach((input) => { input.checked = input.value === mode; });
-  $('#unpaid-capacity-mode-copy').textContent = mode === 'paused'
-    ? 'Resting journeyers keep every moment they wrote themselves. The shared journey waits until payment is restored.'
-    : 'Resting journeyers keep reading the whole journey and cannot add to it until payment is restored.';
-
-  const others = members.filter((member) => member.id !== trip.createdByUserId && member.role !== 'owner');
+  const queue = restQueue(members, capacity.restOrder);
   const resting = new Set(capacity.restingMemberIds || []);
-  $('#rest-queue').innerHTML = others.length
-    ? `<p class="rest-queue-copy">Who rests first, if there is not room for everyone.</p>${others.map((member, index) => `<div class="journey-record-row"><div><strong>${escapeHtml(member.displayName)}</strong>${resting.has(member.id) ? '<small>Resting now</small>' : ''}</div><div class="journey-member-actions"><button class="button quiet" type="button" data-rest-earlier="${escapeHtml(member.id)}"${index === 0 ? ' disabled' : ''}>Rest earlier</button><button class="button quiet" type="button" data-rest-later="${escapeHtml(member.id)}"${index === others.length - 1 ? ' disabled' : ''}>Rest later</button></div></div>`).join('')}`
-    : emptyState('No one else is here yet', 'When another journeyer joins, you can choose who rests first.', { compact: true });
+  $('#rest-queue').innerHTML = queue.length
+    ? `<p class="rest-queue-copy">Who rests first, if it isn't paid. The last person here keeps adding with you.</p>${queue.map((member, index) => `<div class="journey-record-row"><div><strong>${escapeHtml(member.displayName)}</strong>${resting.has(member.id) ? '<small>Resting now</small>' : ''}${index === queue.length - 1 ? '<small class="rest-keeps-adding">Keeps adding with you</small>' : ''}</div><div class="journey-member-actions"><button class="button quiet" type="button" data-rest-earlier="${escapeHtml(member.id)}"${index === 0 ? ' disabled' : ''}>Rest earlier</button><button class="button quiet" type="button" data-rest-later="${escapeHtml(member.id)}"${index === queue.length - 1 ? ' disabled' : ''}>Rest later</button></div></div>`).join('')}`
+    : emptyState('No one else is here yet', 'When another journeyer joins, you can choose who keeps adding with you.', { compact: true });
 
-  const order = others.map((member) => member.id);
+  const order = queue.map((member) => member.id);
   $$('[data-rest-earlier]', section).forEach((button) => button.addEventListener('click', () => moveRestOrder(trip, order, button.dataset.restEarlier, -1)));
   $$('[data-rest-later]', section).forEach((button) => button.addEventListener('click', () => moveRestOrder(trip, order, button.dataset.restLater, 1)));
-  $$('input[name="unpaidCapacityMode"]', section).forEach((input) => {
-    input.addEventListener('change', () => saveUnpaidCapacityRest(trip, { mode: input.value }));
-  });
+}
+
+// The order comes from the server (#281), so a move always starts from the order that is saved,
+// never from the order people joined in. Someone the server does not list is not in the queue.
+function restQueue(members, restOrder) {
+  const byId = new Map(members.map((member) => [member.id, member]));
+  return (restOrder || []).map((id) => byId.get(id)).filter(Boolean);
+}
+
+// A journey waiting on a payment tells everyone in it: who pays, the time left, the weeks asked
+// for this year and who can still add if it isn't paid (the Book, 4.7). Everyone knows, so the
+// payer can't quietly lean on the group's trust. The person reading is "you".
+function graceBannerCopy(grace, viewerId, peopleHere) {
+  const name = (person) => (person.id === viewerId ? 'you' : person.displayName);
+  const names = (people) => {
+    const listed = people.map(name);
+    return listed.length > 1 ? `${listed.slice(0, -1).join(', ')} and ${listed[listed.length - 1]}` : listed[0] || '';
+  };
+  const payer = name(grace.payer);
+  const weeks = `${grace.requestsUsed} of ${grace.requestsPerYear} extra weeks used this year`;
+  const someoneRests = grace.keepAdding.length < peopleHere;
+  const whoAdds = `only ${names(grace.keepAdding)} can add new moments. Everyone else can still see everything, and nothing is lost.`;
+  if (grace.active) {
+    const days = `${grace.daysLeft} ${grace.daysLeft === 1 ? 'day' : 'days'} left`;
+    return [
+      `This journey is waiting on a payment from ${payer}.`,
+      `${days} · ${weeks}.`,
+      someoneRests ? `If it isn't paid, ${whoAdds} Paying again brings everyone back.` : 'If it isn\'t paid, everyone here can still add, and nothing is lost.',
+    ].join(' ');
+  }
+  const asker = payer === 'you' ? 'You' : payer;
+  return [
+    someoneRests ? `The payment from ${payer} has lapsed, so ${whoAdds}` : `The payment from ${payer} has lapsed. Everyone here can still add, and nothing is lost.`,
+    grace.canRequest ? `${asker} can still ask for ${grace.requestDays} more days (${weeks}).` : `All ${grace.requestsPerYear} extra weeks for ${grace.calendarYear} are used.`,
+    someoneRests ? 'Paying again brings everyone back.' : '',
+  ].filter(Boolean).join(' ');
+}
+
+// What the payer reads under the banner when another week can't be asked for yet.
+function graceRequestNote(grace, viewerId) {
+  if (grace.payer.id !== viewerId || grace.canRequest || grace.requestsUsed >= grace.requestsPerYear) return '';
+  return `Another week can be asked for once ${grace.requestDays} days or fewer are left.`;
+}
+
+function renderGraceBanner(trip) {
+  const banner = $('#grace-banner');
+  if (!banner) return;
+  const grace = trip?.capacity?.grace;
+  banner.hidden = !grace;
+  if (!grace) return;
+  $('#grace-banner-message').textContent = graceBannerCopy(grace, accountUser?.id, trip.capacity.peopleHere);
+  const note = graceRequestNote(grace, accountUser?.id);
+  $('#grace-banner-note').textContent = note;
+  $('#grace-banner-note').hidden = !note;
+  const button = $('#grace-request-button');
+  button.hidden = !(grace.payer.id === accountUser?.id && grace.canRequest);
+  button.textContent = `Ask for ${grace.requestDays} more days`;
+}
+
+async function requestMoreGrace() {
+  const trip = activeTrip(state);
+  if (!trip) return;
+  try {
+    await api.mutate(`/journeys/${trip.id}/grace-requests`, 'POST', {});
+    await refreshCloudState();
+    showToast('Asked for 7 more days. Everyone in this journey can see it.');
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
 }
 
 function moveRestOrder(trip, order, memberUserId, direction) {
@@ -522,7 +584,7 @@ async function saveUnpaidCapacityRest(trip, payload) {
   try {
     await api.mutate(`/journeys/${trip.id}/unpaid-capacity`, 'PATCH', payload);
     await refreshCloudState();
-    showToast('Saved how unpaid capacity rests.');
+    showToast('Saved the resting order.');
   } catch (error) {
     showStatus(accountMessage(error));
   }
@@ -1514,6 +1576,7 @@ $('#refresh-sync-button').addEventListener('click', async () => {
   } catch (error) { showStatus(accountMessage(error)); }
 });
 
+$('#grace-request-button').addEventListener('click', requestMoreGrace);
 $('#billing-capacity-range').addEventListener('input', syncCapacityFromRange);
 $('#billing-capacity-number').addEventListener('input', previewCapacityFromNumber);
 $('#billing-capacity-number').addEventListener('change', normalizeCapacityNumber);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
@@ -120,7 +121,12 @@ test('resting capacity: only the owner of a billed journey, the web\'s order rul
   assert.equal(view.showsUnpaidCapacityRest({ ...owner, journey: { role: 'member' } }), false);
   assert.equal(view.showsUnpaidCapacityRest({ ...owner, capacity: { mode: 'included' } }), false);
   const members = [{ id: 'creator', role: 'owner' }, { id: 'x', role: 'member' }, { id: 'y', role: 'member' }, { id: 'z', role: 'member' }];
-  assert.deepEqual(view.restQueue(members, 'creator').map((member) => member.id), ['x', 'y', 'z']);
+  // The order is the server's (#281), not the order people joined in, on both.
+  const restQueue = webFunction('restQueue');
+  for (const restOrder of [['z', 'x', 'y'], ['y', 'gone', 'x'], undefined]) {
+    assert.deepEqual(view.restQueue(members, restOrder), restQueue(members, restOrder));
+  }
+  assert.deepEqual(view.restQueue(members, ['z', 'x', 'y']).map((member) => member.id), ['z', 'x', 'y']);
   let saved = null;
   const moveRestOrder = webFunction('moveRestOrder', ['saveUnpaidCapacityRest', (_trip, payload) => { saved = payload; }]);
   for (const [id, direction] of [['y', -1], ['y', 1], ['x', -1], ['z', 1], ['nobody', 1]]) {
@@ -128,8 +134,56 @@ test('resting capacity: only the owner of a billed journey, the web\'s order rul
     moveRestOrder({}, ['x', 'y', 'z'], id, direction);
     assert.deepEqual(view.moveInOrder(['x', 'y', 'z'], id, direction), saved?.restOrder ?? null, `${id} ${direction}`);
   }
-  for (const mode of ['read-only', 'paused']) assert.ok(web.includes(view.restModeCopy(mode)));
-  for (const [value, label] of view.REST_MODES) assert.ok(html.includes(`value="${value}" /> ${label}`), `${label} is the web's word`);
+  // Resting is always read-only: there is no choice left to offer, on either (the Book, 4.7).
+  assert.doesNotMatch(html, /unpaidCapacityMode|Pause the shared journey/);
+  assert.doesNotMatch(screens.sharing, /REST_MODES|restModeCopy|Pause the shared journey/);
+  assert.equal('REST_MODES' in view, false);
+});
+
+test('the grace banner says the same on the phone as on the web, in the caution role', () => {
+  const graceBannerCopy = webFunction('graceBannerCopy');
+  const graceRequestNote = webFunction('graceRequestNote');
+  const sam = { id: 'sam', displayName: 'Sam' };
+  const alex = { id: 'alex', displayName: 'Alex' };
+  const waiting = { active: true, endsAt: '2026-10-13T00:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026, requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex] };
+  const cases = [
+    [waiting, 'bo', 5],
+    [waiting, 'sam', 5],
+    [waiting, 'alex', 5],
+    [{ ...waiting, daysLeft: 1, canRequest: false }, 'sam', 5],
+    [{ ...waiting, keepAdding: [sam] }, 'bo', 1],
+    [{ ...waiting, active: false, daysLeft: 0 }, 'bo', 5],
+    [{ ...waiting, active: false, daysLeft: 0 }, 'sam', 5],
+    [{ ...waiting, active: false, daysLeft: 0, requestsUsed: 7, canRequest: false }, 'bo', 5],
+  ];
+  for (const [grace, viewerId, peopleHere] of cases) {
+    assert.equal(view.graceBannerCopy(grace, viewerId, peopleHere), graceBannerCopy(grace, viewerId, peopleHere));
+    assert.equal(view.graceRequestNote(grace, viewerId), graceRequestNote(grace, viewerId));
+  }
+  // The owner's draft wording (the Book, 4.7), as someone else in the journey reads it.
+  assert.equal(view.graceBannerCopy(waiting, 'bo', 5), "This journey is waiting on a payment from Sam. 5 days left · 2 of 7 extra weeks used this year. If it isn't paid, only Sam and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
+  assert.equal(view.graceBannerCopy(waiting, 'sam', 5), "This journey is waiting on a payment from you. 5 days left · 2 of 7 extra weeks used this year. If it isn't paid, only you and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
+  assert.equal(view.graceRequestNote({ ...waiting, canRequest: false }, 'sam'), 'Another week can be asked for once 7 days or fewer are left.');
+  assert.equal(view.graceRequestNote({ ...waiting, canRequest: false }, 'bo'), '', 'only the payer is told when they can ask');
+  assert.equal(view.mayRequestGrace(waiting, 'sam'), true);
+  assert.equal(view.mayRequestGrace(waiting, 'alex'), false);
+  assert.equal(view.mayRequestGrace(null, 'sam'), false);
+
+  // Waiting on a payment is not a failure: the caution role, never the destructive one.
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
+  const rules = css.split('\n').filter((line) => line.startsWith('.grace-banner'));
+  assert.ok(rules.some((line) => line.includes('var(--caution)')));
+  assert.ok(rules.every((line) => !line.includes('--destructive')));
+  assert.match(html, /id="grace-banner"/);
+});
+
+test('the phone shows the grace banner on the ledger, and the payer can ask from it', async () => {
+  const banner = await read('src/components/grace-banner.tsx');
+  assert.match(banner, /theme\.colors\.caution/);
+  assert.doesNotMatch(banner, /colors\.destructive/);
+  assert.match(banner, /requestMoreGrace\(journeyId\)/);
+  assert.match(await read('app/ledger.tsx'), /<GraceBanner /);
+  assert.match(await read('src/api/client.ts'), /\/grace-requests`/);
 });
 
 test('history is newest first, attributed, and lists only what changed, as the web does', () => {
