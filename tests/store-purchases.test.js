@@ -25,7 +25,7 @@ const MIGRATIONS = [
   '019_let-moments-carry-their-own-atmosphere', '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history',
   '022_agree-together-before-adding-someone', '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted', '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
-  '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time',
+  '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time', '030_ask-for-six-weeks-a-year',
 ];
 const origin = 'http://127.0.0.1:4174';
 const PURCHASED = Date.parse('2026-10-08T12:00:00Z');
@@ -94,7 +94,8 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
       await pool.query('ALTER TABLE moment_image_slots DROP CONSTRAINT IF EXISTS moment_image_slots_constraint_1');
       await pool.query('ALTER TABLE moment_location_slots DROP CONSTRAINT IF EXISTS moment_location_slots_constraint_1');
     }
-    await pool.query(await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8'));
+    // pg-mem cannot parse NOT VALID (030); tests/postgres-integration runs 030 as written.
+    await pool.query((await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
   }
 
   const chain = appleChain();
@@ -422,6 +423,33 @@ test('a pass bought while another is running starts when that one ends', async (
   assert.equal((await h.capacity(ours.id)).restingMemberIds.length, 0);
 });
 
+test('a pass that runs out gives a grace, and a pass bought during it starts at once', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-lapsed');
+  const ours = await h.journey(sam);
+  const alex = await h.person('alex-lapsed');
+  const kit = await h.person('kit-lapsed');
+  await h.join(ours.id, alex);
+  await h.join(ours.id, kit);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const now = h.clock.now.getTime();
+  await h.apple(sam, h.signed({ appAccountToken, transactionId: 't-lapse-1' }));
+
+  // The week ran out two days ago: 7 days of grace from its end, as for a failed payment.
+  h.clock.now = new Date(now + 9 * DAY);
+  const waiting = await h.capacity(ours.id);
+  assert.equal(waiting.grace?.endsAt, new Date(now + 14 * DAY).toISOString());
+  assert.deepEqual(waiting.restingMemberIds, []);
+
+  // The ended week is not running, so a new one does not queue behind it. (A phone's access key
+  // lasts 30 minutes, so after nine days it signs in again.)
+  const signedIn = { ...sam, token: (await h.platform.issueTokens(sam.id)).token };
+  const again = await h.apple(signedIn, h.signed({ appAccountToken, transactionId: 't-lapse-2' }));
+  assert.equal(again.statusCode, 201, again.body);
+  assert.equal(again.json().data.room.from, h.clock.now.toISOString());
+  assert.equal((await h.capacity(ours.id)).grace, null);
+});
+
 test('a month pass from the 31st ends on the last day of the next month', () => {
   const month = storeProduct('room_101_month_pass');
   assert.equal(passEnd(month, new Date('2027-01-31T09:30:00Z')).toISOString(), '2027-02-28T09:30:00.000Z');
@@ -492,6 +520,48 @@ test('a subscription resubscribed or upgraded from another journey moves its roo
   assert.equal(back.json().data.journeyId, first.id);
   assert.equal((await h.pool.query("SELECT count(*)::int AS n FROM billing_entitlements WHERE journey_id=$1 AND state='grace'", [second.id])).rows[0].n, 0);
   assert.equal((await events(second.id)).at(-1).summary, 'Lapsed paid room renewed for another journey');
+});
+
+test('a lapsed subscription that moves to another journey leaves the first one the grace it had left', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-lapsed-mover');
+  const alex = await h.person('alex-lapsed-mover');
+  const ana = await h.person('ana-lapsed-mover');
+  const first = await h.journey(sam, 'First');
+  const second = await h.journey(sam, 'Second');
+  for (const journey of [first, second]) {
+    await h.join(journey.id, alex);
+    await h.join(journey.id, ana);
+  }
+  const firstToken = (await h.identity(sam, first.id)).appAccountToken;
+  const secondToken = (await h.identity(sam, second.id)).appAccountToken;
+  const monthly = (appAccountToken, transactionId, expiresDate) => h.signed({
+    appAccountToken, transactionId, originalTransactionId: 'sub-lapsed-moving', productId: 'room_51_monthly', type: 'Auto-Renewable Subscription', expiresDate,
+  });
+  assert.equal((await h.apple(sam, monthly(firstToken, 'lapsed-1', Date.parse('2026-11-08T12:00:00Z')))).statusCode, 201);
+
+  // Not renewed: two days past its end the first journey is in its 7 days, and the payer asks
+  // for another week, so its grace runs to Nov 22.
+  h.clock.now = new Date('2026-11-10T12:00:00Z');
+  assert.equal((await h.capacity(first.id)).grace?.endsAt, '2026-11-15T12:00:00.000Z');
+  await h.platform.requestMoreGrace(sam.id, first.id);
+  assert.equal((await h.capacity(first.id)).grace?.endsAt, '2026-11-22T12:00:00.000Z');
+
+  // Resubscribed from the second journey. The room goes there; the first keeps the time it had
+  // left (owner, Oct 8, 2026), not a fresh 7 days and not nothing.
+  sam.token = (await h.platform.issueTokens(sam.id)).token;
+  const moved = await h.apple(sam, monthly(secondToken, 'lapsed-2', Date.parse('2026-12-10T12:00:00Z')));
+  assert.equal(moved.statusCode, 201, moved.body);
+  assert.equal(moved.json().data.journeyId, second.id);
+  const left = await h.capacity(first.id);
+  assert.equal(left.grace?.endsAt, '2026-11-22T12:00:00.000Z', 'the banner stays, with the same end');
+  assert.deepEqual(left.restingMemberIds, [], 'nobody rests early');
+  assert.equal((await h.capacity(second.id)).grace, null);
+  const record = (await h.pool.query("SELECT after_value FROM journey_events WHERE journey_id=$1 AND action='paid_room_moved_out'", [first.id])).rows;
+  assert.equal(record[0].after_value.graceUntil, '2026-11-22T12:00:00.000Z');
+
+  h.clock.now = new Date('2026-11-22T12:00:00Z');
+  assert.equal((await h.capacity(first.id)).restingMemberIds.length, 1, 'then one of three rests; nobody is removed');
 });
 
 test('a renewal extends the subscription whoever holds the journey now; buying it again checks', async (t) => {
@@ -887,6 +957,39 @@ test('a deferred Google downgrade runs the paid-for size to its end, and a repla
   await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-never-sent' });
   const tombstone = await h.pool.query("SELECT state,quantity,reason FROM billing_entitlements WHERE source_record_id='tok-never-sent'");
   assert.deepEqual(tombstone.rows, [{ state: 'expired', quantity: 0, reason: 'store_subscription_replaced' }]);
+});
+
+test('a deferred Google replacement from another journey leaves the old one the usual grace when its period ends', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-deferred');
+  const alex = await h.person('alex-deferred');
+  const ana = await h.person('ana-deferred');
+  const first = await h.journey(sam, 'First');
+  const second = await h.journey(sam, 'Second');
+  for (const journey of [first, second]) {
+    await h.join(journey.id, alex);
+    await h.join(journey.id, ana);
+  }
+  const big = await googleRecord('subscription-active', await h.identity(sam, first.id));
+  big.lineItems = [{ ...big.lineItems[0], productId: 'room_101_monthly', expiryTime: '2026-11-08T12:00:00.000Z' }];
+  h.google.record('tok-first-101', big);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_monthly', purchaseToken: 'tok-first-101' })).statusCode, 201);
+
+  // Downgraded from the second journey, deferred: the 51 starts there when the 101 period ends.
+  const small = await googleRecord('subscription-active', await h.identity(sam, second.id), { linkedPurchaseToken: 'tok-first-101', startTime: '2026-11-08T12:00:00.000Z' });
+  small.lineItems = [{ ...small.lineItems[0], productId: 'room_51_monthly', expiryTime: '2026-12-08T12:00:00.000Z' }];
+  h.google.record('tok-second-51', small);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: 'tok-second-51' })).statusCode, 201);
+  assert.equal((await h.capacity(first.id)).grace, null, 'the first journey keeps its paid room until the period ends');
+
+  // When the old room ends on the first journey, it has the normal 7 days, then rests.
+  h.clock.now = new Date('2026-11-09T12:00:00Z');
+  const waiting = await h.capacity(first.id);
+  assert.equal(waiting.grace?.endsAt, '2026-11-15T12:00:00.000Z');
+  assert.deepEqual(waiting.restingMemberIds, []);
+  assert.equal((await h.capacity(second.id)).grace, null, 'the second journey has its new room');
+  h.clock.now = new Date('2026-11-15T12:00:00Z');
+  assert.equal((await h.capacity(first.id)).restingMemberIds.length, 1);
 });
 
 test('one acknowledgement that fails in an unexpected way never holds up the rest', async (t) => {
