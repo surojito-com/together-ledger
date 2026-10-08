@@ -204,7 +204,7 @@ the phone. Losing the phone loses only the sign-in (which can be revoked by chan
 | Stripe | Email, internal account/journey/moment references (`server/billing.js:185-186`, `:223-240`, `:272`, `:288`) | Web payments | Verified in code. **The phone never reaches Stripe** (`tests/mobile-no-stripe.test.js`) |
 | Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing today (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
 | Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing today (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
-| Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision** for the owner: whether the forms count it as our collection or Google's |
+| Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision (owner, Oct 8, 2026)**: it stays *not verified*; Google Play's own guidance is checked before the Data safety form is filled in, and that decides whether it counts as our collection or Google's |
 | Expo (EAS) | Builds and submits the phone app. The app itself makes no call to Expo: there is no `expo-updates`, `expo-insights` or notifications dependency (`apps/mobile/package.json:13-30`) | Building | Not verified by captured traffic (TL-C-03, #261) |
 
 ### 2.5 Every client-side dependency that makes a network request
@@ -279,7 +279,7 @@ dependency (2.4).
 |---|---|---|---|
 | Android | `INTERNET` | Talking to our API | Verified in code (`apps/mobile/app.json:27-31`) |
 | Android | `com.android.vending.BILLING` | Buying through Google Play (#340). Declared by the Play Billing library; no prompt | Verified in code (`app.json:27-31`) and in the built APK (1.6) |
-| Android | `ACCESS_NETWORK_STATE` | Nothing of ours. Declared by Google's datatransport, which Play Billing depends on: it schedules uploads that wait for a network, which Android 9+ refuses without this. Says only whether the phone is online and on what kind of network; no prompt | Verified in code (`app.json:27-31`) and in the built APK (1.6). **Decision** (#340) to grant rather than block it; the owner to confirm |
+| Android | `ACCESS_NETWORK_STATE` | Nothing of ours. Declared by Google's datatransport, which Play Billing depends on: it schedules uploads that wait for a network, which Android 9+ refuses without this. Says only whether the phone is online and on what kind of network; no prompt | Verified in code (`app.json:27-31`) and in the built APK (1.6). **Decision (owner, Oct 8, 2026)**: granted, not blocked. Google's billing code needs it, and it shows no prompt |
 | Android | Storage, overlay, vibrate, biometric | Nothing: blocked from the merged manifest | Verified in code (`app.json:32-39`, `tests/mobile-permissions.test.js`) |
 | iOS | None. `Info.plist` carries no usage description, so the app cannot ask for location, camera, photos, contacts or anything else | — | Verified in code (`apps/mobile/app.json:14-16`) |
 | Both | Notifications | Not used; no notifications dependency | Verified in code (`apps/mobile/package.json:13-30`) |
@@ -395,7 +395,7 @@ definitions. No data is processed ephemerally; all of it is stored.
 | Personal info → **User IDs** | **Yes** | No | **Required** | **Account management** | The username |
 | Personal info → Address, Phone number, Race and ethnicity, Political or religious beliefs, Sexual orientation, Other info | No | No | — | — | Not asked for (2.1). **Decision** on sensitive types: the app never asks about these, though a person may write anything in a moment; that free text is declared below |
 | Financial info → User payment info, Credit score | No | No | — | — | The phone has no payment screen; Stripe is never reached from the phone |
-| Financial info → **Purchase history** | **Yes** | No | **Optional** | **App functionality** | Store purchases on the phone (#340): which product, for which journey or moment, kept against the account (2.1). **Decision**: card details never reach us; Apple and Google hold those |
+| Financial info → **Purchase history** | **Yes** | No | **Optional** | **App functionality** | Store purchases on the phone (#340): which product, for which journey or moment, kept against the account (2.1). **Decision (owner, Oct 8, 2026)**: Yes on both stores. Card details never reach us; Apple and Google hold those |
 | Financial info → **Other financial info** | **Yes** | No | **Optional** | **App functionality** | The optional money amount and currency on a moment (`moment-draft.ts:110-111`). **Decision (owner, Oct 8, 2026)**: it is context the person types, not an account balance, but declaring it is the safer reading |
 | Health and fitness | No | No | — | — | |
 | Messages → Emails, SMS or MMS | No | No | — | — | The app sends no message content written by the person; the proposal note is declared below |
@@ -448,7 +448,7 @@ the privacy policy (Part 4).
 | Browsing History, Search History | No | — | |
 | Identifiers → **User ID** | **Yes** | **App Functionality** | The username and the account id behind the tokens |
 | Identifiers → Device ID | No | — | |
-| Purchases → **Purchase History** | **Yes** | **App Functionality** | Store purchases on the phone (#340), as in 3.1 |
+| Purchases → **Purchase History** | **Yes** | **App Functionality** | Store purchases on the phone (#340), as in 3.1. **Decision (owner, Oct 8, 2026)** |
 | Usage Data → Product Interaction, Advertising Data, Other Usage Data | No | — | **Decision**, as for App interactions in 3.1 |
 | Diagnostics → Crash Data, Performance Data, Other Diagnostic Data | No | — | **Decision**, as in 3.1 |
 | Surroundings, Body | No | — | |
