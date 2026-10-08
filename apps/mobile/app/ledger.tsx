@@ -74,6 +74,7 @@ export default function LedgerScreen() {
               <Text style={[styles.body, { color: colors.muted }]}>{journeyPeriod(snapshot.journey)}</Text>
             </View>
             {journeys.length > 1 ? <JourneyPicker journeys={journeys} activeId={activeId} onSelect={(id) => { setExpanded(false); setFilter('all'); journey.select(id); }} /> : null}
+            <Button kind="quiet" label="＋ New journey" onPress={() => router.push('/new-journey')} />
             <View style={styles.section}>
               <Text style={[styles.eyebrow, { color: colors.accent }]}>Our shared journey</Text>
               <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>Recent moments</Text>
@@ -136,7 +137,7 @@ function EmptyStart({ signedIn }: { signedIn: boolean }) {
       {signedIn ? (
         <>
           <Body>Account ready. Create your first private journey.</Body>
-          <Body>For now, a journey is created in Together Ledger on the web. It appears here once it exists.</Body>
+          <Button label="＋ New journey" onPress={() => router.push('/new-journey')} />
         </>
       ) : (
         <>
