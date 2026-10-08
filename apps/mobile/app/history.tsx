@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { HISTORY_GUIDE_TITLE } from '../../../src/history-guide.js';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { Body, Button, Screen } from '../src/components/ui';
@@ -11,7 +12,8 @@ import { targetSize, useTheme } from '../src/theme';
 
 /**
  * The web's event manager (renderEventManager): conversations to return to, then the journey's
- * append-only, account-attributed history, newest first (TL-M-09, #184).
+ * append-only, account-attributed history, newest first (TL-M-09, #184). Its intro leads to "How
+ * to read your history" (#349), which explains every part of it in plain words.
  */
 export default function HistoryScreen() {
   const session = useSession();
@@ -46,6 +48,7 @@ function History({ snapshot }: { snapshot: SharingSnapshot }) {
 
   return (
     <Screen title={`${snapshot.journey.name} history`} lead="Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones." refresh={{ refreshing, onRefresh: refresh }}>
+      <Button kind="quiet" label={HISTORY_GUIDE_TITLE} onPress={() => router.push('/history-guide')} />
       <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>Return-to conversations</Text>
       <Button label="Start a return-to conversation" onPress={() => router.push('/concern')} />
       {concerns.length ? concerns.map((concern) => (
