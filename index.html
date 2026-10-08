@@ -251,12 +251,13 @@
     <dialog id="event-dialog" class="wide-dialog">
       <form method="dialog">
         <div class="dialog-head">
-          <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p id="event-manager-copy">Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p></div>
+          <div><p class="eyebrow">Journey Event Manager</p><h2 id="event-dialog-title">Event history</h2><p id="event-manager-copy">Browser-local preview. It records changes on this device, but it is not yet a server-authoritative or tamper-proof audit log.</p><button class="button quiet" type="button" id="history-guide-link" hidden>How to read your history</button></div>
           <button class="icon-button" value="close" aria-label="Close event history">×</button>
         </div>
           <section class="concern-manager" aria-labelledby="concern-heading"><div><h3 id="concern-heading">Return-to conversations</h3><p>Explicitly recorded conversations are stored in this browser and included in exports.</p></div><button class="button primary" type="button" id="add-concern-button">＋ Start a conversation</button></section>
         <div id="concern-list"></div>
         <section class="event-list-section" aria-labelledby="event-list-title"><h3 id="event-list-title">All recorded changes</h3><div id="event-list"></div></section>
+        <section class="history-guide" id="history-guide" aria-labelledby="history-guide-title" tabindex="-1" hidden></section>
       </form>
     </dialog>
 

@@ -29,6 +29,10 @@ import { exportState, importState, loadState, resetState, saveState } from './st
 import { ApiError, TogetherApi } from './api.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from './moment-themes.js';
 import { PHOTO_METADATA_REMOVED, stripPhotoMetadata } from './photo-metadata.js';
+import {
+  HISTORY_ENTRY_PARTS, HISTORY_ENTRY_PARTS_HEADING, HISTORY_EVENT_GROUPS, HISTORY_FIELDS, HISTORY_FIELDS_HEADING, HISTORY_GUIDE_INTRO,
+  HISTORY_GUIDE_SECTIONS, HISTORY_GUIDE_TITLE, HISTORY_KINDS_HEADING, HISTORY_NEVER_LABEL, HISTORY_RECORDS_LABEL, HISTORY_RECORDS_NOTHING,
+} from './history-guide.js';
 
 // Visibility is carried by shape as well as colour and word: an empty ring holds nothing
 // out, a half ring is meant for later, a full ring is out. The order reads even in
@@ -1226,7 +1230,8 @@ function valueLabel(key, value) {
   if (value == null || value === '') return 'none';
   if (key === 'budgetCents' || key === 'amountCents') return money(value);
   if (key === 'theme') return momentThemeLabel(value);
-  if (Array.isArray(value)) return value.join(', ');
+  // A list of places is a list of values: each is written out, rather than read as [object Object].
+  if (Array.isArray(value)) return value.map((item) => (item && typeof item === 'object' ? JSON.stringify(item) : String(item))).join(', ');
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
@@ -1237,6 +1242,11 @@ function renderEventManager() {
   const events = state.events.filter((event) => event.tripId === trip.id).sort((a, b) => b.sequence - a.sequence);
   $('#event-dialog-title').textContent = `${trip.name} history`;
   $('#event-manager-copy').textContent = isCloudJourney(trip) ? 'Server-authoritative, account-attributed history. HMAC chaining makes database changes detectable; deleted records retain privacy-bounded tombstones.' : 'Browser-local preview. Production attribution requires separate signed-in accounts.';
+  // The guide explains what the server writes, so a browser-only journey, whose history this
+  // browser keeps for itself, isn't sent to it.
+  $('#history-guide-link').hidden = !isCloudJourney(trip);
+  $('#history-guide').hidden = !isCloudJourney(trip);
+  renderHistoryGuide();
   $('#concern-list').innerHTML = concerns.length ? concerns.map((concern) => `<article class="concern-row"><div><span class="status-chip ${concern.status}">${concern.status}</span><strong>${escapeHtml(concern.title)}</strong>${concern.detail ? `<p>${escapeHtml(concern.detail)}</p>` : ''}<small>Updated by ${escapeHtml(concern.updatedBy)} · ${new Date(concern.updatedAt).toLocaleString()}</small></div><div><button type="button" data-edit-concern="${escapeHtml(concern.id)}">Edit</button><button type="button" data-remove-concern="${escapeHtml(concern.id)}">Delete</button></div></article>`).join('') : emptyState('Nothing to return to yet', 'Conversations you want to come back to together will appear here.', { compact: true });
   $('#event-list').innerHTML = events.length ? events.map((event) => {
     const changes = meaningfulChanges(event.before, event.after);
@@ -1244,6 +1254,21 @@ function renderEventManager() {
   }).join('') : emptyState('No recorded changes yet', 'Changes appear here as they happen. Activity from before the Event Manager began cannot be reconstructed.', { compact: true });
   $$('[data-edit-concern]').forEach((button) => button.addEventListener('click', () => openConcern(button.dataset.editConcern)));
   $$('[data-remove-concern]').forEach((button) => button.addEventListener('click', () => removeConcern(button.dataset.removeConcern)));
+}
+
+// "How to read your history" (#349), in the phone's words too: both draw src/history-guide.js.
+// The words never change while the page is open, so they are drawn once.
+function renderHistoryGuide() {
+  const section = $('#history-guide');
+  if (section.childElementCount) return;
+  const paragraphs = (texts) => texts.map((text) => `<p>${escapeHtml(text)}</p>`).join('');
+  const terms = (entries) => `<dl class="history-guide-terms">${Object.entries(entries).map(([name, meaning]) => `<div><dt><code>${escapeHtml(name)}</code></dt><dd>${escapeHtml(meaning)}</dd></div>`).join('')}</dl>`;
+  const kinds = HISTORY_EVENT_GROUPS.map((group) => `<h5>${escapeHtml(group.heading)}</h5>${group.kinds.map((kind) => `<article class="history-guide-kind"><strong>${escapeHtml(kind.reads.join(' / '))}</strong><code>${escapeHtml(kind.action)}</code><p>${escapeHtml(kind.when)}</p><p><b>${escapeHtml(HISTORY_RECORDS_LABEL)}:</b> ${escapeHtml(kind.records.length ? kind.records.join(', ') : HISTORY_RECORDS_NOTHING)}</p><p><b>${escapeHtml(HISTORY_NEVER_LABEL)}:</b> ${escapeHtml(kind.never)}</p></article>`).join('')}`).join('');
+  section.innerHTML = `<h3 id="history-guide-title">${escapeHtml(HISTORY_GUIDE_TITLE)}</h3>${paragraphs(HISTORY_GUIDE_INTRO)}`
+    + HISTORY_GUIDE_SECTIONS.map((part) => `<h4>${escapeHtml(part.heading)}</h4>${paragraphs(part.paragraphs)}`).join('')
+    + `<h4>${escapeHtml(HISTORY_KINDS_HEADING)}</h4>${kinds}`
+    + `<h4>${escapeHtml(HISTORY_FIELDS_HEADING)}</h4>${terms(HISTORY_FIELDS)}`
+    + `<h4>${escapeHtml(HISTORY_ENTRY_PARTS_HEADING)}</h4>${terms(HISTORY_ENTRY_PARTS)}`;
 }
 
 function openConcern(id = '') {
@@ -1382,6 +1407,11 @@ $('#actor-select').addEventListener('change', (event) => {
 $('#event-manager-button').addEventListener('click', () => {
   renderEventManager();
   $('#event-dialog').showModal();
+});
+$('#history-guide-link').addEventListener('click', () => {
+  const guide = $('#history-guide');
+  guide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  guide.focus({ preventScroll: true });
 });
 $('#add-thread-button').addEventListener('click', () => openConcern());
 $('#journey-form').addEventListener('submit', async (event) => {

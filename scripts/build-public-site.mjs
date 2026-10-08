@@ -10,6 +10,7 @@ const publicFiles = [
   'index.html',
   'src/api.js',
   'src/app.js',
+  'src/history-guide.js',
   'src/model.js',
   'src/moment-themes.js',
   'src/photo-metadata.js',

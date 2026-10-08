@@ -196,7 +196,9 @@ test('history is newest first, attributed, and lists only what changed, as the w
   const pairs = [[{ a: 1, b: 2 }, { a: 1, b: 3, c: 4 }], [null, { title: 'x' }], [{ list: [1, 2] }, { list: [1, 2] }]];
   for (const [before, after] of pairs) assert.deepEqual(view.meaningfulChanges(before, after), meaningfulChanges(before, after));
   const valueLabel = webFunction('valueLabel', ['money', model.money], ['momentThemeLabel', momentThemes.momentThemeLabel]);
-  for (const [key, value] of [['budgetCents', 1250], ['theme', 'flexoki'], ['tags', ['a', 'b']], ['title', ''], ['x', { y: 1 }], ['n', 3]]) assert.equal(view.valueLabel(key, value), valueLabel(key, value));
+  for (const [key, value] of [['budgetCents', 1250], ['theme', 'flexoki'], ['tags', ['a', 'b']], ['title', ''], ['x', { y: 1 }], ['n', 3], ['locations', [{ label: 'Harbour', latitude: 38.7 }]]]) assert.equal(view.valueLabel(key, value), valueLabel(key, value));
+  // A moment's places are values, not [object Object] (#349).
+  assert.equal(view.valueLabel('locations', [{ label: 'Harbour', latitude: 38.7 }, { label: 'Pier' }]), '{"label":"Harbour","latitude":38.7}, {"label":"Pier"}');
   const events = view.historyEvents({
     members: [{ id: 'a', displayName: 'Alex' }],
     events: [
