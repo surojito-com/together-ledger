@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { newDb } from 'pg-mem';
 import Stripe from 'stripe';
 import { buildApp } from '../server/app.js';
-import { STRIPE_API_VERSION, StripeBillingService } from '../server/billing.js';
+import { DisabledBillingService, STRIPE_API_VERSION, StripeBillingService } from '../server/billing.js';
 import { loadConfig } from '../server/config.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
@@ -1022,4 +1022,11 @@ test('the official Stripe SDK verifies the exact raw payload signature', async (
     billing.handleWebhook(Buffer.from(`${payload} `), signature),
     (error) => error.code === 'stripe_signature_invalid',
   );
+});
+
+test('an extra place is on only where a paid place is counted when a moment is saved (#340)', () => {
+  const stripe = (enabled) => new StripeBillingService({ pool: null, config: { stripeEnvironment: 'test', momentLocationBillingEnabled: enabled }, stripe: null });
+  assert.equal(stripe(true).locationExtrasEnabled(), true);
+  assert.equal(stripe(false).locationExtrasEnabled(), false);
+  assert.equal(new DisabledBillingService().locationExtrasEnabled(), false, 'without billing every second place is refused, so none is sold');
 });

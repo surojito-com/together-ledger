@@ -3,6 +3,7 @@ import { router, Stack } from 'expo-router';
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider } from '../src/auth/session';
+import { StoreProvider } from '../src/billing/store-provider';
 import { ShellOverlays } from '../src/components/dialogs';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
@@ -53,6 +54,7 @@ function ThemedStack() {
       <Stack.Screen name="journey-settings" options={{ title: 'Journey sharing' }} />
       <Stack.Screen name="history" options={{ title: 'History' }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy' }} />
+      <Stack.Screen name="terms" options={{ title: 'Terms of use' }} />
       <Stack.Screen name="concern" options={{ title: 'Return-to conversation', presentation: 'modal' }} />
     </Stack>
   );
@@ -78,7 +80,10 @@ export default function RootLayout() {
       <SessionProvider>
         <ShellProvider initialOnboardingComplete={stored.onboardingComplete} onOnboardingComplete={completeOnboarding}>
           <JourneyProvider>
-            <ThemedStack />
+            {/* The App Store or Google Play, while someone is signed in (#272). */}
+            <StoreProvider>
+              <ThemedStack />
+            </StoreProvider>
           </JourneyProvider>
           <ShellOverlays />
           <SaveFailureNotice failure={failure} />

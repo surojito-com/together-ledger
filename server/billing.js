@@ -81,6 +81,10 @@ export class DisabledBillingService {
   async createLocationCheckoutSession() { throw new PlatformError(503, 'billing_unavailable', 'Additional place billing is not available yet.'); }
   async assertLocationCapacity() { throw new PlatformError(409, 'location_payment_required', 'Another place needs an active monthly place add-on.'); }
 
+  // Without billing, a moment's second place is refused whatever was paid, so no extra place is
+  // offered anywhere.
+  locationExtrasEnabled() { return false; }
+
   async assertAccountDeletable() {}
 
   async handleWebhook() {
@@ -290,6 +294,11 @@ export class StripeBillingService {
     await this.pool.query(`INSERT INTO moment_location_slots (id,journey_id,moment_id,payer_user_id,environment,provider_session_id,state,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$7)`, [slotId, journeyId, momentId, userId, this.environment, session.id, this.now()]);
     return { url: session.url, id: session.id, environment: this.environment };
   }
+
+  // Whether a moment's places beyond its first are paid for, and a paid place is counted when the
+  // moment is saved (assertLocationCapacity). The phone offers an extra place only when this is
+  // true, so nobody buys a place the server would not let them use.
+  locationExtrasEnabled() { return this.config.momentLocationBillingEnabled === true; }
 
   // A place bought in a store (#272) counts the same as one paid for here.
   async assertLocationCapacity(userId, journeyId, momentId, locationCount) {

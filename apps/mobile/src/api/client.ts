@@ -37,10 +37,13 @@ export type TokenStore = {
 export class ApiError extends Error {
   code: string;
   status: number;
-  constructor(message: string, { code = 'request_failed', status = 0 }: { code?: string; status?: number } = {}) {
+  /** What the service added to a refusal, such as whether a store purchase is worth sending again (`retryable`). */
+  details: Record<string, unknown> | null;
+  constructor(message: string, { code = 'request_failed', status = 0, details = null }: { code?: string; status?: number; details?: Record<string, unknown> | null } = {}) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -58,7 +61,7 @@ type FetchLike = (url: string, init: { method: string; headers: Record<string, s
 
 type RequestOptions = { method?: string; body?: unknown; signedIn?: boolean };
 
-type Payload = { data?: unknown; error?: { code?: string; message?: string } } | null;
+type Payload = { data?: unknown; error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
 
 export function createAccountClient({ base, fetch, tokens }: {
   /** Returns the API base, or throws when this build has none configured. */
@@ -89,7 +92,8 @@ export function createAccountClient({ base, fetch, tokens }: {
   }
 
   function failure(status: number, payload: Payload) {
-    return new ApiError(payload?.error?.message || FALLBACK_MESSAGE, { code: payload?.error?.code, status });
+    const details = payload?.error?.details;
+    return new ApiError(payload?.error?.message || FALLBACK_MESSAGE, { code: payload?.error?.code, status, details: details && typeof details === 'object' ? details : null });
   }
 
   // One refresh at a time: two requests that expire together must not spend the same refresh
@@ -250,6 +254,18 @@ export function createAccountClient({ base, fetch, tokens }: {
      */
     async storePurchaseIdentity(journeyId: string) {
       return request<{ appAccountToken: string; obfuscatedAccountId: string; obfuscatedProfileId: string }>(`/journeys/${encodeURIComponent(journeyId)}/billing/store-identity`, { method: 'POST', body: {}, signedIn: true });
+    },
+    /**
+     * A purchase the App Store or Google Play has just made, sent for our server to check and
+     * honour (#272, docs/STORE_PURCHASES.md). Nothing is granted on the phone's word. Use them
+     * through settleStorePurchase() in src/billing/store-purchase.ts, which decides from the
+     * answer whether the store is told the purchase is finished.
+     */
+    async sendApplePurchase<R>(body: { signedTransaction: string; momentId?: string }) {
+      return request<R>('/billing/store-purchases/apple', { method: 'POST', body, signedIn: true });
+    },
+    async sendGooglePurchase<R>(body: { productId: string; purchaseToken: string; momentId?: string; packageName?: string }) {
+      return request<R>('/billing/store-purchases/google', { method: 'POST', body, signedIn: true });
     },
     async createConcern(journeyId: string, concern: { title: string; detail: string; status: string }) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/concerns`, { method: 'POST', body: concern, signedIn: true });

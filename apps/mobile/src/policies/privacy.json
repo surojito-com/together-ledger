@@ -306,6 +306,26 @@
       ]
     },
     {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "Purchases made in the iPhone or Android app are processed by Apple or Google. Apple or Google receives the payment; we receive their record of what was bought, which we keep with your account and the journey or moment it was for, so the room or extra you paid for works. We never see your card or store account details. Their privacy policies are at "
+        },
+        {
+          "text": "apple.com/legal/privacy"
+        },
+        {
+          "text": " and "
+        },
+        {
+          "text": "policies.google.com/privacy"
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
       "kind": "heading",
       "level": 2,
       "spans": [

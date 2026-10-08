@@ -63,8 +63,66 @@ anything is charged, unless every value it needs is a real UUID from the service
 StoreKit or Play Billing is given.
 
 `tests/mobile-store-purchase.test.js` fails if any phone code starts a store purchase (`requestPurchase`,
-`requestSubscription`, `launchBillingFlow`, and the like) without going through it. There is no purchase screen
-yet; the work that adds one (TL-P-05 onward) builds on this rather than around it.
+`requestSubscription`, `launchBillingFlow`, and the like) without going through it.
+
+### The purchase screen (TL-P-05, #272)
+
+The phone buys through [expo-iap](https://github.com/hyochan/expo-iap): StoreKit 2 on iOS, Play Billing on
+Android, as an Expo module that runs on the New Architecture. It is native code, so it needs a **new development
+build**; an older build simply shows that purchases can't be made on that phone. `src/billing/store-kit.ts` is
+the only file that imports it, and it hands the library whole to `src/billing/store-purchase.ts`, the only file
+that starts a purchase (`startStorePurchase`) or tells a store one is finished (`settleStorePurchase`). A test
+holds both.
+
+- **Journey settings → Room for more people**, for the owner of a journey whose capacity is billed. The payer's
+  first paid journey is offered the two monthly subscriptions; once this store account holds a subscription for
+  another journey, this one is offered the four passes instead, because a second subscription in the same group
+  would move the first journey's room here. A journey that already holds the subscription can change between 51
+  and 101 people (on Google, up now with proration, down deferred to the end of the paid period).
+  On Google, each subscription is bought through its base plan, whose ID must be exactly **`monthly`**
+  (`GOOGLE_BASE_PLAN_ID`, `apps/mobile/src/billing/store-purchase.ts`). It is set in Play Console when the
+  subscription is created, as the Book's "Together Ledger store products" Play Console steps say, and
+  cannot be changed afterwards. A subscription with no `monthly` base plan can't be bought from the phone.
+  "First paid journey" is judged per store account, from the subscriptions that store reports; someone with a
+  subscription on the other platform is offered one again. Decided fine for v1 by the owner, Oct 8, 2026; knowing
+  it across both stores is #344.
+- **A moment → More on this moment**: an extra place, naming the moment, once it holds its free first place and
+  only where the server counts a paid place. The journey snapshot says so in `extras.place`, which is true only
+  with `MOMENT_LOCATION_BILLING_ENABLED` on and a billing service that counts paid places when a moment is saved;
+  without billing, every second place is refused whatever was paid. An extra place the phone paid for but whose
+  moment it no longer knows (the app closed before the store answered) waits, and can be put on any moment from
+  there.
+- **No extra photo is sold on the phone** until it can add photos to a moment (#187); owner, Oct 8, 2026.
+- **Restore purchases**, in Settings and beside the room offers (#275). It gives one answer: a refusal on its own,
+  or a purchase kept for a later try, or how many purchases it added. One our server had already honoured, such as
+  a pass bought long ago, is in place but isn't counted as restored.
+- Every price is the store's `displayPrice`. A product the store does not list says it isn't offered yet.
+- **Apple 3.1.2.** Each monthly subscription offer shows its title, its length (one month, renewing until
+  cancelled, and how to cancel), its price each month, and links to the **Terms of use** and the **Privacy
+  policy**. Both open inside the app: the Terms screen shows TERMS.md, generated into
+  `apps/mobile/src/policies/terms.json` by `scripts/mobile-policies.mjs` the way the privacy policy is, and
+  `tests/mobile-policies.test.js` fails when it is stale. Settings opens both for everyone.
+- **No room is offered until the store has said what this account holds**, so a "first paid journey" can't
+  flash up before an existing subscription is known. What it holds is read again once a subscription purchase
+  has arrived, not when the purchase flow returns.
+
+Each transaction goes to `/billing/store-purchases/apple` or `/google`. It is finished on success; on a refusal
+with `retryable: false`, an Apple transaction is finished, and a Google one is left unacknowledged so Google
+refunds it within three days (decided by the owner, Oct 8, 2026); anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
+the store to hand back. A purchase still waiting for approval (Ask to Buy on iOS, a pending payment on Google) is
+not sent; the phone says once that it is waiting for approval and that nothing is charged until then.
+
+The store connection lives as long as the signed-in account, never as long as a journey. Its listeners are
+registered before it connects, as expo-iap's own `useIAP` does. On connecting, and every time the app returns to
+the foreground, the phone sends everything the store still holds open: what `getAvailablePurchases` returns and,
+on iOS, `getPendingTransactionsIOS`, since an unfinished consumable is not among the available purchases. A
+purchase kept for a retry is therefore tried again the next time the app is opened, not only on the next launch.
+
+On Android, Play Billing brings two permissions, so `app.json` grants them beside `INTERNET` and the Phone test APK
+workflow allows them. `com.android.vending.BILLING` is declared by the billing library itself.
+`android.permission.ACCESS_NETWORK_STATE` is declared by Google's datatransport, which Play Billing 9.1 depends on:
+it schedules its uploads to wait for a network, which Android 9 and later refuse without it. Neither shows a prompt;
+the second says only whether the phone is online and on what kind of network.
 
 ## When a purchase comes back (TL-P-05, #272)
 
@@ -313,12 +371,13 @@ billing **or** at least one store configured, so the phones can sell while web b
 - **Server notifications, refunds and revocations** (#273). A refund through Apple or Google does not take room back
   yet; nothing listens for it. A Google subscription's renewal is recorded when the phone sends it again, not on
   Google's word.
-- **Restore on a new phone** (#275).
+- **Restore on a new phone** (#275). The phone's Restore purchases sends what the store hands back; a
+  subscription bought on the other platform is not seen from this one.
 - **What a journey holding more than one entitlement means** (#274, #276), beyond "the most generous one counts".
 - **Reconciliation against the stores** (#277).
 - **The phone's delete-account dialog.** Deleting the account deletes the journey and its store entitlements, and
   keeps `billing_store_purchases`, but it does not cancel a store subscription: that carries on, and keeps
   charging, until the person cancels it with Apple or Google. **Decided by the owner, Oct 8, 2026: the phone's
   delete-account dialog must say that a store subscription is cancelled with Apple or Google**, not by deleting the
-  account (App Store guideline 5.1.1(v) asks for this too). The phone session's prompt 4 builds that screen; nothing
-  on the server stands in for it.
+  account (App Store guideline 5.1.1(v) asks for this too). The phone's deletion screen and its confirmation
+  dialog now say it (`STORE_SUBSCRIPTION_NOT_CANCELLED`); nothing on the server stands in for it.

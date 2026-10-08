@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { RoomForMorePeople } from '../src/components/store-offers';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import {
   billingGlyph,
@@ -228,6 +229,9 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
       ) : null}
 
       {billing ? <Billing status={billing} /> : null}
+
+      {/* Paid room is read only when this journey's capacity is billed, so it is offered only then. */}
+      {snapshot.capacity?.mode === 'billing' ? <RoomForMorePeople journeyId={journeyId} isOwner={role === 'owner'} /> : null}
 
       <Button kind="quiet" label="History and conversations" onPress={() => router.push('/history')} />
     </Screen>

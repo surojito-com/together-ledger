@@ -18,11 +18,17 @@ const mobile = new URL('../apps/mobile/', import.meta.url);
 const app = JSON.parse(await readFile(new URL('app.json', mobile), 'utf8')).expo;
 const require = createRequire(import.meta.url);
 
-// The phone talks to the API. Nothing else.
-const GRANTED = ['android.permission.INTERNET'];
+// The phone talks to the API, and buys through Google Play (#272). Nothing else. BILLING is what
+// Play Billing's own library declares; it lets the app reach Play's purchase service, shows no
+// prompt, and reaches nothing on the phone. Play Console offers no products until a build has it.
+// ACCESS_NETWORK_STATE comes with it: Play Billing depends on Google's datatransport, whose
+// manifests declare it because they schedule their uploads to wait for a network, which Android 9
+// and later refuse without it. It shows no prompt and says only whether the phone is online and on
+// what kind of network. Blocking it would leave that code to fail inside Google's library.
+const GRANTED = ['android.permission.INTERNET', 'com.android.vending.BILLING', 'android.permission.ACCESS_NETWORK_STATE'];
 const BLOCKED = ['android.permission.READ_EXTERNAL_STORAGE', 'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.SYSTEM_ALERT_WINDOW', 'android.permission.VIBRATE', 'android.permission.USE_BIOMETRIC', 'android.permission.USE_FINGERPRINT'];
 
-test('the phone is granted only the network on Android, and gaining a permission fails here first', () => {
+test('the phone is granted only the network and what Play Billing needs on Android, and gaining a permission fails here first', () => {
   assert.deepEqual(app.android.permissions, GRANTED, 'A new Android permission is a privacy decision: say what it is for, check the generated manifest, and update this list in the same change.');
 });
 
@@ -72,8 +78,9 @@ test('sign-in tokens are kept out of Android cloud backup and device transfer, a
 
 test('the APK check fails when it reads nothing, rather than passing an empty list', async () => {
   const workflow = await readFile(new URL('../.github/workflows/phone-test-apk.yml', import.meta.url), 'utf8');
-  const step = workflow.slice(workflow.indexOf('- name: Check the APK asks only for the network'));
+  const step = workflow.slice(workflow.indexOf('- name: Check the APK asks only for the network and what Play Billing needs'));
   assert.match(step, /set -euo pipefail/, 'a missing aapt2 or APK must not hide behind tee');
   assert.match(step, /grep -qxF android\.permission\.INTERNET/, 'a list without INTERNET means the read failed');
   assert.match(step, /uses-permission\(-sdk-23\)\?/, 'uses-permission-sdk-23 grants a permission too');
+  for (const permission of GRANTED) assert.ok(step.includes(`-e ${permission}`), `${permission} is what app.json grants, so the APK may ask for it`);
 });

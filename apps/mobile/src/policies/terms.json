@@ -1,0 +1,437 @@
+{
+  "source": "Generated from TERMS.md by scripts/mobile-policies.mjs. Do not edit by hand.",
+  "title": "Terms of use",
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "Effective 8 October 2026."
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "These terms are an agreement between you and Together Ledger Digital LLC, registered in Macon, Georgia, United States (\"we\"). They cover Together Ledger on the web at app.together-ledger.com and in its phone apps. By creating an account or using Together Ledger, you agree to them and to the "
+        },
+        {
+          "text": "privacy policy"
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "What Together Ledger is"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "A private place for people in a relationship to hold moments, plans, practical details, and conversations they want to come back to. It isn't couples therapy, financial advice, or a substitute for professional support, and it isn't an emergency service. If you or someone else is in danger, call your local emergency number."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Who can use it"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "You must be 18 or older, wherever you live."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Using it without an account"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "Without an account, everything stays in your browser. We never receive it and can't recover it, and clearing the browser's data deletes it. If it matters to you, export a copy."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Your account"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "One account is for one real person. Don't create one to pretend to be someone else, or to get into a journey you weren't invited to."
+          }
+        ],
+        [
+          {
+            "text": "Keep your password to yourself. You're responsible for what happens under your account. If you think someone else has used it, write to ledger-support@together-ledger.com."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Journeys and the people in them"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "A journey holds two people to begin with. Someone new is added only when everyone already in the journey agrees."
+          }
+        ],
+        [
+          {
+            "text": "A journey's owner can hand it to another member. An owner who wants to delete their account must first hand on each journey that other people are still in."
+          }
+        ],
+        [
+          {
+            "text": "A "
+          },
+          {
+            "text": "private",
+            "code": true
+          },
+          {
+            "text": " or "
+          },
+          {
+            "text": "share later",
+            "code": true
+          },
+          {
+            "text": " moment is seen only by you. A "
+          },
+          {
+            "text": "shared now",
+            "code": true
+          },
+          {
+            "text": " moment is seen by everyone in the journey, and it can't be made private again, because they may already have seen it."
+          }
+        ],
+        [
+          {
+            "text": "The people you share with can remember, copy, or repeat what you share. We can't control that, so share what you're comfortable sharing."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "What you put in"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "Your moments, photos, places, and notes stay yours. You give us permission to store, copy, and show them only as needed to run Together Ledger for you and the people you share with."
+          }
+        ],
+        [
+          {
+            "text": "That permission ends when you delete the content, except that encrypted backups keep it for up to 30 days, and what you shared stays with the people you shared it with, as the privacy policy explains."
+          }
+        ],
+        [
+          {
+            "text": "Only add what you have the right to add. Don't use Together Ledger to monitor, control, threaten, or harass anyone."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Acceptable use"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "Don't:"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "break the law, or help someone else break it;"
+          }
+        ],
+        [
+          {
+            "text": "try to reach data that isn't yours, test our security without permission, or disrupt the service;"
+          }
+        ],
+        [
+          {
+            "text": "scrape it, overload it, or create accounts automatically;"
+          }
+        ],
+        [
+          {
+            "text": "upload malware, or anything that exploits a child."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "If you find a security problem, report it privately through "
+        },
+        {
+          "text": "the repository's security reporting"
+        },
+        {
+          "text": ", and never in a public issue."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Paying for more"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "A journey of two is free, always. A journey that holds more people is paid for per journey, in one of two sizes: up to 51 people, or up to 101, the most a journey can hold. One person pays for a journey: its owner."
+          }
+        ],
+        [
+          {
+            "text": "Each size can be paid for by the month, renewing by itself until you end it, or with a week or month pass, which doesn't renew. A pass bought while another is running starts when that one ends."
+          }
+        ],
+        [
+          {
+            "text": "Some extras, such as another photo or place on a moment, are paid for once. An extra stays with its moment for good, even if the journey's paid room ends."
+          }
+        ],
+        [
+          {
+            "text": "Before you pay, you see the price and whether it renews by itself."
+          }
+        ],
+        [
+          {
+            "text": "Payments are processed by Apple through the App Store, by Google through Google Play, or by Stripe. The terms of whichever one processes your payment also apply to it."
+          }
+        ],
+        [
+          {
+            "text": "You can end a monthly payment any time: through the App Store or Google Play if it was made there, otherwise in billing settings. What you've paid for lasts until the end of that month. We don't refund part of a month."
+          }
+        ],
+        [
+          {
+            "text": "Whenever paid room ends without being renewed, there's a grace period of 7 days. New invitations wait, and everything else keeps working. During any grace, those first 7 days included, the person who pays can ask for another 7 days, up to 6 times per journey each calendar year, so a journey can have up to 7 weeks of grace a year. While a journey is in grace, a banner tells everyone in it."
+          }
+        ],
+        [
+          {
+            "text": "If the grace ends and the room still isn't paid for, the people beyond what's covered rest. Resting people can always still read the whole journey; they just can't add to it. Nobody is removed and no history is lost. The owner chooses who rests first. When payment is restored, they're back."
+          }
+        ],
+        [
+          {
+            "text": "An extra can't be refunded once it's used."
+          }
+        ],
+        [
+          {
+            "text": "Anything we charged in error is refunded in full. Write to ledger-support@together-ledger.com. A refund for a payment made through the App Store or Google Play comes from Apple or Google, under their own rules."
+          }
+        ],
+        [
+          {
+            "text": "A price change never applies to a week or month you've already paid for."
+          }
+        ],
+        [
+          {
+            "text": "Before you delete an account that pays through Stripe, that payment has to end. Deleting your account doesn't end a monthly payment made through the App Store or Google Play; end it there."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Ending things"
+        }
+      ]
+    },
+    {
+      "kind": "list",
+      "items": [
+        [
+          {
+            "text": "You can delete your account any time in Settings, after confirming your password. The privacy policy explains what deletion removes and what stays."
+          }
+        ],
+        [
+          {
+            "text": "We may suspend or close an account that breaks these terms, or to keep someone safe. Where it's safe and lawful, we'll tell you why and give you a chance to export your journeys first."
+          }
+        ],
+        [
+          {
+            "text": "If we ever stop offering Together Ledger, we'll give at least 30 days' notice in the product, time to export your journeys, and a refund for any paid time you won't get to use."
+          }
+        ]
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "No warranty, and limits on liability"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "Together Ledger is provided \"as is\". We don't promise it will always be available or free of errors, or that syncing between devices will never conflict. Keep your own export of anything you can't afford to lose. To the extent the law allows, Together Ledger Digital LLC isn't liable for indirect, incidental, or consequential damages from your use of it, including lost data. Nothing here limits rights you have under the law that can't be limited."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Changes to these terms"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "When these terms change, we update the date at the top and keep the earlier versions in the public history of this repository at "
+        },
+        {
+          "text": "github.com/together-ledger-digital-llc/together-ledger"
+        },
+        {
+          "text": "."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Governing law"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "These terms are governed by the laws of the State of Georgia, USA, without regard to conflict-of-law rules. Disputes are heard in the state or federal courts for Bibb County, Georgia, unless the law where you live gives you the right to bring them where you live."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "Contact"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "For help, write to ledger-support@together-ledger.com. For anything legal or about privacy, write to legal@together-ledger.com."
+        }
+      ]
+    },
+    {
+      "kind": "heading",
+      "level": 2,
+      "spans": [
+        {
+          "text": "An honest boundary"
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "These terms haven't been reviewed by a lawyer. They describe how Together Ledger actually works, checked against its code, and we'll correct them wherever they fall short."
+        }
+      ]
+    }
+  ]
+}
