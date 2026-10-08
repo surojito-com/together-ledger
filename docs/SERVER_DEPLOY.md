@@ -2,9 +2,10 @@
 
 ## Status of this document
 
-**This describes the release as it was actually done on 2026-10-01, and twice on 2026-10-08**,
-from the account in #356 and from what this guide already said. Production is on migration
-`030`.
+**This describes the release as it was actually done on 2026-10-01, and twice on 2026-10-08.**
+The commands in [Releasing](#releasing) are the ones the owner recorded from the two releases on
+Oct 8 (commits `1cc17a6` and `977f365`), on #364, word for word. The rest comes from #356 and
+from what this guide already said. Production is on migration `030`.
 
 The guide used to describe a different release: build and push to Amazon ECR, deploy by digest,
 rehearse on a pre-production network, and roll back by digest. None of that is how a release has
@@ -13,13 +14,7 @@ throwaway copy of live data, and the rollback anchor is the previous local image
 are still wanted, so they are kept at the end, under [Planned, not yet done](#planned-not-yet-done),
 and marked as plans rather than steps.
 
-**What #356 confirmed and what it didn't.** #356 records five facts about those releases: where
-the release log is, that the image is built on the host with nothing pushed, how migrations were
-rehearsed, where the rollback anchor is, and that the backup plus `verify-production-recovery.sh`
-before the switch matched this guide. Every other step below is carried over from the earlier
-guide, which #356 did not flag. Where the exact command used on the host isn't written down
-anywhere, this guide does not guess at one: it says what the step does and leaves an
-`<OWNER: …>` placeholder for the command, to be filled in from the host by the person who ran it.
+Each step says where it comes from: the Oct 8 commands, #356, or the earlier guide.
 
 **Earlier history, briefly.** The API has run on a single EC2 host in `<AWS_REGION>`, from
 `compose.production.yaml` behind Caddy, since 2026-09-14. The first recorded release was
@@ -29,7 +24,7 @@ still the shape of a release, now written down.
 
 Every value only the owner holds is written as `<A_PLACEHOLDER>` and listed in
 [Values the owner supplies](#values-the-owner-supplies). Nothing in this repository invents a
-registry address, a host name, a secret ARN, an account identifier, or a command nobody ran.
+registry address, a secret ARN, an account identifier, or a command nobody ran.
 
 Tick the [production readiness gate](PRODUCTION_READINESS.md) as each item becomes true by
 having been done, not by having been read here.
@@ -78,30 +73,24 @@ Revisit this decision when any of these becomes true:
 | --- | --- | --- |
 | `<AWS_REGION>` | The region of the host and its secrets | AWS console |
 | `<HOST>` | SSH target of the production host | the owner's SSH configuration |
-| `<REPO_DIR>` | The reviewed checkout on the host, for example `/srv/together-ledger` | chosen at first deploy |
+| `<REPO_DIR>` | The reviewed checkout on the host: `/home/ubuntu/together-ledger` (owner, Oct 8) | the host |
 | `<SECRET_ID_SESSION>` | Secrets Manager name or ARN holding `SESSION_SECRET` | AWS Secrets Manager |
 | `<SECRET_ID_AUDIT>` | Secrets Manager name or ARN holding `AUDIT_HMAC_KEY` | AWS Secrets Manager |
 | `<SECRET_ID_POSTGRES>` | Secrets Manager name or ARN holding `POSTGRES_PASSWORD` | AWS Secrets Manager |
 | `<SECRET_ID_SMTP>` | Secrets Manager name or ARN holding the Resend relay URL | AWS Secrets Manager |
 | `<SECRET_ID_APPLE_SIGN_IN>` | Secrets Manager name or ARN holding `APPLE_SIGN_IN_PRIVATE_KEY`: the Sign in with Apple key `985BDXJP8S`'s `.p8` contents, on one line | AWS Secrets Manager |
 | `<SECRET_ID_APPLE_TOKENS>` | Secrets Manager name or ARN holding `APPLE_TOKEN_ENCRYPTION_KEY`: 32 random bytes, base64 (`openssl rand -base64 32`) | AWS Secrets Manager |
-| `<COMMIT>` | The reviewed `main` commit being released | `git rev-parse HEAD` in a clean checkout |
-| `<IMAGE>` | The name and tag the host-built image is given, which `TOGETHER_IMAGE` names | the build in step 2 |
-| `<PREVIOUS_IMAGE>` | The image that was running before the switch | `/etc/together-ledger/previous-image` |
+| `<COMMIT>`, `$COMMIT` | The full reviewed `main` commit being released | `git rev-parse HEAD` in a clean checkout |
 
-Commands nobody has written down yet, to be filled in from the host by whoever ran the
-Oct 1 and Oct 8 releases:
+The release commands set these shell variables, in step 2, and use them to the end:
 
-| Placeholder | The step |
+| Variable | What it holds |
 | --- | --- |
-| `<OWNER: BUILD_COMMAND>` | Building the image on the host, and the tag it is given (step 2) |
-| `<OWNER: DUMP_AND_LOAD_COMMANDS>` | Taking the `pg_dump` of live data and loading it into the throwaway container (step 3) |
-| `<OWNER: REHEARSAL_RUN_COMMAND>` | Running the new image's `node server/migrate.js` against that container (step 3) |
-| `<OWNER: CLEANUP_COMMANDS>` | Deleting the throwaway container and the dump (step 3) |
-| `<OWNER: RECORD_PREVIOUS_IMAGE_COMMAND>` | Writing the running image into `/etc/together-ledger/previous-image` (step 5) |
-| `<OWNER: SWITCH_COMMAND>` | Pointing `TOGETHER_IMAGE` at the new image, if a release changes it (step 6) |
-| `<OWNER: RELEASE_LOG_LINE>` | The line appended to `/etc/together-ledger/release-log`, and its format (step 7) |
-| `<OWNER: RUNNING_IMAGE_CHECK>` | Showing which image the app container is running (step 8) |
+| `F` | `/etc/together-ledger/production.env`, the root-owned environment file. Referred to only by its path; nothing prints its values |
+| `COMMIT` | The full commit being released |
+| `COMPOSE` | `docker compose --env-file $F -f compose.production.yaml` |
+| `CUR` | The image that was running before this release, read back from `/etc/together-ledger/previous-image` |
+| `REPO` | `CUR` without its tag: the image name `TOGETHER_IMAGE` already carried. The new build is `$REPO:$COMMIT` |
 
 The registry values (`<AWS_ACCOUNT_ID>`, `<REGISTRY>`, `<ECR_REPOSITORY>`, `<DIGEST>`) belong to
 the plan, and are listed there.
@@ -216,11 +205,12 @@ next release's `up -d` picks them up.
 Two root-owned files on the host record what is running. Neither holds a secret, so either can be
 read aloud during an incident.
 
-- **`/etc/together-ledger/release-log`**: one line per release, appended in step 7. Started on
-  2026-09-29. It records a tag rather than a digest, because no image has a registry digest
-  (`PRODUCTION_READINESS.md`, #225). Its line format is `<OWNER: RELEASE_LOG_LINE>`.
-- **`/etc/together-ledger/previous-image`**: the image that was running before the last switch,
-  written in step 5. This is what a rollback returns to.
+- **`/etc/together-ledger/release-log`**: one line per release, appended in step 6. Started on
+  2026-09-29. Each line is `<UTC time> <full commit> <image id sha256:…> <migrations applied, or
+  none>`. The image id is the local image's own id, not a registry digest: no image has one
+  (`PRODUCTION_READINESS.md`, #225).
+- **`/etc/together-ledger/previous-image`**: the `TOGETHER_IMAGE` value that was running before
+  the last release, written in step 2. This is what a rollback returns to.
 
 The earlier guide named the log `releases.log`. It is `release-log` on the host; use that name.
 
@@ -234,7 +224,10 @@ Read-only. It deploys nothing and opens no port.
 
 ## Releasing
 
-In order. Each step says whether #356 confirmed it was done this way.
+In order. Each step says where it comes from: the commands the owner recorded from the two
+releases on 2026-10-08 (commits `1cc17a6` and `977f365`, on #364), #356, or the earlier guide.
+The Oct 8 commands contain no secrets: the environment file is referred to only by its path, and
+the rehearsal database is a throwaway container with a throwaway password.
 
 ### 1. Start from a clean reviewed checkout
 
@@ -250,51 +243,94 @@ test -z "$(git status --porcelain)" || { echo "Working tree is dirty. Stop."; ex
 npm ci && npm run check
 ```
 
-### 2. Build the image on the host
+On Oct 8 the checkout on the host was done by the shared setup at the top of step 2, which
+prints `git status --porcelain` rather than stopping on it. Read its output: anything printed
+means the tree is dirty, and the release stops there.
 
-*As done on Oct 1 and Oct 8 (#356).*
+### 2. Record the rollback anchor, then build the image on the host
 
-The image is built on the host, in `<REPO_DIR>` at `<COMMIT>`, and stays there. **Nothing is
-pushed to a registry, and nothing is pulled.** No image has ever carried a registry digest
-(#225).
+*As run on Oct 8 (#364). #356: the image is built on the host and nothing is pushed.*
+
+The shared setup. `$COMMIT` is the full commit being released, and every later step uses these
+variables:
 
 ```sh
-<OWNER: BUILD_COMMAND>
+cd /home/ubuntu/together-ledger
+F=/etc/together-ledger/production.env
+COMMIT=<full commit sha>
+COMPOSE="docker compose --env-file $F -f compose.production.yaml"
+git status --porcelain
+git fetch origin main
+git checkout --detach "$COMMIT"
+git log -1 --format='%h %s'
 ```
 
-The result is `<IMAGE>`, a local image. `compose.production.yaml` runs whatever `TOGETHER_IMAGE`
-names, so that is the name the app container starts from.
+Record the image running now in `/etc/together-ledger/previous-image`. This is what a rollback
+returns to. It runs before the build, so `$REPO` is known:
+
+```sh
+sudo sh -c "umask 077; sed -n 's/^TOGETHER_IMAGE=//p' $F > /etc/together-ledger/previous-image"
+CUR=$(sudo cat /etc/together-ledger/previous-image); REPO=${CUR%:*}
+echo "running now: ${CUR##*:}"
+```
+
+Run this once per release, before the switch in step 4. Run after the switch, it would record the
+new image as its own rollback anchor.
+
+Build. The tag is the commit:
+
+```sh
+sudo docker build -t "$REPO:$COMMIT" .
+sudo docker image inspect --format '{{.Id}}' "$REPO:$COMMIT"
+```
+
+The result is `$REPO:$COMMIT`, a local image. `$REPO` is whatever name `TOGETHER_IMAGE` already
+carried, so the new image keeps the same name with the commit as its tag. **Nothing is pushed to
+a registry, and nothing is pulled.** No image has ever carried a registry digest (#225).
 
 **Never run `docker compose pull app` in a release.** It asks a registry for an image that was
 never pushed there.
 
+The previous image exists only on this host. **Don't prune images while it is the rollback
+anchor**, or there is nothing to roll back to.
+
 ### 3. Rehearse the migrations on a throwaway copy of live data
 
-*As done on Oct 1 and Oct 8 (#356). This replaces the earlier guide's
+*As run on Oct 8 (#364), and as #356 describes. This replaces the earlier guide's
 `--env-file /etc/together-ledger/preproduction.env --network together-preproduction`: neither
 exists on the host.*
 
 This is `OPERATIONS.md` release gate step 3. The migrations are run from **the image just built**
-against a copy of production's data, never against production itself:
+against a copy of production's data, never against production itself.
 
-1. Start a temporary `postgres:16-alpine` container, the same PostgreSQL the production compose
-   file runs.
-2. Take a `pg_dump` of the live database and load it into that container.
-3. Run `node server/migrate.js` from the new image against it, with
-   - `DATABASE_URL` pointing at the temporary container, and
-   - `NODE_ENV=development`. The image sets `production`, and in production the server refuses a
-     `PUBLIC_ORIGIN` that isn't HTTPS. The rehearsal has no HTTPS origin and needs none: it only
-     migrates.
-4. Delete the temporary container, and the dump with it.
+Start a temporary `postgres:16-alpine` container on its own network, and load a `pg_dump` of the
+live database into it:
 
 ```sh
-<OWNER: DUMP_AND_LOAD_COMMANDS>
-<OWNER: REHEARSAL_RUN_COMMAND>
-<OWNER: CLEANUP_COMMANDS>
+sudo docker network create tl-rehearsal
+sudo docker run -d --name tl-rehearsal-db --network tl-rehearsal -e POSTGRES_USER=rehearsal -e POSTGRES_PASSWORD=rehearsal -e POSTGRES_DB=rehearsal postgres:16-alpine
+until sudo docker exec tl-rehearsal-db pg_isready -U rehearsal -d rehearsal >/dev/null 2>&1; do sleep 2; done; sleep 3; echo "practice database ready"
+sudo docker exec together-ledger-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" --no-owner --no-privileges "$POSTGRES_DB"' | sudo docker exec -i tl-rehearsal-db psql -q -v ON_ERROR_STOP=1 -U rehearsal -d rehearsal >/dev/null && echo "copy loaded"
 ```
 
-The dump and the copy are live personal data. Keep them on the host, readable by root only, and
-gone when the rehearsal is over. Never print a value from the environment file while doing this.
+The dump goes straight from one container into the other through a pipe, so no copy of it is
+written to the host's disk.
+
+Run the new image's migrations against it:
+
+```sh
+sudo docker run --rm --network tl-rehearsal -e NODE_ENV=development -e DATABASE_URL=postgresql://rehearsal:rehearsal@tl-rehearsal-db:5432/rehearsal "$REPO:$COMMIT" node server/migrate.js
+```
+
+`NODE_ENV=development` because the image sets `production`, and in production the server refuses
+a `PUBLIC_ORIGIN` that isn't HTTPS (#356). The rehearsal has no HTTPS origin and needs none: it
+only migrates.
+
+Then delete the copy:
+
+```sh
+sudo docker rm -f -v tl-rehearsal-db && sudo docker network rm tl-rehearsal && echo "practice copy deleted"
+```
 
 `node server/migrate.js` prints the migrations it applied and exits non-zero if any of them
 fails. All migrations run in one transaction, so a failure leaves the copy on the schema it
@@ -304,55 +340,32 @@ Read the list. Then check each new migration against the rule in
 [Rollback](#rollback): a release whose migrations are not additive cannot be undone by putting
 the previous image back, and has to be planned as two releases instead of one.
 
-### 4. Back up, and verify the backup
+### 4. Back up, verify the backup, and only then switch
 
-*As done on Oct 1 and Oct 8, matching the earlier guide (#356). This gates the switch.*
+*As run on Oct 8 (#364). The backup plus `verify-production-recovery.sh` before the switch matched
+the earlier guide (#356).*
 
-The pre-migration backup is the only thing that can undo a schema change, so take it before
-anything moves:
+The pre-migration backup is the only thing that can undo a schema change, so it is taken before
+anything moves. The block switches only if the backup verifies:
 
 ```sh
 sudo systemctl start together-ledger-backup.service
-sudo /usr/local/lib/together-ledger/verify-production-recovery.sh
+if sudo /usr/local/lib/together-ledger/verify-production-recovery.sh; then
+  sudo sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=$REPO:$COMMIT|" "$F"
+  sudo stat -c '%U %a' "$F"
+  sudo sed -n 's/^TOGETHER_IMAGE=.*://p' "$F"
+  sudo TOGETHER_ENV_FILE=$F $COMPOSE run --rm app node server/migrate.js
+  sudo TOGETHER_ENV_FILE=$F $COMPOSE up -d
+else
+  echo "STOP: backup check failed, nothing switched"
+fi
 ```
 
-**Do not go on to the switch unless that passes.**
+Pasting this block twice is harmless: the second run takes one more backup and applies nothing
+(`"applied":[]`). That happened on Oct 8.
 
-### 5. Record the rollback anchor
-
-*As done on Oct 1 and Oct 8 (#356).*
-
-Write the image running right now into `/etc/together-ledger/previous-image`. This is what a
-rollback returns to:
-
-```sh
-<OWNER: RECORD_PREVIOUS_IMAGE_COMMAND>
-```
-
-The previous image exists only on this host. **Don't prune images while it is the rollback
-anchor**, or there is nothing to roll back to.
-
-### 6. Switch
-
-*Carried over from the earlier guide, without its registry pull.*
-
-On the host, in the reviewed checkout at the same commit. If the release changes what
-`TOGETHER_IMAGE` names, change it first:
-
-```sh
-<OWNER: SWITCH_COMMAND>
-sudo grep '^TOGETHER_IMAGE=' /etc/together-ledger/production.env
-```
-
-Then apply migrations as their own visible step, and start:
-
-```sh
-cd <REPO_DIR>
-export COMPOSE="docker compose --env-file /etc/together-ledger/production.env -f compose.production.yaml"
-
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE run --rm app node server/migrate.js
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d
-```
+`sudo stat` should print `root 600`: the environment file is still root-owned and private after
+the edit. The `sed -n` line prints only the new tag, never a secret.
 
 `run --rm app` brings PostgreSQL up and waits for it to be healthy first, then applies the
 migrations and exits. Starting the app afterwards finds nothing left to apply. Compose needs
@@ -364,25 +377,22 @@ answers. A deploy that fails to become healthy therefore fails loudly — the AP
 rather than quietly serving the previous release. That is the intended behaviour and it is also
 why there is an interruption: there is no second app container to fall back to.
 
-### 7. Append the release to the log
+### 5. Confirm against production, not against the deploy
 
-*The log is `/etc/together-ledger/release-log` (#356).*
+*The host check as run on Oct 8 (#364). The outside checks are carried over from the earlier
+guide.*
 
-```sh
-<OWNER: RELEASE_LOG_LINE>
-```
-
-One line: the UTC time, `<COMMIT>`, `<IMAGE>`, and the migrations the release applied, or none.
-
-### 8. Confirm against production, not against the deploy
-
-*Carried over from the earlier guide.*
-
-Privately on the host first:
+On the host, confirm the containers are up, that the app container runs the image just built,
+and count errors since it started:
 
 ```sh
-TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps
+sudo TOGETHER_ENV_FILE=$F $COMPOSE ps --format '{{.Name}}  {{.Status}}'
+[ "$(sudo docker inspect --format '{{.Image}}' "$(sudo TOGETHER_ENV_FILE=$F $COMPOSE ps -q app)")" = "$(sudo docker image inspect --format '{{.Id}}' "$REPO:$COMMIT")" ] && echo "running the new build"
+echo "errors since start: $(sudo docker logs --since 10m together-ledger-app-1 2>&1 | grep -c '"level":"error"')"
 ```
+
+No "running the new build" line means the app container is not running this release, whatever
+the health checks say.
 
 Then from outside, over the real internet path, from a machine that is not the host:
 
@@ -392,12 +402,7 @@ curl -fsS https://api.together-ledger.com/readyz
 ```
 
 `/readyz` answering `{"status":"ready"}` means the app reached PostgreSQL. It does **not** mean
-the release you intended is the one running. Confirm on the host that the app container runs
-`<IMAGE>`:
-
-```sh
-<OWNER: RUNNING_IMAGE_CHECK>
-```
+the release you intended is the one running; the host check above is what says that.
 
 Finally, confirm the *change*. A health check proves a server is up; it proves nothing about
 what merged. Exercise the thing the release added, with a synthetic account, never a real one.
@@ -421,7 +426,21 @@ Until there is, the image check above is a host-side check, and the behavioural 
 outside evidence. Adding a revision to `/healthz` would close that gap; it is a change for its own
 story.
 
-### 9. Record it
+### 6. Append the release to the log
+
+*As run on Oct 8 (#364).*
+
+One line per release: `<UTC time> <full commit> <image id sha256:…> <migrations applied, or none>`.
+For example, `2026-10-01T15:26:08Z 713f2f9bd021… sha256:d4353560… none`.
+
+```sh
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $COMMIT $(sudo docker image inspect --format '{{.Id}}' "$REPO:$COMMIT") 030" | sudo tee -a /etc/together-ledger/release-log >/dev/null && sudo tail -1 /etc/together-ledger/release-log
+```
+
+The `030` was that release's migration. Write whichever migrations the release applied, or
+`none`.
+
+### 7. Record it
 
 Write down the UTC time, the commit, the migrations applied, the verification results, and
 anything that did not go as written, and correct this document where it was wrong.
@@ -444,30 +463,28 @@ a database restore rather than an image change.
 
 ### Returning to the previous image
 
-*The anchor is the previous local image in `/etc/together-ledger/previous-image` (#356). The
-steps around it are carried over from the earlier guide, without its registry pull.*
+*The commands were written down on Oct 8 (#364), and neither release needed them. The anchor is
+the previous local image in `/etc/together-ledger/previous-image` (#356).*
 
 No data loss, provided the rule above held.
 
-1. Record first: the failing image, UTC time, symptoms, and whether writes may have landed.
-   Delete nothing — not volumes, logs, backups, images, or the database.
+1. Record first: the failing release's commit and image id, the UTC time, the symptoms, and
+   whether writes may have landed. Delete nothing — not volumes, logs, backups, images, or the
+   database.
 
    ```sh
    sudo tail -5 /etc/together-ledger/release-log
    ```
 
-   `/etc/together-ledger/previous-image` names the image to return to.
-
-2. Point `TOGETHER_IMAGE` back at `<PREVIOUS_IMAGE>`, the same way step 6 points it forward
-   (`<OWNER: SWITCH_COMMAND>`).
-3. Start that image. PostgreSQL keeps running; only the app container is replaced.
+2. Point `TOGETHER_IMAGE` back at the previous image and start it. PostgreSQL keeps running. With
+   `F` and `COMPOSE` set as in step 2:
 
    ```sh
-   cd <REPO_DIR>
-   TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE up -d app
+   sudo sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=$(sudo cat /etc/together-ledger/previous-image)|" "$F"
+   sudo TOGETHER_ENV_FILE=$F $COMPOSE up -d
    ```
 
-4. Verify privately, then from outside, then one synthetic account flow.
+3. Verify privately, then from outside, then one synthetic account flow.
 
    ```sh
    curl -fsS https://api.together-ledger.com/healthz
@@ -636,14 +653,14 @@ not publish the registry address or the digest outside the host and the release 
 
 #### Deploying and rolling back by digest
 
-Step 6 would point the environment file at the digest, never a tag, and pull it:
+Step 4 would point the environment file at the digest, never a tag, and pull it:
 
 ```sh
 sudo sh -c 'umask 077; sed -i "s|^TOGETHER_IMAGE=.*|TOGETHER_IMAGE=<REGISTRY>/<ECR_REPOSITORY>@<DIGEST>|" /etc/together-ledger/production.env'
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE pull app
 ```
 
-Step 8 would confirm the running digest:
+Step 5 would confirm the running digest:
 
 ```sh
 TOGETHER_ENV_FILE=/etc/together-ledger/production.env $COMPOSE ps -q app \
