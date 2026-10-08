@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { generate, MOBILE_PRIVACY_PATH, serialize, spans } from '../scripts/mobile-policies.mjs';
+import { generate, generateTerms, MOBILE_PRIVACY_PATH, MOBILE_TERMS_PATH, serialize, spans } from '../scripts/mobile-policies.mjs';
 
 // Both stores ask that the privacy policy can be read from inside the app. The phone shows it on
 // its own Privacy screen, generated from PRIVACY.md (scripts/mobile-policies.mjs), because the
@@ -58,6 +58,48 @@ test('payment words reach the phone only in the policy\'s disclosure sections', 
   const payment = /stripe|checkout|customer portal|[$€£]\s?\d|\bper (?:month|year)\b/i;
   let section = '(before the first section)';
   for (const block of policy.blocks) {
+    if (block.kind === 'heading' && block.level === 2) {
+      section = words(block.spans);
+      continue;
+    }
+    const text = block.kind === 'list' ? block.items.map(words).join(' ') : words(block.spans);
+    if (payment.test(text)) assert.ok(allowed.has(section), `"${section}" names payment: ${text}`);
+  }
+});
+
+// Apple 3.1.2: an auto-renewing subscription offer links to the terms of use and the privacy
+// policy. The phone opens no web page (#268), so the terms are on the phone too, generated from
+// TERMS.md the way the privacy policy is from PRIVACY.md (#340).
+test('the phone\'s terms are TERMS.md, not a copy kept by hand', async () => {
+  assert.equal(await readFile(MOBILE_TERMS_PATH, 'utf8'), serialize(await generateTerms()), 'terms.json is stale: run node scripts/mobile-policies.mjs --write');
+  const terms = JSON.parse(await readFile(MOBILE_TERMS_PATH, 'utf8'));
+  assert.equal(terms.title, 'Terms of use');
+  assert.doesNotMatch(JSON.stringify(terms), /\]\(|\*\*|`/, 'nothing is left as Markdown');
+});
+
+test('the Terms screen shows terms.json, and Settings opens it for everyone', async () => {
+  assert.match(await read('app/terms.tsx'), /from '\.\.\/src\/policies\/terms\.json'/);
+  assert.match(await read('app/_layout.tsx'), /<Stack\.Screen name="terms"/);
+  const settings = await read('app/settings.tsx');
+  const route = settings.indexOf("router.push('/terms')");
+  assert.ok(route > settings.indexOf('Sign in to manage or delete your account.'), 'it is not inside a signed-in branch');
+});
+
+test('each subscription offer links to the terms and the privacy policy, inside the app (Apple 3.1.2)', async () => {
+  const offers = await read('src/components/store-offers.tsx');
+  const offer = offers.slice(offers.indexOf('function Offer('));
+  const card = offer.slice(0, offer.indexOf('\n}\n'));
+  assert.match(card, /\{subscription \? \([\s\S]*?label="Terms of use" onPress=\{\(\) => router\.push\('\/terms'\)\}[\s\S]*?label="Privacy policy" onPress=\{\(\) => router\.push\('\/privacy'\)\}/);
+  assert.match(card, /subscriptionTerms\(price,/, 'beside its length and price');
+  assert.match(card, /\{product\.label\}/, 'and its title');
+});
+
+test('payment words reach the phone\'s terms only in their payment section', async () => {
+  const terms = JSON.parse(await readFile(MOBILE_TERMS_PATH, 'utf8'));
+  const allowed = new Set(['Paying for more']);
+  const payment = /stripe|checkout|customer portal|[$€£]\s?\d|\bper (?:month|year)\b/i;
+  let section = '(before the first section)';
+  for (const block of terms.blocks) {
     if (block.kind === 'heading' && block.level === 2) {
       section = words(block.spans);
       continue;

@@ -79,6 +79,10 @@ holds both.
   another journey, this one is offered the four passes instead, because a second subscription in the same group
   would move the first journey's room here. A journey that already holds the subscription can change between 51
   and 101 people (on Google, up now with proration, down deferred to the end of the paid period).
+  On Google, each subscription is bought through its base plan, whose ID must be exactly **`monthly`**
+  (`GOOGLE_BASE_PLAN_ID`, `apps/mobile/src/billing/store-purchase.ts`). It is set in Play Console when the
+  subscription is created, as the Book's "Together Ledger store products" Play Console steps say, and
+  cannot be changed afterwards. A subscription with no `monthly` base plan can't be bought from the phone.
   "First paid journey" is judged per store account, from the subscriptions that store reports; someone with a
   subscription on the other platform is offered one again. Decided fine for v1 by the owner, Oct 8, 2026; knowing
   it across both stores is #344.
@@ -89,13 +93,30 @@ holds both.
   moment it no longer knows (the app closed before the store answered) waits, and can be put on any moment from
   there.
 - **No extra photo is sold on the phone** until it can add photos to a moment (#187); owner, Oct 8, 2026.
-- **Restore purchases**, in Settings and beside the room offers (#275).
+- **Restore purchases**, in Settings and beside the room offers (#275). It gives one answer: a refusal on its own,
+  or a purchase kept for a later try, or how many purchases it added. One our server had already honoured, such as
+  a pass bought long ago, is in place but isn't counted as restored.
 - Every price is the store's `displayPrice`. A product the store does not list says it isn't offered yet.
+- **Apple 3.1.2.** Each monthly subscription offer shows its title, its length (one month, renewing until
+  cancelled, and how to cancel), its price each month, and links to the **Terms of use** and the **Privacy
+  policy**. Both open inside the app: the Terms screen shows TERMS.md, generated into
+  `apps/mobile/src/policies/terms.json` by `scripts/mobile-policies.mjs` the way the privacy policy is, and
+  `tests/mobile-policies.test.js` fails when it is stale. Settings opens both for everyone.
+- **No room is offered until the store has said what this account holds**, so a "first paid journey" can't
+  flash up before an existing subscription is known. What it holds is read again once a subscription purchase
+  has arrived, not when the purchase flow returns.
 
 Each transaction goes to `/billing/store-purchases/apple` or `/google`. It is finished on success; on a refusal
 with `retryable: false`, an Apple transaction is finished, and a Google one is left unacknowledged so Google
 refunds it within three days (decided by the owner, Oct 8, 2026); anything else (`retryable: true`, offline, a refusal that doesn't say) is kept for
-the store to hand back. A purchase Google still reports as pending is not sent.
+the store to hand back. A purchase still waiting for approval (Ask to Buy on iOS, a pending payment on Google) is
+not sent; the phone says once that it is waiting for approval and that nothing is charged until then.
+
+The store connection lives as long as the signed-in account, never as long as a journey. Its listeners are
+registered before it connects, as expo-iap's own `useIAP` does. On connecting, and every time the app returns to
+the foreground, the phone sends everything the store still holds open: what `getAvailablePurchases` returns and,
+on iOS, `getPendingTransactionsIOS`, since an unfinished consumable is not among the available purchases. A
+purchase kept for a retry is therefore tried again the next time the app is opened, not only on the next launch.
 
 On Android, Play Billing brings two permissions, so `app.json` grants them beside `INTERNET` and the Phone test APK
 workflow allows them. `com.android.vending.BILLING` is declared by the billing library itself.

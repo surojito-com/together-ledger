@@ -234,3 +234,56 @@ test('prices come from the store, and the words are people, room and rest', asyn
   }
   assert.match(products.STORE_SUBSCRIPTION_NOT_CANCELLED, /not cancelled by deleting your account\. Cancel it with Apple or Google/);
 });
+
+// The review of #340 (Oct 8, 2026).
+
+test('a purchase waiting for approval, Ask to Buy or a pending Google payment, is not sent, and says so', async () => {
+  for (const platform of ['ios', 'android']) {
+    const kit = fakeKit();
+    const client = fakeClient(GRANTED);
+    const settled = await store.settleStorePurchase({ kit, client, platform, purchase: { id: 'w', productId: 'room_51_week_pass', purchaseToken: 't', purchaseState: 'pending' } });
+    assert.equal(settled.outcome, 'waiting', platform);
+    assert.equal(client.sent.length + kit.calls.finished.length, 0, platform);
+  }
+  assert.match(store.WAITING_MESSAGE, /waiting for approval/);
+  assert.match(store.WAITING_MESSAGE, /nothing is charged until then/);
+});
+
+test('restore gives one answer, and counts only what it added', () => {
+  const granted = (fresh) => ({ outcome: 'granted', result: { ...GRANTED, granted: fresh } });
+  const refused = { outcome: 'refused', message: 'This purchase belongs to another Together Ledger account.', code: 'store_purchase_other_account' };
+  const kept = { outcome: 'kept', message: store.KEPT_MESSAGE, code: 'store_unavailable' };
+  assert.deepEqual(products.restoreAnswer([granted(false), refused], 'ios'), { kind: 'status', tone: 'problem', message: refused.message }, 'a refusal on its own, never then "nothing to restore"');
+  assert.deepEqual(products.restoreAnswer([kept, null], 'android'), { kind: 'status', tone: 'caution', message: store.KEPT_MESSAGE });
+  assert.match(products.restoreAnswer([granted(true), granted(false), granted(false)], 'ios').message, /One purchase was added/, 'an old pass already honoured is not restored');
+  assert.match(products.restoreAnswer([granted(false), granted(false)], 'ios').message, /already in place/);
+  assert.match(products.restoreAnswer([], 'android').message, /Checked with Google Play\. There was nothing to restore/);
+});
+
+test('a monthly subscription says its length, its price and how to cancel, and the Google base plan is "monthly"', async () => {
+  assert.match(products.subscriptionTerms('£10.99', 'ios'), /^Length: 1 month\. £10\.99 each month, renewing automatically until you cancel it\. Cancel it with Apple at least 24 hours before it renews/);
+  assert.match(products.subscriptionTerms(undefined, 'android'), /Cancel it with Google before it renews/);
+  assert.equal(store.GOOGLE_BASE_PLAN_ID, 'monthly');
+  assert.match(await readFile(join(root, 'docs/STORE_PURCHASES.md'), 'utf8'), /base plan, whose ID must be exactly \*\*`monthly`\*\*/);
+});
+
+test('the store connection lives with the account, listens before it connects, and sweeps on the way back', async () => {
+  const provider = await readFile(join(mobile, 'src/billing/store-provider.tsx'), 'utf8');
+  const connect = provider.slice(provider.indexOf('// Connect while someone is signed in.'));
+  const effect = connect.slice(0, connect.indexOf('const identity = useCallback'));
+  assert.ok(effect.indexOf('purchaseUpdatedListener(') < effect.indexOf('initConnection()'), 'the purchase listener is registered before the connection opens');
+  assert.ok(effect.indexOf('purchaseErrorListener(') < effect.indexOf('initConnection()'), 'so is the error listener');
+  assert.match(effect, /\}, \[userId, platform\]\);/, 'switching journeys never reconnects, clears what was started or re-sends purchases');
+  assert.doesNotMatch(effect, /\bsettle\(|\breload\(|\bsweep\(/, 'it reaches settle, reload and sweep through refs');
+  assert.match(effect, /AppState\.addEventListener\('change'[\s\S]*?state === 'active'[\s\S]*?sweepRef\.current\(kit\)/, 'a kept purchase is tried again when the app comes back');
+  assert.match(provider, /getPendingTransactionsIOS\(\)/, 'an unfinished consumable on iOS is swept too');
+  assert.match(provider, /DeferredPayment/, 'Ask to Buy is said as waiting for approval');
+});
+
+test('subscriptions are offered only once the store has said what this account holds', async () => {
+  const provider = await readFile(join(mobile, 'src/billing/store-provider.tsx'), 'utf8');
+  const offers = await readFile(join(mobile, 'src/components/store-offers.tsx'), 'utf8');
+  assert.match(offers, /value === undefined \|\| !store\.heldReady \?/);
+  assert.match(provider, /if \(info\?\.kind === 'subscription'\) refreshHeld\(kit\);/, 'held is read again once the purchase has arrived');
+  assert.match(provider, /const buyRoom = useCallback\(\(journeyId: string, productId: RoomProductId, replacing: Replacing \| null = null\) => buy\(journeyId, productId, null, replacing\), \[buy\]\);/, 'not when the purchase flow returns');
+});

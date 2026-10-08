@@ -54,6 +54,7 @@ function ThemedStack() {
       <Stack.Screen name="journey-settings" options={{ title: 'Journey sharing' }} />
       <Stack.Screen name="history" options={{ title: 'History' }} />
       <Stack.Screen name="privacy" options={{ title: 'Privacy' }} />
+      <Stack.Screen name="terms" options={{ title: 'Terms of use' }} />
       <Stack.Screen name="concern" options={{ title: 'Return-to conversation', presentation: 'modal' }} />
     </Stack>
   );

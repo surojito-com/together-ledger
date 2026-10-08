@@ -1,14 +1,16 @@
-// The privacy policy the phone app shows on its own Privacy screen, generated from PRIVACY.md
-// with the same parse the web's /privacy page uses (policyBlocks in render-privacy-page.mjs).
-// The phone never carries a hand-kept copy: apps/mobile/src/policies/privacy.json is written by
-// this script, and tests/mobile-policies.test.js fails when it no longer matches PRIVACY.md.
+// The privacy policy and the terms of use the phone app shows on its own Privacy and Terms
+// screens, generated from PRIVACY.md and TERMS.md with the same parse the web's /privacy and
+// /terms pages use (policyBlocks in render-privacy-page.mjs). The phone never carries a hand-kept
+// copy: apps/mobile/src/policies/privacy.json and terms.json are written by this script, and
+// tests/mobile-policies.test.js fails when either no longer matches its source. The terms are on
+// the phone because Apple 3.1.2 asks a subscription offer to link to them (#340).
 //
 // The phone shows the policy itself rather than opening the web page, because the phone app
 // opens no web page at all (tests/mobile-no-stripe.test.js, #268): the web page links on to the
 // web app, and from there to paying on the web. A link inside the policy is shown as its words.
 //
-//   node scripts/mobile-policies.mjs          check that privacy.json is current
-//   node scripts/mobile-policies.mjs --write  regenerate it after changing PRIVACY.md
+//   node scripts/mobile-policies.mjs          check that privacy.json and terms.json are current
+//   node scripts/mobile-policies.mjs --write  regenerate them after changing PRIVACY.md or TERMS.md
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,6 +18,7 @@ import { policyBlocks } from './render-privacy-page.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const MOBILE_PRIVACY_PATH = join(root, 'apps', 'mobile', 'src', 'policies', 'privacy.json');
+export const MOBILE_TERMS_PATH = join(root, 'apps', 'mobile', 'src', 'policies', 'terms.json');
 
 // A run of text and how it is marked: the subset policyBlocks accepts (**bold**, `code` and
 // [links](…)) as plain runs. A link keeps its words and drops its address.
@@ -51,19 +54,31 @@ export async function generate() {
   return buildMobilePolicy(await readFile(join(root, 'PRIVACY.md'), 'utf8'), 'PRIVACY.md');
 }
 
+export async function generateTerms() {
+  return buildMobilePolicy(await readFile(join(root, 'TERMS.md'), 'utf8'), 'TERMS.md');
+}
+
+const POLICIES = [
+  { path: MOBILE_PRIVACY_PATH, source: 'PRIVACY.md', build: generate },
+  { path: MOBILE_TERMS_PATH, source: 'TERMS.md', build: generateTerms },
+];
+
 export const serialize = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const expected = serialize(await generate());
-  if (process.argv.includes('--write')) {
-    await writeFile(MOBILE_PRIVACY_PATH, expected);
-    console.log(`Wrote ${MOBILE_PRIVACY_PATH}`);
-  } else {
-    const current = await readFile(MOBILE_PRIVACY_PATH, 'utf8').catch(() => '');
-    if (current !== expected) {
-      console.error('apps/mobile/src/policies/privacy.json is out of date with PRIVACY.md. Run: node scripts/mobile-policies.mjs --write');
-      process.exit(1);
+  for (const { path, source, build } of POLICIES) {
+    const expected = serialize(await build());
+    if (process.argv.includes('--write')) {
+      await writeFile(path, expected);
+      console.log(`Wrote ${path}`);
+    } else {
+      const current = await readFile(path, 'utf8').catch(() => '');
+      if (current !== expected) {
+        console.error(`${path} is out of date with ${source}. Run: node scripts/mobile-policies.mjs --write`);
+        process.exitCode = 1;
+      } else {
+        console.log(`✓ the phone's copy matches ${source}`);
+      }
     }
-    console.log('✓ the phone\'s privacy policy matches PRIVACY.md');
   }
 }

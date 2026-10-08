@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 import { accountMessage } from '../auth/account-messages';
 import { useSession } from '../auth/session';
 import { useJourney } from '../journey/use-journey';
@@ -6,9 +7,9 @@ import { useShell } from '../shell/shell-provider';
 import { asStoreKit, loadStoreKit, storePlatform, type ExpoIap } from './store-kit';
 import {
   ONE_TIME_IDS,
+  restoreAnswer,
   STORE_UNAVAILABLE,
   SUBSCRIPTION_IDS,
-  storeName,
   storeProductInfo,
   type ExtraProductId,
   type HeldSubscription,
@@ -16,7 +17,6 @@ import {
   type StoreProductId,
 } from './store-products';
 import {
-  KEPT_MESSAGE,
   settleStorePurchase,
   startStorePurchase,
   StorePurchaseRefused,
@@ -45,6 +45,8 @@ type StoreValue = {
   products: Partial<Record<StoreProductId, ListedProduct>>;
   /** Subscriptions this store account holds, with the journey value each carries. */
   held: HeldSubscription[];
+  /** The store has answered what this account holds. Until then no room is offered (#340). */
+  heldReady: boolean;
   /** Extras paid for whose moment this phone no longer knows, waiting to be put on one. */
   waitingExtras: StoreTransaction[];
   /** The product a purchase is under way for. */
@@ -98,6 +100,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [iap, setIap] = useState<ExpoIap | null>(null);
   const [products, setProducts] = useState<StoreValue['products']>({});
   const [held, setHeld] = useState<HeldSubscription[]>([]);
+  const [heldReady, setHeldReady] = useState(false);
   const [waitingExtras, setWaitingExtras] = useState<StoreTransaction[]>([]);
   const [buying, setBuying] = useState<StoreProductId | null>(null);
   const [restoring, setRestoring] = useState(false);
@@ -106,71 +109,132 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const intents = useRef(new Map<string, Intent>());
   const settling = useRef(new Set<string>());
   const values = useRef(new Map<string, string>());
+  // A purchase waiting for approval is said once, not on every sweep.
+  const waitingSaid = useRef(new Set<string>());
+
+  // The connection lives as long as the signed-in account, never as long as a journey: what it
+  // calls back into is read through refs, so a new journey or a new reload() doesn't reconnect.
+  const live = useRef({ client, reload, showStatus, showToast });
+  useLayoutEffect(() => {
+    live.current = { client, reload, showStatus, showToast };
+  }, [client, reload, showStatus, showToast]);
+
+  const refreshHeld = useCallback(async (kit: ExpoIap) => {
+    if (!platform) return [] as StoreTransaction[];
+    const purchases = (await kit.getAvailablePurchases({ onlyIncludeActiveItemsIOS: true }).catch(() => [])) as unknown as StoreTransaction[];
+    setHeld(heldFrom(purchases, platform));
+    setHeldReady(true);
+    return purchases;
+  }, [platform]);
 
   const settle = useCallback(async (kit: ExpoIap, purchase: StoreTransaction, { announce, momentId }: { announce: boolean; momentId?: string | null }): Promise<Settled | null> => {
     if (!platform) return null;
     const key = purchase.transactionId || purchase.id || purchase.purchaseToken || '';
     if (settling.current.has(key)) return null;
     settling.current.add(key);
+    const { client: api, reload: reloadJourney, showStatus: status, showToast: toast } = live.current;
     try {
       const intent = intents.current.get(purchase.productId);
       const moment = momentId ?? intent?.momentId ?? null;
-      const settled = await settleStorePurchase({ kit: asStoreKit(kit), client, platform, purchase, momentId: moment });
-      const extra = storeProductInfo(purchase.productId)?.kind === 'extra';
+      const settled = await settleStorePurchase({ kit: asStoreKit(kit), client: api, platform, purchase, momentId: moment });
+      const info = storeProductInfo(purchase.productId);
+      const tell = announce || Boolean(intent);
       if (settled.outcome === 'granted') {
         intents.current.delete(purchase.productId);
         setWaitingExtras((current) => current.filter((entry) => entry.id !== purchase.id));
-        if (announce || intent) showToast(grantedMessage(settled.result));
-        reload();
+        if (tell) toast(grantedMessage(settled.result));
+        reloadJourney();
+        // The subscription this store account holds has changed only now that it has arrived.
+        if (info?.kind === 'subscription') refreshHeld(kit);
       } else if (settled.outcome === 'waiting') {
-        if (announce || intent) showStatus(WAITING_MESSAGE, { tone: 'caution', source: 'store' });
-      } else if (settled.outcome === 'kept' && extra && ['store_extra_needs_moment', 'store_extra_moment_missing'].includes(settled.code)) {
+        if (!waitingSaid.current.has(key)) {
+          waitingSaid.current.add(key);
+          status(WAITING_MESSAGE, { tone: 'caution', source: 'store' });
+        }
+      } else if (settled.outcome === 'kept' && info?.kind === 'extra' && ['store_extra_needs_moment', 'store_extra_moment_missing'].includes(settled.code)) {
         // Paid for, and its moment is not known or has gone: it waits to be put on another.
         setWaitingExtras((current) => current.some((entry) => entry.id === purchase.id) ? current : [...current, purchase]);
-        if (announce || intent) showStatus(settled.message, { tone: 'caution', source: 'store' });
-      } else if (announce || intent) {
-        showStatus(settled.message, { tone: settled.outcome === 'kept' ? 'caution' : 'problem', source: 'store' });
+        if (tell) status(settled.message, { tone: 'caution', source: 'store' });
+      } else if (tell) {
+        status(settled.message, { tone: settled.outcome === 'kept' ? 'caution' : 'problem', source: 'store' });
       }
       if (settled.outcome === 'refused') intents.current.delete(purchase.productId);
       return settled;
     } finally {
       settling.current.delete(key);
     }
-  }, [client, platform, reload, showStatus, showToast]);
+  }, [platform, refreshHeld]);
+  const settleRef = useRef(settle);
+  useLayoutEffect(() => {
+    settleRef.current = settle;
+  }, [settle]);
 
-  const refreshHeld = useCallback(async (kit: ExpoIap) => {
-    if (!platform) return [] as StoreTransaction[];
-    const purchases = (await kit.getAvailablePurchases({ onlyIncludeActiveItemsIOS: true }).catch(() => [])) as unknown as StoreTransaction[];
-    setHeld(heldFrom(purchases, platform));
-    return purchases;
-  }, [platform]);
+  // Everything the store still holds open, sent to our server: StoreKit's unfinished transactions
+  // (on iOS getAvailablePurchases leaves out an unfinished consumable, so the pending ones are
+  // swept as well) and Play's unacknowledged purchases. Done on connecting and every time the app
+  // comes back to the foreground, so a purchase kept for a retry doesn't wait for the next launch.
+  const sweeping = useRef(false);
+  const sweep = useCallback(async (kit: ExpoIap) => {
+    if (sweeping.current) return [] as (Settled | null)[];
+    sweeping.current = true;
+    try {
+      const purchases = await refreshHeld(kit);
+      const pending = platform === 'ios' ? ((await kit.getPendingTransactionsIOS().catch(() => [])) as unknown as StoreTransaction[]) : [];
+      const seen = new Set<string>();
+      const outcomes: (Settled | null)[] = [];
+      for (const purchase of [...pending, ...purchases]) {
+        const key = purchase.transactionId || purchase.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        outcomes.push(await settleRef.current(kit, purchase, { announce: false }));
+      }
+      return outcomes;
+    } finally {
+      sweeping.current = false;
+    }
+  }, [platform, refreshHeld]);
+  const sweepRef = useRef(sweep);
+  useLayoutEffect(() => {
+    sweepRef.current = sweep;
+  }, [sweep]);
 
-  // Connect while someone is signed in, and hand back to our server anything left unfinished.
+  // Connect while someone is signed in. The listeners are registered before the connection opens,
+  // as expo-iap's own useIAP does, so nothing the store delivers on connecting is missed.
   useEffect(() => {
     if (!userId || !platform) return;
     let current = true;
     let subscriptions: { remove(): void }[] = [];
     let kit: ExpoIap | null = null;
+    let open = false;
     const startedFor = intents.current;
     const valuesFor = values.current;
+    const said = waitingSaid.current;
     (async () => {
       kit = await loadStoreKit();
       if (!kit || !current) return;
+      const connected = kit;
+      subscriptions = [
+        connected.purchaseUpdatedListener((purchase) => { settleRef.current(connected, purchase as unknown as StoreTransaction, { announce: false }); }),
+        connected.purchaseErrorListener((error) => {
+          setBuying(null);
+          if (connected.isUserCancelledError(error)) return;
+          if (error.code === connected.ErrorCode.DeferredPayment || error.code === connected.ErrorCode.Pending) {
+            const key = `deferred:${error.productId || ''}`;
+            if (said.has(key)) return;
+            said.add(key);
+            live.current.showStatus(WAITING_MESSAGE, { tone: 'caution', source: 'store' });
+            return;
+          }
+          live.current.showStatus('The store didn’t complete the purchase, so nothing was charged.', { source: 'store' });
+        }),
+      ];
       try {
-        await kit.initConnection();
+        await connected.initConnection();
       } catch {
         return;
       }
       if (!current) return;
-      const connected = kit;
-      subscriptions = [
-        connected.purchaseUpdatedListener((purchase) => { settle(connected, purchase as unknown as StoreTransaction, { announce: false }); }),
-        connected.purchaseErrorListener((error) => {
-          setBuying(null);
-          if (connected.isUserCancelledError(error)) return;
-          showStatus('The store didn’t complete the purchase, so nothing was charged.', { source: 'store' });
-        }),
-      ];
+      open = true;
       setIap(connected);
       const [subs, oneTime] = await Promise.all([
         connected.fetchProducts({ skus: SUBSCRIPTION_IDS, type: 'subs' }).catch(() => null),
@@ -182,23 +246,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (storeProductInfo(product.id)) listed[product.id as StoreProductId] = product;
       }
       setProducts(listed);
-      // Unfinished purchases: StoreKit redelivers them, and Play returns unacknowledged ones.
-      for (const purchase of await refreshHeld(connected)) {
-        if (current) await settle(connected, purchase, { announce: false });
-      }
+      await sweepRef.current(connected);
     })();
+    const foreground = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && current && open && kit) sweepRef.current(kit);
+    });
     return () => {
       current = false;
+      foreground.remove();
       for (const subscription of subscriptions) subscription.remove();
       setIap(null);
       setProducts({});
       setHeld([]);
+      setHeldReady(false);
       setWaitingExtras([]);
       startedFor.clear();
       valuesFor.clear();
+      said.clear();
       if (kit) kit.endConnection().catch(() => undefined);
     };
-  }, [userId, platform, settle, refreshHeld, showStatus]);
+  }, [userId, platform]);
 
   const identity = useCallback(async (journeyId: string) => {
     const found = await client.storePurchaseIdentity(journeyId);
@@ -234,7 +301,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [iap, platform, products, identity, showStatus]);
 
-  const buyRoom = useCallback((journeyId: string, productId: RoomProductId, replacing: Replacing | null = null) => buy(journeyId, productId, null, replacing).then(() => { if (iap) refreshHeld(iap); }), [buy, iap, refreshHeld]);
+  const buyRoom = useCallback((journeyId: string, productId: RoomProductId, replacing: Replacing | null = null) => buy(journeyId, productId, null, replacing), [buy]);
   const buyExtra = useCallback((journeyId: string, momentId: string, productId: ExtraProductId) => buy(journeyId, productId, momentId), [buy]);
 
   const placeWaitingExtra = useCallback(async (purchase: StoreTransaction, momentId: string) => {
@@ -243,7 +310,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Restore purchases (#275, Guideline 3.1.1): ask the store for everything this store account
   // holds and send each to our server, which honours what belongs to this account and explains
-  // what doesn't. Nothing is charged.
+  // what doesn't. Nothing is charged. One answer is given: a refusal, or what is kept for later,
+  // or what was added. A purchase our server had already honoured is not counted as restored.
   const restore = useCallback(async () => {
     if (!iap || !platform) {
       showStatus(STORE_UNAVAILABLE, { source: 'store' });
@@ -252,27 +320,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setRestoring(true);
     try {
       await iap.restorePurchases().catch(() => undefined);
-      const purchases = await refreshHeld(iap);
-      const outcomes = [];
-      for (const purchase of purchases) outcomes.push(await settle(iap, purchase, { announce: false }));
-      const refused = outcomes.find((outcome) => outcome?.outcome === 'refused');
-      const kept = outcomes.find((outcome) => outcome?.outcome === 'kept');
-      const granted = outcomes.filter((outcome) => outcome?.outcome === 'granted').length;
-      if (refused && refused.outcome === 'refused') showStatus(refused.message, { source: 'store' });
-      else if (kept && kept.outcome === 'kept') showStatus(kept.message || KEPT_MESSAGE, { tone: 'caution', source: 'store' });
-      showToast(granted
-        ? `Checked with ${storeName(platform)}. ${granted === 1 ? 'One purchase is' : `${granted} purchases are`} in place on your account.`
-        : `Checked with ${storeName(platform)}. There was nothing to restore for this account.`);
+      const answer = restoreAnswer(await sweep(iap), platform);
+      if (answer.kind === 'toast') showToast(answer.message);
+      else showStatus(answer.message, { tone: answer.tone, source: 'store' });
     } finally {
       setRestoring(false);
     }
-  }, [iap, platform, refreshHeld, settle, showStatus, showToast]);
+  }, [iap, platform, sweep, showStatus, showToast]);
 
   const value = useMemo<StoreValue>(() => ({
     platform,
     ready: iap !== null,
     products,
     held,
+    heldReady,
     waitingExtras,
     buying,
     restoring,
@@ -281,7 +342,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     buyExtra,
     placeWaitingExtra,
     restore,
-  }), [platform, iap, products, held, waitingExtras, buying, restoring, journeyValue, buyRoom, buyExtra, placeWaitingExtra, restore]);
+  }), [platform, iap, products, held, heldReady, waitingExtras, buying, restoring, journeyValue, buyRoom, buyExtra, placeWaitingExtra, restore]);
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

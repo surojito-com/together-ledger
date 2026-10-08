@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useStore } from '../billing/store-provider';
@@ -10,6 +11,7 @@ import {
   ROOM_TITLE,
   roomOfferFor,
   roomShapeCopy,
+  subscriptionTerms,
   STORE_PRODUCTS,
   STORE_UNAVAILABLE,
   storeProductInfo,
@@ -59,7 +61,9 @@ export function RoomForMorePeople({ journeyId, isOwner }: { journeyId: string; i
     <Section title={ROOM_TITLE}>
       <Body>{ROOM_INTRO}</Body>
       <Body>{ONE_PAYER}</Body>
-      {value === undefined ? <Body>Asking {store.platform === 'ios' ? 'the App Store' : 'Google Play'} what this journey can have…</Body> : (
+      {/* Nothing is offered until both the journey's value and what this store account already
+          holds are known, so there is no moment in which a second subscription is offered. */}
+      {value === undefined || !store.heldReady ? <Body>Asking {store.platform === 'ios' ? 'the App Store' : 'Google Play'} what this journey can have…</Body> : (
         <>
           <Body>{roomShapeCopy(offer, store.platform)}</Body>
           {offer.products.map((productId) => (
@@ -114,6 +118,7 @@ function Offer({ productId, current = false, onBuy }: { productId: StoreProductI
   const product = STORE_PRODUCTS[productId];
   const listed = store.products[productId];
   const price = listed?.displayPrice;
+  const subscription = product.kind === 'subscription';
   return (
     <View style={[styles.offer, { borderColor: current ? theme.colors.accent : theme.colors.border, backgroundColor: theme.colors.surface, borderRadius: theme.radius.m }]}>
       <View style={styles.offerHead}>
@@ -121,6 +126,16 @@ function Offer({ productId, current = false, onBuy }: { productId: StoreProductI
         {price ? <Text style={[styles.price, { color: theme.colors.fg }]}>{price}</Text> : null}
       </View>
       <Text style={[styles.detail, { color: theme.colors.textSecondary }]}>{product.detail}</Text>
+      {/* Apple 3.1.2: an auto-renewing subscription shows its title, its length, its price, and
+          working links to the terms of use and the privacy policy, beside the offer. Both open
+          inside the app, never a web page (#268). */}
+      {subscription ? <Text style={[styles.detail, { color: theme.colors.textSecondary }]}>{subscriptionTerms(price, store.platform || 'ios')}</Text> : null}
+      {subscription ? (
+        <View style={styles.links}>
+          <Button kind="quiet" label="Terms of use" onPress={() => router.push('/terms')} />
+          <Button kind="quiet" label="Privacy policy" onPress={() => router.push('/privacy')} />
+        </View>
+      ) : null}
       {current ? <Text style={[styles.detail, { color: theme.colors.muted }]}>This journey has this now.</Text> : null}
       {!price ? <Text style={[styles.detail, { color: theme.colors.muted }]}>{notOfferedYet(store.platform || 'ios')}</Text> : null}
       {price && !current ? (
@@ -154,4 +169,5 @@ const styles = StyleSheet.create({
   offerTitle: { fontSize: 16, fontWeight: '700', flexShrink: 1 },
   price: { fontSize: 16, fontWeight: '700' },
   detail: { fontSize: 14, lineHeight: 20 },
+  links: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });

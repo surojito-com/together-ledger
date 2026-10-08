@@ -19,6 +19,13 @@
  */
 import type { StoreProductInfo } from './store-products';
 
+/**
+ * The base plan each Google subscription is sold through. It is the ID set in Play Console when the
+ * subscription is created (the Book, "Together Ledger store products", Play Console step A), it
+ * can't be changed afterwards, and the phone buys only through it (docs/STORE_PURCHASES.md).
+ */
+export const GOOGLE_BASE_PLAN_ID = 'monthly';
+
 export type StorePurchaseIdentity = {
   appAccountToken: string;
   obfuscatedAccountId: string;
@@ -122,8 +129,8 @@ export function purchaseRequest(options: PurchaseOptions, product: StoreProductI
     obfuscatedProfileId: options.obfuscatedProfileId,
   };
   if (subscription) {
-    // A Google subscription is bought through one of its offers: the monthly base plan.
-    const offer = (listed?.subscriptionOffers || []).find((entry) => entry.offerTokenAndroid && (!entry.basePlanIdAndroid || entry.basePlanIdAndroid === 'monthly'));
+    // A Google subscription is bought through its base plan, GOOGLE_BASE_PLAN_ID ('monthly').
+    const offer = (listed?.subscriptionOffers || []).find((entry) => entry.offerTokenAndroid && (!entry.basePlanIdAndroid || entry.basePlanIdAndroid === GOOGLE_BASE_PLAN_ID));
     if (!offer?.offerTokenAndroid) throw new StorePurchaseRefused(NOT_STARTED_MESSAGE);
     google.subscriptionOffers = [{ sku: product.id, offerToken: offer.offerTokenAndroid }];
     if (replacing && replacing.productId !== product.id) {
@@ -162,13 +169,14 @@ export type Settled =
   | { outcome: 'granted'; result: GrantedPurchase }
   /** Not honoured yet, and worth sending again: it stays open with the store, which brings it back. */
   | { outcome: 'kept'; message: string; code: string }
-  /** Google is still waiting for the payment. Nothing was sent. */
+  /** Waiting for approval (Ask to Buy, or a Google payment still pending). Nothing was sent. */
   | { outcome: 'waiting' }
   /** Our server refused it for good. Its message says where a refund comes from. */
   | { outcome: 'refused'; message: string; code: string };
 
 export const KEPT_MESSAGE = 'Your purchase is safe with the store, and it will be added when Together Ledger can check it. Nothing more will be charged.';
-export const WAITING_MESSAGE = 'Google Play is still waiting for the payment. It will be added once Google Play confirms it.';
+// Ask to Buy on iOS, and a Google Play payment still pending: nothing is charged until it is approved.
+export const WAITING_MESSAGE = 'This purchase is waiting for approval. It will be added once it\u2019s approved, and nothing is charged until then.';
 
 /**
  * Sends one store purchase to our server, and finishes it with the store only as the answer says
@@ -190,7 +198,7 @@ export async function settleStorePurchase({ kit, client, platform, purchase, mom
   purchase: StoreTransaction;
   momentId?: string | null;
 }): Promise<Settled> {
-  if (platform === 'android' && purchase.purchaseState === 'pending') return { outcome: 'waiting' };
+  if (purchase.purchaseState === 'pending') return { outcome: 'waiting' };
   const product = purchase.productId;
   const moment = momentId ? { momentId } : {};
   let result: GrantedPurchase;

@@ -9,6 +9,8 @@
  *
  * Kept free of runtime imports so the tests can run it directly.
  */
+import type { Settled } from './store-purchase';
+
 export type RoomProductId = 'room_51_monthly' | 'room_101_monthly' | 'room_51_week_pass' | 'room_101_week_pass' | 'room_51_month_pass' | 'room_101_month_pass';
 export type ExtraProductId = 'extra_photo' | 'extra_place';
 export type StoreProductId = RoomProductId | ExtraProductId;
@@ -109,6 +111,17 @@ export function roomShapeCopy(offer: RoomOffer, platform: StorePlatformName) {
   return 'Your monthly room already belongs to another journey, so this one uses passes: a week or a month at a time, renewed by hand. A pass bought while another is running starts when that one ends.';
 }
 
+/**
+ * The length and the renewal of a monthly subscription, said beside its price (Apple 3.1.2). The
+ * price is the store's own; without one the offer says it isn't offered yet instead.
+ */
+export function subscriptionTerms(price: string | null | undefined, platform: StorePlatformName) {
+  const cancel = platform === 'ios'
+    ? 'Cancel it with Apple at least 24 hours before it renews to stop the next payment.'
+    : 'Cancel it with Google before it renews to stop the next payment.';
+  return `Length: 1 month. ${price ? `${price} each month, ` : ''}renewing automatically until you cancel it. ${cancel}`;
+}
+
 export const EXTRAS_TITLE = 'More on this moment';
 
 export const EXTRAS_INTRO = 'Every moment’s first place stays free. An extra place is paid for once, and stays with this moment for good. It never rests and never lapses.';
@@ -121,3 +134,22 @@ export const STORE_UNAVAILABLE = 'Purchases can’t be made on this phone right 
 
 /** Owner, Oct 8, 2026, and App Store guideline 5.1.1(v): said before an account is deleted. */
 export const STORE_SUBSCRIPTION_NOT_CANCELLED = 'A subscription bought in the App Store or Google Play is not cancelled by deleting your account. Cancel it with Apple or Google, or it keeps renewing.';
+
+/**
+ * The one answer Restore purchases gives (#275). A refusal is said on its own, never followed by
+ * "nothing to restore"; a purchase kept for a later try is said next; otherwise it says how many
+ * purchases our server added just now. One it had already honoured, such as a pass bought long
+ * ago, is in place but was not restored, so it is not counted.
+ */
+export function restoreAnswer(outcomes: (Settled | null)[], platform: StorePlatformName): { kind: 'status' | 'toast'; tone?: 'caution' | 'problem'; message: string } {
+  const settled = outcomes.filter((outcome): outcome is Settled => outcome !== null);
+  const refused = settled.find((outcome) => outcome.outcome === 'refused');
+  if (refused && refused.outcome === 'refused') return { kind: 'status', tone: 'problem', message: refused.message };
+  const kept = settled.find((outcome) => outcome.outcome === 'kept');
+  if (kept && kept.outcome === 'kept') return { kind: 'status', tone: 'caution', message: kept.message };
+  const added = settled.filter((outcome) => outcome.outcome === 'granted' && outcome.result.granted === true).length;
+  const where = `Checked with ${storeName(platform)}.`;
+  if (added) return { kind: 'toast', message: `${where} ${added === 1 ? 'One purchase was' : `${added} purchases were`} added to your account.` };
+  if (settled.some((outcome) => outcome.outcome === 'granted')) return { kind: 'toast', message: `${where} Everything bought with this account is already in place.` };
+  return { kind: 'toast', message: `${where} There was nothing to restore for this account.` };
+}

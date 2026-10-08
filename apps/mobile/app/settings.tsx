@@ -46,6 +46,7 @@ export default function SettingsScreen() {
       )}
       <Text accessibilityRole="header" style={[styles.section, { color: theme.colors.fg }]}>Privacy and help</Text>
       <Button kind="quiet" label="Privacy policy" onPress={() => router.push('/privacy')} />
+      <Button kind="quiet" label="Terms of use" onPress={() => router.push('/terms')} />
       <Body selectable>For help using Together Ledger, write to ledger-support@together-ledger.com. For anything about your privacy or your data, write to legal@together-ledger.com.</Body>
     </Screen>
   );
