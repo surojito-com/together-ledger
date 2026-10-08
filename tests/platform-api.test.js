@@ -13,7 +13,7 @@ const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
 const apiOrigin = 'https://api.example.test';
 
-async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z') } = {}) {
+async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z'), beforeMigration028 } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({
     name: 'char_length',
@@ -46,6 +46,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
+  if (beforeMigration028) await beforeMigration028(pool);
+  await pool.query(await readFile(new URL('../server/migrations/028_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -685,7 +687,7 @@ test('synthetic group mode reserves independent places without advertising its c
   }
   let snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
   assert.equal(snapshot.invitations.filter((invitation) => invitation.status === 'pending').length, 2);
-  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, mode: 'test-groups', unpaidCapacityMode: 'read-only', restingMemberIds: [] });
+  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
   assert.equal(Object.hasOwn(snapshot.capacity, 'limit'), false);
 
   for (const client of [second, third]) {
@@ -736,7 +738,7 @@ test('synthetic group mode reserves independent places without advertising its c
   assert.equal(full.statusCode, 409, full.body);
   assert.equal(full.json().error.code, 'journey_full');
   snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${soloId}/snapshot`, headers: { cookie: third.cookie } })).json().data;
-  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 100, canInvite: false, mode: 'test-groups', unpaidCapacityMode: 'read-only', restingMemberIds: [] });
+  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 100, canInvite: false, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
   assert.equal(Object.hasOwn(snapshot.capacity, 'limit'), false);
 });
 
@@ -809,7 +811,7 @@ test('unpaid capacity rests the journeyers beyond what is covered, and never the
 
   const capacity = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
   assert.equal(capacity.peopleHere, 3);
-  assert.equal(capacity.unpaidCapacityMode, 'read-only');
+  assert.equal('unpaidCapacityMode' in capacity, false, 'resting is always read-only, so there is no mode to report');
   // One person beyond the included two, and by default it is the one who joined most recently.
   assert.deepEqual(capacity.restingMemberIds, [third.user.id]);
   assert.ok(!capacity.restingMemberIds.includes(owner.user.id), 'the owner holds the journey and never rests');
@@ -851,55 +853,10 @@ test('the owner chooses who rests, overriding the order people joined in', async
 
   // The owner puts the earlier joiner first in the queue to rest. Joining order no longer decides.
   await pool.query('UPDATE journey_members SET rest_order=1 WHERE journey_id=$1 AND user_id=$2', [journeyId, second.user.id]);
+  await pool.query('UPDATE journey_members SET rest_order=2 WHERE journey_id=$1 AND user_id=$2', [journeyId, third.user.id]);
 
   const capacity = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
   assert.deepEqual(capacity.restingMemberIds, [second.user.id]);
-});
-
-test('a fully paused journeyer keeps their own moments and is shown nothing of the shared journey', async (t) => {
-  const { app, mailer, pool } = await testPlatform({ configOverrides: { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' } });
-  t.after(async () => { await app.close(); await pool.end(); });
-  const owner = await register(app, mailer, { email: 'paused-owner@example.test', username: 'paused-owner' });
-  const resting = await register(app, mailer, { email: 'paused-resting@example.test', username: 'paused-resting' });
-  const created = await app.inject({
-    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
-    payload: { name: 'A journey at rest', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
-  });
-  const journeyId = created.json().data.journey.id;
-
-  const shared = await app.inject({
-    method: 'POST', url: `/api/v1/journeys/${journeyId}/moments`, headers: authHeaders(owner),
-    payload: { kind: 'memory', kindLabel: '', title: 'Something we both hold', detail: '', occurredOn: '2026-09-10', visibility: 'shared-now', theme: '', moneyCents: null, moneyCurrency: '', locations: [] },
-  });
-  assert.equal(shared.statusCode, 201, shared.body);
-
-  // They join and write something of their own while capacity is still covered.
-  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, resting.user.id, 'member', '2026-09-09T10:00:00.000Z']);
-  const own = await app.inject({
-    method: 'POST', url: `/api/v1/journeys/${journeyId}/moments`, headers: authHeaders(resting),
-    payload: { kind: 'memory', kindLabel: '', title: 'Something only I wrote', detail: '', occurredOn: '2026-09-11', visibility: 'private', theme: '', moneyCents: null, moneyCurrency: '', locations: [] },
-  });
-  assert.equal(own.statusCode, 201, own.body);
-
-  // Capacity lapses and the owner has chosen the fully paused mode.
-  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, (await register(app, mailer, { email: 'paused-third@example.test', username: 'paused-third' })).user.id, 'member', '2026-09-08T10:00:00.000Z']);
-  await pool.query("UPDATE journeys SET unpaid_capacity_mode='paused' WHERE id=$1", [journeyId]);
-  await pool.query('UPDATE journey_members SET rest_order=1 WHERE journey_id=$1 AND user_id=$2', [journeyId, resting.user.id]);
-
-  const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: resting.cookie } })).json().data;
-  assert.deepEqual(snapshot.capacity.restingMemberIds, [resting.user.id]);
-  assert.equal(snapshot.capacity.unpaidCapacityMode, 'paused');
-
-  // Their own words stay. Nothing of theirs is taken while a payment is outstanding.
-  assert.deepEqual(snapshot.moments.map((moment) => moment.title), ['Something only I wrote']);
-  // The shared journey rests, rather than being deleted.
-  assert.deepEqual(snapshot.concerns, []);
-  assert.deepEqual(snapshot.events, []);
-  assert.deepEqual(snapshot.invitations, []);
-
-  // The owner, who never rests, still sees the whole journey.
-  const ownerSees = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
-  assert.equal(ownerSees.moments.some((moment) => moment.title === 'Something we both hold'), true);
 });
 
 test('read-only resting still shows the shared journey', async (t) => {
@@ -920,10 +877,15 @@ test('read-only resting still shows the shared journey', async (t) => {
   await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, resting.user.id, 'member', '2026-09-09T10:00:00.000Z']);
   await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, extra.user.id, 'member', '2026-09-08T10:00:00.000Z']);
   await pool.query('UPDATE journey_members SET rest_order=1 WHERE journey_id=$1 AND user_id=$2', [journeyId, resting.user.id]);
+  await pool.query('UPDATE journey_members SET rest_order=2 WHERE journey_id=$1 AND user_id=$2', [journeyId, extra.user.id]);
 
   const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: resting.cookie } })).json().data;
-  assert.equal(snapshot.capacity.unpaidCapacityMode, 'read-only');
+  assert.deepEqual(snapshot.capacity.restingMemberIds, [resting.user.id]);
   assert.equal(snapshot.moments.some((moment) => moment.title === 'Still visible while resting'), true);
+  // The whole shared record, not only their own words: resting withholds nothing from reading.
+  assert.ok(snapshot.events.length > 0);
+  // Nobody but the owner learns the resting order (#281).
+  assert.equal('restOrder' in snapshot.capacity, false);
 });
 
 async function groupOfThree(overrides = {}) {
@@ -1109,10 +1071,21 @@ test('a journey of one has nobody to ask, so inviting is unchanged for two peopl
   assert.equal(mailer.messages.some((message) => message.type === 'invite-proposal'), false);
 });
 
-test('the owner sets how unpaid capacity rests, and cannot put themselves in the queue', async (t) => {
-  const { app, mailer, pool } = await testPlatform({ configOverrides: { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' } });
+const billingConfig = { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' };
+
+// The web's and the phone's moveInOrder: swap with the neighbour.
+function moved(order, memberUserId, direction) {
+  const next = [...order];
+  const from = next.indexOf(memberUserId);
+  [next[from], next[from + direction]] = [next[from + direction], next[from]];
+  return next;
+}
+
+test('the owner sets and sees the resting order, and cannot put themselves in the queue', async (t) => {
+  const { app, mailer, pool } = await testPlatform({ configOverrides: billingConfig });
   t.after(async () => { await app.close(); await pool.end(); });
   const owner = await register(app, mailer, { email: 'set-owner@example.test', username: 'set-owner' });
+  const first = await register(app, mailer, { email: 'set-first@example.test', username: 'set-first' });
   const second = await register(app, mailer, { email: 'set-second@example.test', username: 'set-second' });
   const third = await register(app, mailer, { email: 'set-third@example.test', username: 'set-third' });
   const created = await app.inject({
@@ -1120,53 +1093,338 @@ test('the owner sets how unpaid capacity rests, and cannot put themselves in the
     payload: { name: 'A journey with a choice', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
   });
   const journeyId = created.json().data.journey.id;
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, first.user.id, 'member', '2026-09-07T10:00:00.000Z']);
   await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, second.user.id, 'member', '2026-09-08T10:00:00.000Z']);
   await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, third.user.id, 'member', '2026-09-09T10:00:00.000Z']);
+  const ownerCapacity = async () => (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
 
-  // Default: nobody was ranked, so the person who joined most recently rests.
-  const before = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
-  assert.deepEqual(before.restingMemberIds, [third.user.id]);
-  assert.equal(before.unpaidCapacityMode, 'read-only');
+  // Default: nobody was ranked. The newest rests first, so the first to join is the one who
+  // keeps adding with the owner, and the owner is told that order (#281).
+  const before = await ownerCapacity();
+  assert.deepEqual(before.restOrder, [third.user.id, second.user.id, first.user.id]);
+  assert.deepEqual(before.restingMemberIds, [third.user.id, second.user.id]);
 
-  const set = await app.inject({
+  // Moving someone twice: the second move starts from where the first one left them.
+  const once = await app.inject({
     method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
-    payload: { mode: 'paused', restOrder: [second.user.id, third.user.id] },
+    payload: { restOrder: moved(before.restOrder, first.user.id, -1) },
   });
-  assert.equal(set.statusCode, 200, set.body);
-  assert.equal(set.json().data.capacity.unpaidCapacityMode, 'paused');
-  assert.deepEqual(set.json().data.capacity.restingMemberIds, [second.user.id]);
+  assert.equal(once.statusCode, 200, once.body);
+  assert.deepEqual((await ownerCapacity()).restOrder, [third.user.id, first.user.id, second.user.id]);
+  const twice = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
+    payload: { restOrder: moved((await ownerCapacity()).restOrder, first.user.id, -1) },
+  });
+  assert.equal(twice.statusCode, 200, twice.body);
+  assert.deepEqual(twice.json().data.capacity.restOrder, [first.user.id, third.user.id, second.user.id]);
+  assert.deepEqual(twice.json().data.capacity.restingMemberIds, [first.user.id, third.user.id]);
+
+  // Nobody but the owner learns the order.
+  const memberView = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: first.cookie } })).json().data.capacity;
+  assert.equal('restOrder' in memberView, false);
 
   // The owner holds the payment, so putting themselves in the queue is refused rather than
-  // quietly ignored: a rule that could pause the only person who can fix it is a trap.
+  // quietly ignored: a rule that could rest the only person who can fix it is a trap.
   const self = await app.inject({
     method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
     payload: { restOrder: [owner.user.id] },
   });
   assert.equal(self.statusCode, 400, self.body);
   assert.equal(self.json().error.code, 'invalid_rest_order');
+  for (const restOrder of [['someone-not-here'], [second.user.id, second.user.id]]) {
+    const refused = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner), payload: { restOrder } });
+    assert.equal(refused.statusCode, 400, refused.body);
+  }
 
-  const stranger = await app.inject({
+  // Fully pausing resting people is gone. A phone that has not updated may still ask for it.
+  const paused = await app.inject({
     method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
-    payload: { restOrder: ['someone-not-here'] },
+    payload: { mode: 'paused' },
   });
-  assert.equal(stranger.statusCode, 400, stranger.body);
-
-  const badMode = await app.inject({
+  assert.equal(paused.statusCode, 400, paused.body);
+  assert.equal(paused.json().error.code, 'invalid_unpaid_capacity_mode');
+  const eventsBefore = (await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journeyId])).rows[0].count;
+  const readOnly = await app.inject({
     method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
-    payload: { mode: 'deleted' },
+    payload: { mode: 'read-only' },
   });
-  assert.equal(badMode.statusCode, 400, badMode.body);
+  assert.equal(readOnly.statusCode, 200, readOnly.body);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journeyId])).rows[0].count, eventsBefore, 'asking for what always happens changes nothing');
 
   // Only the owner decides this.
   const notOwner = await app.inject({
     method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(second),
-    payload: { mode: 'read-only' },
+    payload: { restOrder: [second.user.id] },
   });
   assert.equal(notOwner.statusCode, 403, notOwner.body);
 
   // The change is attributable, like every other journey change.
   const events = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.events;
   assert.ok(events.some((event) => event.action === 'unpaid_capacity_rest_updated'));
+});
+
+test('someone joining later never takes the place of the person the owner chose to keep adding', async (t) => {
+  const { app, mailer, pool } = await testPlatform({ configOverrides: billingConfig });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const owner = await register(app, mailer, { email: 'keep-owner@example.test', username: 'keep-owner' });
+  const first = await register(app, mailer, { email: 'keep-first@example.test', username: 'keep-first' });
+  const chosen = await register(app, mailer, { email: 'keep-chosen@example.test', username: 'keep-chosen' });
+  const later = await register(app, mailer, { email: 'keep-later@example.test', username: 'keep-later' });
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
+    payload: { name: 'A journey that keeps its choice', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
+  });
+  const journeyId = created.json().data.journey.id;
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, first.user.id, 'member', '2026-09-07T10:00:00.000Z']);
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, chosen.user.id, 'member', '2026-09-08T10:00:00.000Z']);
+  const set = await app.inject({
+    method: 'PATCH', url: `/api/v1/journeys/${journeyId}/unpaid-capacity`, headers: authHeaders(owner),
+    payload: { restOrder: [first.user.id, chosen.user.id] },
+  });
+  assert.equal(set.statusCode, 200, set.body);
+
+  // Someone joins after the owner chose. They have no place in the order yet, and they rest
+  // first rather than taking the chosen person's.
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, later.user.id, 'member', '2026-09-10T10:00:00.000Z']);
+  const capacity = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.capacity;
+  assert.deepEqual(capacity.restOrder, [later.user.id, first.user.id, chosen.user.id]);
+  assert.deepEqual(capacity.restingMemberIds, [later.user.id, first.user.id]);
+});
+
+test('a journey left fully paused reads again, and nothing can choose that mode any more', async (t) => {
+  const userId = '66666666-6666-4666-8666-666666666666';
+  const journeyId = '77777777-7777-4777-8777-777777777777';
+  // As the schema stood before migration 028: an owner had chosen to fully pause.
+  const { app, pool } = await testPlatform({
+    configOverrides: billingConfig,
+    beforeMigration028: async (before) => {
+      await before.query(`INSERT INTO users (id,email_normalized,username,display_name,password_hash,created_at) VALUES ($1,'paused@example.test','paused-owner','Paused','x',now())`, [userId]);
+      await before.query(`INSERT INTO journeys (id,owner_user_id,name,location,start_date_status,end_date_status,budget_cents,unpaid_capacity_mode) VALUES ($1,$2,'A journey someone paused','','unknown','forever',0,'paused')`, [journeyId, userId]);
+    },
+  });
+  t.after(async () => { await app.close(); await pool.end(); });
+  assert.equal((await pool.query('SELECT unpaid_capacity_mode FROM journeys WHERE id=$1', [journeyId])).rows[0].unpaid_capacity_mode, 'read-only');
+  await assert.rejects(pool.query("UPDATE journeys SET unpaid_capacity_mode='paused' WHERE id=$1", [journeyId]));
+});
+
+// A journey whose payment has lapsed into grace: the owner pays, two others joined, and the
+// payment covered one more person than the two included.
+async function journeyInGrace(t, clock) {
+  const context = await testPlatform({ configOverrides: billingConfig, now: () => clock.now });
+  t.after(async () => { await context.app.close(); await context.pool.end(); });
+  const { app, mailer, pool } = context;
+  const owner = await register(app, mailer, { email: 'grace-owner@example.test', username: 'grace-owner' });
+  const first = await register(app, mailer, { email: 'grace-first@example.test', username: 'grace-first' });
+  const later = await register(app, mailer, { email: 'grace-later@example.test', username: 'grace-later' });
+  await pool.query("UPDATE users SET display_name='Sam' WHERE id=$1", [owner.user.id]);
+  await pool.query("UPDATE users SET display_name='Alex' WHERE id=$1", [first.user.id]);
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
+    payload: { name: 'A journey waiting on a payment', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
+  });
+  const journeyId = created.json().data.journey.id;
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, first.user.id, 'member', '2026-07-01T10:00:00.000Z']);
+  await pool.query('INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,$3,$4)', [journeyId, later.user.id, 'member', '2026-07-02T10:00:00.000Z']);
+  const automaticEnd = new Date(clock.now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO billing_entitlements (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,expires_at,last_verified_at,created_at,updated_at)
+     VALUES ($1,$2,$3,'additional-journey-capacity','stripe','test','sub_grace','grace',1,$4,$5,$5,$5)`,
+    ['33333333-3333-4333-8333-333333333333', owner.user.id, journeyId, automaticEnd, clock.now],
+  );
+  // Read and asked through the platform, because sessions do not outlive the clock moving weeks.
+  const capacityFor = async (client) => (await context.platform.snapshot(client.user.id, journeyId)).capacity;
+  const ask = (client) => context.platform.requestMoreGrace(client.user.id, journeyId);
+  const askOverHttp = (client) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/grace-requests`, headers: authHeaders(client) });
+  return { ...context, owner, first, later, journeyId, automaticEnd, capacityFor, ask, askOverHttp };
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test('everyone in a journey in grace is told who pays, the time left, the weeks asked for and who can still add', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { owner, first, later, capacityFor } = await journeyInGrace(t, clock);
+
+  for (const viewer of [owner, first, later]) {
+    const capacity = await capacityFor(viewer);
+    assert.deepEqual(capacity.grace, {
+      active: true,
+      endsAt: '2026-08-09T12:00:00.000Z',
+      daysLeft: 7,
+      payer: { id: owner.user.id, displayName: 'Sam' },
+      calendarYear: 2026,
+      requestsUsed: 0,
+      requestsPerYear: 7,
+      requestDays: 7,
+      canRequest: true,
+      // The payer, and the first to join, because nobody was chosen.
+      keepAdding: [{ id: owner.user.id, displayName: 'Sam' }, { id: first.user.id, displayName: 'Alex' }],
+    });
+    // Everything keeps working for everyone during grace. New invitations wait.
+    assert.deepEqual(capacity.restingMemberIds, []);
+    assert.equal(capacity.canInvite, false);
+  }
+
+  clock.now = new Date('2026-08-05T18:00:00.000Z');
+  assert.equal((await capacityFor(first)).grace.daysLeft, 4, 'a part day still counts as a day left');
+});
+
+const refusedWith = (code) => (error) => error instanceof PlatformError && error.code === code;
+
+test('the payer asks for another 7 days, one week ahead at a time, and each request is in the history', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { pool, owner, first, later, journeyId, capacityFor, ask, askOverHttp } = await journeyInGrace(t, clock);
+
+  // Only the person who pays can ask.
+  const notPayer = await askOverHttp(first);
+  assert.equal(notPayer.statusCode, 403, notPayer.body);
+  assert.equal(notPayer.json().error.code, 'not_payer');
+
+  // Asked during the automatic 7 days, the extra week begins where they end.
+  const asked = await askOverHttp(owner);
+  assert.equal(asked.statusCode, 201, asked.body);
+  assert.equal(asked.json().data.capacity.grace.endsAt, '2026-08-16T12:00:00.000Z');
+  assert.equal(asked.json().data.capacity.grace.requestsUsed, 1);
+  assert.equal(asked.json().data.capacity.grace.canRequest, false);
+  assert.deepEqual(asked.json().data.capacity.restOrder, [later.user.id, first.user.id], 'the owner is answered as the owner');
+
+  // Only one week can wait ahead.
+  const early = await askOverHttp(owner);
+  assert.equal(early.statusCode, 409, early.body);
+  assert.equal(early.json().error.code, 'grace_request_early');
+
+  clock.now = new Date('2026-08-10T12:00:00.000Z');
+  assert.equal((await capacityFor(first)).grace.daysLeft, 6);
+  assert.equal((await ask(owner)).grace.endsAt, '2026-08-23T12:00:00.000Z');
+  assert.equal((await capacityFor(first)).grace.endsAt, '2026-08-23T12:00:00.000Z');
+
+  // Every request is in the journey's append-only history, attributed to the payer.
+  const events = (await pool.query("SELECT actor_user_id,summary,after_value FROM journey_events WHERE journey_id=$1 AND action='grace_requested' ORDER BY sequence", [journeyId])).rows;
+  assert.deepEqual(events.map((event) => event.summary), ['Asked for 7 more days to pay (1 of 7 in 2026)', 'Asked for 7 more days to pay (2 of 7 in 2026)']);
+  assert.ok(events.every((event) => event.actor_user_id === owner.user.id));
+  assert.equal(events[1].after_value.graceUntil, '2026-08-23T12:00:00.000Z');
+});
+
+test('when grace runs out the extra people rest and can still read, and asking again brings everyone back', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { owner, first, later, capacityFor, ask, platform, journeyId } = await journeyInGrace(t, clock);
+
+  clock.now = new Date('2026-08-12T12:00:00.000Z');
+  const lapsed = await capacityFor(later);
+  assert.equal(lapsed.grace.active, false);
+  assert.equal(lapsed.grace.daysLeft, 0);
+  assert.equal(lapsed.grace.canRequest, true, 'the payment can still be recovered, so another week can be asked for');
+  assert.deepEqual(lapsed.restingMemberIds, [later.user.id]);
+  assert.ok((await platform.snapshot(later.user.id, journeyId)).events.length > 0, 'a resting journeyer reads the whole journey');
+
+  // Asked after it ran out, the week starts now: nobody is handed a week already gone.
+  await ask(owner);
+  const back = await capacityFor(first);
+  assert.equal(back.grace.active, true);
+  assert.equal(back.grace.endsAt, '2026-08-19T12:00:00.000Z');
+  assert.deepEqual(back.restingMemberIds, []);
+});
+
+test('seven weeks a calendar year, counted again from January 1', async (t) => {
+  const clock = { now: new Date('2026-12-20T12:00:00.000Z') };
+  const { pool, owner, journeyId, automaticEnd, capacityFor, ask } = await journeyInGrace(t, clock);
+  for (let number = 1; number <= 7; number += 1) {
+    await pool.query(
+      `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+       VALUES ($1,$2,$3,2026,$4,$5,$6,$7)`,
+      [`44444444-4444-4444-8444-44444444444${number}`, journeyId, owner.user.id, number, automaticEnd, automaticEnd, new Date('2026-03-01T00:00:00.000Z')],
+    );
+  }
+  const capacity = await capacityFor(owner);
+  assert.equal(capacity.grace.requestsUsed, 7);
+  assert.equal(capacity.grace.canRequest, false);
+  await assert.rejects(ask(owner), (error) => refusedWith('grace_requests_used')(error) && /starts again on January 1/.test(error.message));
+
+  // The database holds the limit too, so two requests racing cannot both be the seventh.
+  await assert.rejects(pool.query(
+    `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+     VALUES ($1,$2,$3,2026,8,$4,$4,$4)`,
+    ['55555555-5555-4555-8555-555555555555', journeyId, owner.user.id, automaticEnd],
+  ));
+
+  clock.now = new Date('2027-01-01T00:00:00.000Z');
+  assert.equal((await capacityFor(owner)).grace.requestsUsed, 0);
+  assert.equal((await ask(owner)).grace.requestsUsed, 1);
+});
+
+test('weeks asked for during one lapse are not carried into the next', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { pool, owner, journeyId, capacityFor, ask } = await journeyInGrace(t, clock);
+  await ask(owner);
+
+  // Paid on time, then a new lapse two days later: a new automatic grace with its own end.
+  clock.now = new Date('2026-08-04T12:00:00.000Z');
+  await pool.query("UPDATE billing_entitlements SET state='grace',expires_at=$1,updated_at=$2 WHERE journey_id=$3", ['2026-08-11T12:00:00.000Z', clock.now, journeyId]);
+  const capacity = await capacityFor(owner);
+  assert.equal(capacity.grace.endsAt, '2026-08-11T12:00:00.000Z');
+  assert.equal(capacity.grace.requestsUsed, 1, 'the year still counts the week asked for before');
+});
+
+test('nobody outside a payment can ask for more time', async (t) => {
+  const { app, mailer, pool } = await testPlatform({ configOverrides: billingConfig });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const owner = await register(app, mailer, { email: 'paid-owner@example.test', username: 'paid-owner' });
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(owner),
+    payload: { name: 'A journey of two', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 },
+  });
+  const journeyId = created.json().data.journey.id;
+  const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
+  assert.equal(snapshot.capacity.grace, null);
+  const asked = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/grace-requests`, headers: authHeaders(owner) });
+  assert.equal(asked.statusCode, 409, asked.body);
+  assert.equal(asked.json().error.code, 'not_in_grace');
+  const stranger = await register(app, mailer, { email: 'paid-stranger@example.test', username: 'paid-stranger' });
+  const outsider = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/grace-requests`, headers: authHeaders(stranger) });
+  assert.equal(outsider.statusCode, 403, outsider.body);
+});
+
+test('a person can be in 101 journeys: the 102nd can be neither started nor joined, and nobody loses one', async (t) => {
+  const { app, mailer, pool, platform } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const busy = await register(app, mailer, { email: 'busy@example.test', username: 'busy' });
+  const friend = await register(app, mailer, { email: 'friend@example.test', username: 'friend' });
+  const input = { name: 'One of many', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 };
+
+  // 100 of their own, and one they joined: joined journeys count too.
+  for (let index = 0; index < 100; index += 1) await platform.createJourney(busy.user.id, input);
+  const friends = await platform.createJourney(friend.user.id, input);
+  await pool.query("INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member')", [friends.id, busy.user.id]);
+
+  const refused = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(busy), payload: input });
+  assert.equal(refused.statusCode, 409, refused.body);
+  assert.equal(refused.json().error.code, 'journey_limit_reached');
+  assert.match(refused.json().error.message, /101 journeys/);
+  assert.equal((await platform.listJourneys(busy.user.id)).length, 101);
+
+  // An invitation to a 102nd waits, as one does for room in a full journey.
+  const another = await platform.createJourney(friend.user.id, input);
+  const invited = await app.inject({ method: 'POST', url: `/api/v1/journeys/${another.id}/invitations`, headers: authHeaders(friend), payload: { email: 'busy@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'busy@example.test').token;
+  const waits = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(busy), payload: { token } });
+  assert.equal(waits.statusCode, 409, waits.body);
+  assert.equal(waits.json().error.code, 'journey_limit_reached');
+  const invitation = (await pool.query('SELECT accepted_at,revoked_at,reservation_active FROM invitations WHERE journey_id=$1', [another.id])).rows[0];
+  assert.deepEqual(invitation, { accepted_at: null, revoked_at: null, reservation_active: true });
+
+  // Once they are in fewer, the same invitation is still there to accept.
+  await pool.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [friends.id, busy.user.id]);
+  const joined = await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(busy), payload: { token } });
+  assert.equal(joined.statusCode, 200, joined.body);
+
+  // Someone already past the limit keeps every journey; the limit only stops a new one.
+  await pool.query("INSERT INTO journey_members (journey_id,user_id,role) VALUES ($1,$2,'member')", [friends.id, busy.user.id]);
+  assert.equal((await platform.listJourneys(busy.user.id)).length, 102);
+  const moment = await app.inject({
+    method: 'POST', url: `/api/v1/journeys/${friends.id}/moments`, headers: authHeaders(busy),
+    payload: { kind: 'memory', kindLabel: '', title: 'Still here', detail: '', occurredOn: '2026-08-02', visibility: 'private', theme: '', moneyCents: null, moneyCurrency: '', locations: [] },
+  });
+  assert.equal(moment.statusCode, 201, moment.body);
 });
 
 // A phone has no browser: no cookie jar it can rely on across restarts, and no hostile page that

@@ -44,7 +44,7 @@ async function billingPool() {
   });
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
-  for (const migration of ['001_platform.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql']) {
+  for (const migration of ['001_platform.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '028_rest-read-only-and-let-the-payer-ask-for-time.sql']) {
     await pool.query(await readFile(new URL(`../server/migrations/${migration}`, import.meta.url), 'utf8'));
   }
   await pool.query(
@@ -600,6 +600,59 @@ test('delayed invoice events cannot restore stale payment state or paid capacity
      WHERE source_record_id='sub_test_ordering'`,
   )).rows[0];
   assert.deepEqual(entitlement, { state: 'expired', quantity: 1 });
+});
+
+test('a payment that fails again keeps the first 7 days of grace, and the owner sees the weeks asked for', async (t) => {
+  const pool = await billingPool();
+  t.after(async () => pool.end());
+  let clock = new Date(now);
+  const billing = new StripeBillingService({ pool, config: billingConfig(), stripe: fakeStripe(), now: () => clock });
+  await billing.createCheckoutSession(userId, journeyId, {
+    offerId: 'additional-person-monthly',
+    paidCapacity: 1,
+    requestId: '99999999-9999-4999-8999-999999999999',
+  });
+  const base = Math.floor(now.getTime() / 1000);
+  const metadata = { together_user_id: userId, together_journey_id: journeyId, together_offer_id: 'additional-person-monthly', together_paid_capacity: '1' };
+  const deliver = (event) => billing.handleWebhook(Buffer.from(JSON.stringify(event)), 'valid-signature');
+  await deliver({
+    id: 'evt_grace_subscription', type: 'customer.subscription.updated', created: base, livemode: false,
+    data: { object: {
+      id: 'sub_test_grace', customer: 'cus_test_member', status: 'active', created: base,
+      current_period_start: base, current_period_end: base + 2_592_000, cancel_at_period_end: false, metadata,
+      items: { data: [{ quantity: 1, price: { id: 'price_additional_person_test' } }] },
+    } },
+  });
+  const failed = (id, created) => ({
+    id, type: 'invoice.payment_failed', created, livemode: false,
+    data: { object: {
+      id: `in_${id}`, object: 'invoice', customer: 'cus_test_member', status: 'open', created,
+      amount_due: 100, amount_paid: 0, currency: 'usd',
+      parent: { subscription_details: { subscription: 'sub_test_grace', metadata } },
+      lines: { data: [{ period: { end: base + 2_592_000 } }] },
+    } },
+  });
+
+  await deliver(failed('evt_first_failure', base + 10));
+  const firstEnd = (await billing.status(userId, journeyId)).entitlement.expiresAt;
+  assert.equal(new Date(firstEnd).toISOString(), '2026-09-14T19:00:00.000Z');
+
+  // Stripe retries three days later and fails again. The automatic grace still ends where it did.
+  clock = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  await deliver(failed('evt_retry_failure', base + 10 + 3 * 86_400));
+  assert.equal(new Date((await billing.status(userId, journeyId)).entitlement.expiresAt).toISOString(), '2026-09-14T19:00:00.000Z');
+
+  // The payer asked for another week. Past the automatic end, the owner's billing panel still
+  // reads grace, until the same time the banner does.
+  await pool.query(
+    `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
+     VALUES ($1,$2,$3,2026,1,$4,$5,$6)`,
+    ['aaaaaaaa-1111-4111-8111-111111111111', journeyId, userId, firstEnd, new Date('2026-09-21T19:00:00.000Z'), clock],
+  );
+  clock = new Date('2026-09-16T19:00:00.000Z');
+  const extended = (await billing.status(userId, journeyId)).entitlement;
+  assert.equal(extended.state, 'grace');
+  assert.equal(new Date(extended.expiresAt).toISOString(), '2026-09-21T19:00:00.000Z');
 });
 
 test('reconciliation repairs a missed lifecycle once and reports aggregate attention safely', async (t) => {

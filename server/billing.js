@@ -372,12 +372,21 @@ export class StripeBillingService {
     ]);
     const entitlement = entitlements.rows.find((row) => ['active', 'grace'].includes(row.state)) || entitlements.rows[0] || null;
     const now = this.now();
+    // A grace runs on through the weeks the payer asked for during this lapse (platform.js,
+    // paymentFor), so the owner's billing panel says the same as the banner everyone sees.
+    let expiresAt = entitlement?.expires_at || null;
+    if (entitlement?.state === 'grace' && expiresAt) {
+      const asked = await this.pool.query('SELECT grace_basis,grace_until FROM journey_grace_requests WHERE journey_id=$1', [journeyId]);
+      for (const request of asked.rows) {
+        if (new Date(request.grace_basis).getTime() === new Date(entitlement.expires_at).getTime() && new Date(request.grace_until) > new Date(expiresAt)) expiresAt = request.grace_until;
+      }
+    }
     const normalizedEntitlement = entitlement ? {
       capability: entitlement.capability,
       source: entitlement.source,
-      state: entitlement.expires_at && new Date(entitlement.expires_at) <= now ? 'expired' : entitlement.state,
+      state: expiresAt && new Date(expiresAt) <= now ? 'expired' : entitlement.state,
       effectiveAt: entitlement.effective_at,
-      expiresAt: entitlement.expires_at,
+      expiresAt,
       lastVerifiedAt: entitlement.last_verified_at,
       reason: entitlement.reason,
       quantity: entitlement.quantity,
@@ -672,6 +681,20 @@ export class StripeBillingService {
     return 'expired';
   }
 
+  // The automatic grace is 7 days from the first failure, however many times Stripe retries the
+  // payment and fails again inside it. The weeks a payer asks for on top are counted from this
+  // end (journey_grace_requests.grace_basis), so it has to hold still while the grace lasts.
+  async graceExpiry(client, subscriptionId) {
+    const existing = await client.query(
+      `SELECT state,expires_at FROM billing_entitlements
+       WHERE source='stripe' AND environment=$1 AND source_record_id=$2 AND capability=$3`,
+      [this.environment, subscriptionId, CAPABILITY],
+    );
+    return existing.rows[0]?.state === 'grace' && existing.rows[0]?.expires_at
+      ? new Date(existing.rows[0].expires_at)
+      : new Date(this.now().getTime() + this.config.billingGraceDays * 24 * 60 * 60 * 1000);
+  }
+
   async upsertEntitlement(client, { payerUserId, journeyId, sourceRecordId, state, quantity, eventCreatedAt, effectiveAt = null, expiresAt = null, reason = null }) {
     return client.query(
       `INSERT INTO billing_entitlements
@@ -735,17 +758,7 @@ export class StripeBillingService {
     const paidCapacity = this.paidCapacityFor(subscription, context.paidCapacity);
     const period = subscriptionPeriod(subscription);
     const state = this.entitlementState(subscription);
-    let graceExpiry = null;
-    if (state === 'grace') {
-      const existingEntitlement = await client.query(
-        `SELECT state,expires_at FROM billing_entitlements
-         WHERE source='stripe' AND environment=$1 AND source_record_id=$2 AND capability=$3`,
-        [this.environment, subscription.id, CAPABILITY],
-      );
-      graceExpiry = existingEntitlement.rows[0]?.state === 'grace' && existingEntitlement.rows[0]?.expires_at
-        ? new Date(existingEntitlement.rows[0].expires_at)
-        : new Date(this.now().getTime() + this.config.billingGraceDays * 24 * 60 * 60 * 1000);
-    }
+    const graceExpiry = state === 'grace' ? await this.graceExpiry(client, subscription.id) : null;
     const expiresAt = state === 'expired' ? (unixDate(subscription.canceled_at) || this.now()) : graceExpiry || period.end;
     const savedSubscription = await client.query(
       `INSERT INTO billing_subscriptions
@@ -827,7 +840,7 @@ export class StripeBillingService {
         state: 'grace',
         quantity: paidCapacity,
         eventCreatedAt,
-        expiresAt: new Date(this.now().getTime() + this.config.billingGraceDays * 24 * 60 * 60 * 1000),
+        expiresAt: await this.graceExpiry(client, subscriptionId),
         reason: 'invoice_payment_failed',
       });
     }
