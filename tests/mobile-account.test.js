@@ -140,3 +140,25 @@ test('account deletion is three taps from settings, and says what goes and what 
   assert.match(remove, /What is deleted:/);
   assert.match(remove, /What stays:/);
 });
+
+// #355: the screen said the history keeps no email, and that any payment for capacity has to end
+// first. Neither was true. What it says now is PRIVACY.md's own sentences, checked here word for word.
+test('the Delete account screen says what is kept, and which payment stops a deletion, in the privacy policy\'s words', async () => {
+  const remove = await readFile(new URL('app/delete-account.tsx', mobile), 'utf8');
+  const policy = await readFile(new URL('../PRIVACY.md', import.meta.url), 'utf8');
+  const keeps = /const DELETION_KEEPS = "What stays: ([^"]+)";/.exec(remove)?.[1];
+  const waits = /const DELETION_WAITS_ON_WEB_PAYMENT = '([^']+)';/.exec(remove)?.[1];
+  assert.ok(keeps && waits, 'both sentences are named constants');
+  for (const sentence of keeps.split(/(?<=\.) /)) assert.ok(policy.includes(sentence), `PRIVACY.md says: ${sentence}`);
+  assert.ok(policy.includes(waits), `PRIVACY.md says: ${waits}`);
+  assert.match(remove, /<Body>\{DELETION_KEEPS\}<\/Body>\s*<Body>\{DELETION_WAITS_ON_WEB_PAYMENT\}<\/Body>/);
+  assert.doesNotMatch(remove, /without your email|If you pay for capacity/);
+  // Only a web subscription refuses a deletion: the server's own check reads Stripe's table alone.
+  const billing = await readFile(new URL('../server/billing.js', import.meta.url), 'utf8');
+  const check = billing.slice(billing.indexOf('async assertAccountDeletable('), billing.indexOf('billing_subscription_active'));
+  assert.match(check, /FROM billing_subscriptions bs/);
+  assert.match(check, /bs\.payer_user_id=\$1 OR j\.owner_user_id=\$1/);
+  assert.doesNotMatch(check, /billing_store_purchases|source IN/);
+  // And the store-subscription paragraph stays.
+  assert.match(remove, /<Body>\{STORE_SUBSCRIPTION_NOT_CANCELLED\}<\/Body>/);
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createPool, runMigrations } from '../server/db.js';
+import { createPool, runMigrations, withTransaction } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-an-invitation-last-fourteen-days.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -78,6 +78,10 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.equal(await platform.tokenHolder(rotated.token), null);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [registration.user.id])).rows[0].count, 0);
 
+  // A journey holds at most 101 (MAX_JOURNEY_CAPACITY). With one person here and 99 places held,
+  // one place is left, and two people proposed at the same moment cannot both take it. Alone in
+  // the journey, the owner has nobody to ask, so each proposal is an invitation as it is made
+  // (consent-to-add, migration 022, replaced the old createInvitation).
   await pool.query(
     `INSERT INTO invitations (id,journey_id,invited_by_user_id,email_normalized,token_hash,expires_at)
      SELECT (
@@ -85,23 +89,24 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
        substr(md5(series::text),13,4) || '-' || substr(md5(series::text),17,4) || '-' ||
        substr(md5(series::text),21,12)
      )::uuid, $1, $2, 'reserved-' || series || '@example.test', md5('a-' || series) || md5('b-' || series), now() + interval '1 hour'
-     FROM generate_series(1,97) AS series`,
+     FROM generate_series(1,99) AS series`,
     [journey.id, registration.user.id],
   );
   const concurrentInvitations = await Promise.allSettled([
-    platform.createInvitation(registration.user.id, journey.id, 'boundary-a@example.test'),
-    platform.createInvitation(registration.user.id, journey.id, 'boundary-b@example.test'),
+    platform.proposeInvitation(registration.user.id, journey.id, 'boundary-a@example.test', '', 'http://127.0.0.1:4174'),
+    platform.proposeInvitation(registration.user.id, journey.id, 'boundary-b@example.test', '', 'http://127.0.0.1:4174'),
   ]);
   assert.equal(concurrentInvitations.filter((result) => result.status === 'fulfilled').length, 1);
   const rejectedInvitation = concurrentInvitations.find((result) => result.status === 'rejected');
   assert.equal(rejectedInvitation.reason.code, 'journey_full');
+  assert.equal(concurrentInvitations.find((result) => result.status === 'fulfilled').value.invitationSent, true);
   const capacity = await pool.query(
     `SELECT
        (SELECT count(*)::int FROM journey_members WHERE journey_id=$1) AS members,
        (SELECT count(*)::int FROM invitations WHERE journey_id=$1 AND reservation_active=true AND expires_at>now()) AS reservations`,
     [journey.id],
   );
-  assert.deepEqual(capacity.rows[0], { members: 1, reservations: 98 });
+  assert.deepEqual(capacity.rows[0], { members: 1, reservations: 100 });
 
   await platform.deleteAccount(registration.user.id, 'correct horse battery staple');
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM journeys WHERE id=$1', [journey.id])).rows[0].count, 0);
@@ -258,7 +263,8 @@ test('real PostgreSQL keeps a seventh week already given and refuses a new one',
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   const { readdir } = await import('node:fs/promises');
   const directory = new URL('../server/migrations/', import.meta.url);
-  const before030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && name < '030').sort();
+  // Every migration but 030, so the ones after it are already in place and only 030 is left.
+  const before030 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('030_')).sort();
   await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
   for (const name of before030) {
     await pool.query(await readFile(new URL(name, directory), 'utf8'));
@@ -281,4 +287,97 @@ test('real PostgreSQL keeps a seventh week already given and refuses a new one',
   assert.deepEqual(kept.rows.map((row) => row.request_number), [7], 'a week already given stays');
   await ask('33333333-3333-4333-8333-333333333336', 6);
   await assert.rejects(ask('33333333-3333-4333-8333-333333333338', 7), /journey_grace_requests_request_number_check/);
+});
+
+// Migration 031 (#347): an invitation already waiting keeps the expiry it was sent with, and
+// whatever had already run out counts as noticed, so the first read after the release writes no
+// lone "ran out" entry for something History never saw begin.
+test('real PostgreSQL leaves waiting invitations as they are and marks what had run out as noticed', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  const { readdir } = await import('node:fs/promises');
+  const directory = new URL('../server/migrations/', import.meta.url);
+  const before031 = (await readdir(directory)).filter((name) => name.endsWith('.sql') && !name.startsWith('031_')).sort();
+  await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
+  for (const name of before031) {
+    await pool.query(await readFile(new URL(name, directory), 'utf8'));
+    await pool.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name]);
+  }
+  const user = '44444444-4444-4444-8444-444444444444';
+  const joiner = '44444444-4444-4444-8444-444444444445';
+  const journey = '55555555-5555-4555-8555-555555555555';
+  await pool.query("INSERT INTO users (id,email_normalized,username,display_name,password_hash) VALUES ($1,'inviter@example.test','inviter','Inviter','x'),($2,'joined@example.test','joined','Joined','x')", [user, joiner]);
+  await pool.query("INSERT INTO journeys (id,owner_user_id,name,budget_cents,start_date_status,end_date_status) VALUES ($1,$2,'Waiting',0,'unknown','forever')", [journey, user]);
+  const invitation = (id, email, expires, accepted = false) => pool.query(
+    `INSERT INTO invitations (id,journey_id,invited_by_user_id,email_normalized,token_hash,expires_at,accepted_at,reservation_active)
+     VALUES ($1,$2,$3,$4,md5($4)||md5($7),now() + $5::interval,CASE WHEN $6 THEN now() END,NOT $6)`,
+    [id, journey, user, email, expires, accepted, id],
+  );
+  await invitation('66666666-6666-4666-8666-666666666661', 'waiting@example.test', '20 minutes');
+  await invitation('66666666-6666-4666-8666-666666666662', 'ran-out@example.test', '-1 hour');
+  await invitation('66666666-6666-4666-8666-666666666663', 'joined@example.test', '-1 day', true);
+  await pool.query(
+    `INSERT INTO journey_invite_proposals (id,journey_id,proposed_by_user_id,email_normalized,status,created_at,expires_at,invitation_id) VALUES
+     ('77777777-7777-4777-8777-777777777771',$1,$2,'open-still@example.test','open',now(),now() + interval '29 days',NULL),
+     ('77777777-7777-4777-8777-777777777772',$1,$2,'open-past@example.test','open',now() - interval '31 days',now() - interval '1 day',NULL),
+     ('77777777-7777-4777-8777-777777777773',$1,$2,'waiting@example.test','agreed',now(),now() + interval '29 days','66666666-6666-4666-8666-666666666661')`,
+    [journey, user],
+  );
+  const expiryBefore = (await pool.query("SELECT expires_at FROM invitations WHERE id='66666666-6666-4666-8666-666666666661'")).rows[0].expires_at;
+
+  assert.deepEqual((await runMigrations(pool)).applied, ['031_let-an-invitation-last-fourteen-days.sql']);
+  const rows = Object.fromEntries((await pool.query('SELECT email_normalized,expires_at,lapse_recorded_at,proposal_id,accepted_by_user_id FROM invitations')).rows.map((row) => [row.email_normalized, row]));
+  assert.equal(rows['waiting@example.test'].expires_at.getTime(), expiryBefore.getTime(), 'an invitation already waiting keeps its expiry');
+  assert.equal(rows['waiting@example.test'].lapse_recorded_at, null);
+  assert.equal(rows['waiting@example.test'].proposal_id, '77777777-7777-4777-8777-777777777773');
+  assert.equal(rows['ran-out@example.test'].lapse_recorded_at.getTime(), rows['ran-out@example.test'].expires_at.getTime());
+  assert.equal(rows['joined@example.test'].lapse_recorded_at, null);
+  assert.equal(rows['joined@example.test'].accepted_by_user_id, joiner);
+  const proposals = Object.fromEntries((await pool.query('SELECT email_normalized,status,closed_at,expires_at FROM journey_invite_proposals')).rows.map((row) => [row.email_normalized, row]));
+  assert.equal(proposals['open-still@example.test'].status, 'open');
+  assert.equal(proposals['open-past@example.test'].status, 'lapsed');
+  assert.equal(proposals['open-past@example.test'].closed_at.getTime(), proposals['open-past@example.test'].expires_at.getTime());
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_events')).rows[0].count, 0, 'the migration writes nothing into any history');
+});
+
+// Running out is worked out when read; nothing runs at that moment (#348). The first request to
+// notice writes the history entry, and two at once must not both write it. pg-mem runs one
+// transaction at a time, so this can only be proved here.
+test('real PostgreSQL writes an invitation’s running out exactly once, however many requests notice it together', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  let clock = new Date();
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer, now: () => clock });
+  const suffix = Date.now().toString(36);
+  const email = `lapse-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `lapse-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Running out', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  // Alone, nobody else is asked, so these go straight out. Each lasts 14 days.
+  await platform.proposeInvitation(user.id, journey.id, `invited-a-${suffix}@example.test`, '', 'http://127.0.0.1:4174');
+  await platform.proposeInvitation(user.id, journey.id, `invited-b-${suffix}@example.test`, '', 'http://127.0.0.1:4174');
+  const sent = await pool.query('SELECT created_at,expires_at FROM invitations WHERE journey_id=$1 ORDER BY email_normalized', [journey.id]);
+  assert.equal(sent.rowCount, 2);
+  assert.ok(sent.rows.every((row) => row.expires_at - row.created_at === 14 * 24 * 60 * 60 * 1000));
+
+  clock = new Date(clock.getTime() + 15 * 24 * 60 * 60 * 1000);
+  // Ten readers at once, through the snapshot every screen reads.
+  await Promise.all(Array.from({ length: 10 }, () => platform.snapshot(user.id, journey.id)));
+  // And two transactions noticing at once without taking the journey lock first: the conditional
+  // update alone decides which one writes.
+  await Promise.all([1, 2].map(() => withTransaction(pool, (client) => platform.recordRunOuts(client, journey.id))));
+  const lapsed = await pool.query("SELECT summary,after_value FROM journey_events WHERE journey_id=$1 AND action='invitation_lapsed' ORDER BY summary", [journey.id]);
+  assert.equal(lapsed.rowCount, 2, 'one entry for each invitation, never two');
+  assert.deepEqual(lapsed.rows.map((row) => row.after_value.expiredAt), sent.rows.map((row) => row.expires_at.toISOString()));
+  assert.ok(lapsed.rows.every((row) => row.summary.includes('••') && !row.summary.includes(suffix)));
+  const stored = JSON.stringify((await pool.query('SELECT * FROM journey_events WHERE journey_id=$1', [journey.id])).rows);
+  assert.equal(stored.includes(`invited-a-${suffix}@example.test`), false);
+  assert.equal(stored.includes(`invited-b-${suffix}@example.test`), false);
+  assert.equal((await platform.snapshot(user.id, journey.id)).eventChainValid, true);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
 });

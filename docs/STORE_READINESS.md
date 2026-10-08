@@ -106,7 +106,11 @@ is, so they are honest today and say which answer changes if a fix lands.
   - `journey_invite_proposals.email_normalized`: a proposal to add them keeps their real email,
     whatever its state, and every journeyer reads it (`server/platform.js:171`, `:1746-1748`,
     `:1778`). Deletion does not touch this table.
-- **Where `PRIVACY.md` is wrong.** It says the history records the deletion "without your email"
+- **Since #348 and #350 (Oct 8, 2026)** journeyers no longer read either address whole: the server
+  sends it masked (`s••d@gmail.com`), and the journey's history records each invitation step with
+  the same mask and never the full address. The rows above still hold the real address, which the
+  server needs to send the invitation and to match the person accepting it. `PRIVACY.md` says so.
+- **Where `PRIVACY.md` was wrong.** It said the history records the deletion "without your email"
   (`PRIVACY.md:80`). The `member_deleted_account` event itself is without it
   (`server/platform.js:1890`); the invitation and proposal records are not.
 
@@ -291,7 +295,8 @@ dependency (2.4).
 | Account and journeys | As long as the account exists | Verified in code (no expiry job touches them) |
 | Phone access token / refresh token | 30 minutes / 30 days by default, rotated on use | Verified in code (`server/config.js:19-20`, `server/platform.js:432-448`) |
 | Web session | 7 days by default | Verified in code (`server/config.js:17`) |
-| Email links (verify, recover, invite) | 30 minutes by default | Verified in code (`server/config.js:18`) |
+| Email links (verify, recover) | 30 minutes by default | Verified in code (`server/config.js:18`, `TOKEN_MINUTES`) |
+| Invitation link | 14 days by default; one that runs out can be sent again while the proposal's 30 days last (#347) | Verified in code (`server/config.js`, `INVITATION_DAYS`) |
 | Invite proposal | Lapses after 30 days if not agreed | Verified in code (`server/platform.js:56`) |
 | Removed photo | The most recently removed one per moment, until another is removed or the moment is deleted | Verified in code (`server/platform.js:1668-1669`) |
 | Server request logs (with network address) | Rotated: 3 files of 10 MB each, oldest overwritten | Verified in code (`compose.production.yaml:36-43`, `server/log-options.js:18-31`) |

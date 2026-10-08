@@ -16,6 +16,10 @@ const ConfigSchema = z.object({
   AUDIT_HMAC_KEY: z.string().min(32).default('development-audit-secret-change-me-00001'),
   SESSION_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24 * 7),
   TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
+  // How long an invitation's link lasts once everyone has agreed (owner, Oct 8, 2026, #347). It is
+  // its own setting: verification and recovery links stay short (TOKEN_MINUTES). A longer window
+  // lets nobody else in, because only the invited email, signed in and verified, can accept it.
+  INVITATION_DAYS: z.coerce.number().int().min(1).max(30).default(14),
   ACCESS_TOKEN_MINUTES: z.coerce.number().int().min(5).max(24 * 60).default(30),
   REFRESH_TOKEN_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   COOKIE_SECURE: z.enum(['true', 'false']).default('false'),
@@ -164,6 +168,7 @@ export function loadConfig(overrides = {}) {
     storeSandboxAccountIds,
     stripeTaxEnabled: config.STRIPE_TAX_ENABLED === 'true',
     billingGraceDays: config.BILLING_GRACE_DAYS,
+    invitationDays: config.INVITATION_DAYS,
     momentImageBillingEnabled: config.MOMENT_IMAGE_BILLING_ENABLED === 'true',
     momentLocationBillingEnabled: config.MOMENT_LOCATION_BILLING_ENABLED === 'true',
   };

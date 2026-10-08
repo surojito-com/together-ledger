@@ -232,6 +232,57 @@ test('a hosted journey can hold a private moment and deliberately share one late
   await expect(page.getByRole('button', { name: 'Share now' })).toHaveCount(0);
 });
 
+// #350 and #347: once everyone has agreed and the invitation is out, the place is reserved for
+// the person, shown only as the server masks them, and it can be withdrawn or, once it has run
+// out, sent again in one tap by whoever asked.
+test('a place held for someone invited reads as reserved, and can be withdrawn or sent again', async ({ page }) => {
+  const owner = { id: 'user-owner', username: 'journey-owner', displayName: 'journey-owner', email: 'owner@example.test', emailVerified: true };
+  const requests = [];
+  const pending = { id: 'invitation-waiting', proposalId: 'proposal-1', email: 's••d@gmail.com', joinedDisplayName: null, invitedByUserId: owner.id, invitedByDisplayName: owner.displayName, status: 'pending', sentAt: '2026-10-08T09:00:00.000Z', expiresAt: '2099-10-22T09:00:00.000Z', acceptedAt: null, revokedAt: null, sendAgainUntil: null, viewerMayWithdraw: true, viewerMaySendAgain: false };
+  const ranOut = { ...pending, id: 'invitation-ran-out', proposalId: 'proposal-2', email: 'a••@gmail.com', status: 'expired', expiresAt: '2026-09-22T09:00:00.000Z', sendAgainUntil: '2099-10-01T09:00:00.000Z', viewerMayWithdraw: false, viewerMaySendAgain: true };
+  const agreed = { id: 'proposal-1', email: pending.email, note: '', proposedByUserId: owner.id, proposedByDisplayName: owner.displayName, proposedByEmail: owner.email, status: 'agreed', proposedAt: '2026-10-08T08:00:00.000Z', expiresAt: '2026-11-07T08:00:00.000Z', closedAt: '2026-10-08T09:00:00.000Z', agreedCount: 1, declinedCount: 0, pendingCount: 0, askedCount: 1, viewerDecision: 'agree', viewerMayDecide: false, decisions: [] };
+  await page.route('https://api.together-ledger.com/api/v1/session', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { user: owner, csrfToken: 'csrf-test' } }) }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { journeys: [{ id: 'journey-1' }] } }) }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/journey-1/billing', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { enabled: false, portalEnabled: false, environment: 'test', offers: [], entitlement: null, subscription: null, invoices: [] } }) }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/journey-1/snapshot', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ data: {
+      journey: { id: 'journey-1', name: 'A journey of two', location: '', startDate: '', startDateStatus: 'unknown', endDate: '', endDateStatus: 'forever', budgetCents: 0, version: 1, role: 'owner', createdAt: '2026-10-08T08:00:00.000Z', updatedAt: '2026-10-08T09:00:00.000Z' },
+      members: [{ id: owner.id, displayName: owner.displayName, role: 'owner', joinedAt: '2026-10-08T08:00:00.000Z' }],
+      invitations: [ranOut, pending], inviteProposals: [agreed], expenses: [], moments: [], concerns: [], milestones: [],
+      events: [{ id: 'event-1', sequence: 1, actorUserId: owner.id, action: 'journey_created', entityType: 'journey', entityId: 'journey-1', summary: 'Created journey', before: null, after: null, previousHash: '', eventHash: '', createdAt: '2026-10-08T08:00:00.000Z' }],
+      eventChainValid: true,
+      capacity: { peopleHere: 1, openInvitations: 1, canInvite: false, heldForInvitations: true, mode: 'two-person', restingMemberIds: [], grace: null },
+    } }),
+  }));
+  await page.route('https://api.together-ledger.com/api/v1/journeys/journey-1/invitations/**', async (route) => {
+    requests.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill(route.request().method() === 'DELETE' ? { status: 204, body: '' } : { status: 202, contentType: 'application/json', body: JSON.stringify({ data: { invitationSent: true } }) });
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Journey settings' }).click();
+  await expect(page.locator('#sharing-copy')).toHaveText('1 person is here. 1 place is reserved for s••d@gmail.com, waiting for them to accept the invitation. Each person signs in separately.');
+  await expect(page.locator('#sharing-copy')).not.toContainText('no open place');
+  await expect(page.locator('#reserved-place-list')).toContainText('1 place reserved — waiting for s••d@gmail.com to accept the invitation');
+  await expect(page.locator('#reserved-place-list')).toContainText('Time to join: ');
+  // Nothing is being decided any more: the agreed proposal is settled.
+  await expect(page.locator('#invite-proposals')).toBeHidden();
+  await expect(page.locator('#settled-proposal-list')).toContainText('s••d@gmail.com');
+
+  await page.locator('#reserved-place-list').getByRole('button', { name: 'Withdraw the invitation' }).click();
+  await expect(page.locator('#consequence-dialog')).toBeVisible();
+  await expect(page.locator('#consequence-dialog-consequence')).toContainText('the place it held is free again straight away');
+  await page.locator('#consequence-dialog').getByRole('button', { name: 'Withdraw the invitation' }).click();
+  await expect.poll(() => requests).toContain('DELETE /api/v1/journeys/journey-1/invitations/invitation-waiting');
+
+  // One tap, and no question first: everyone has already agreed.
+  await expect(page.locator('#invitation-list')).toContainText('it can be sent again until');
+  await page.locator('#invitation-list').getByRole('button', { name: 'Send it again' }).click();
+  await expect.poll(() => requests).toContain('POST /api/v1/journeys/journey-1/invitations/invitation-ran-out/send-again');
+  await expect(page.locator('#toast')).toContainText('Sent again. Everyone had already agreed, so nobody was asked again.');
+});
+
 test('Journey settings keeps creation, joining, and invitation history visible', async ({ page }) => {
   let invitationAccepted = false;
   const owner = { id: 'user-owner', username: 'journey-owner', displayName: 'journey-owner', email: 'owner@example.test', emailVerified: true };
@@ -261,17 +312,19 @@ test('Journey settings keeps creation, joining, and invitation history visible',
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#member-list')).toContainText('Created by journey-owner');
   await expect(page.locator('#invitation-list')).toContainText('Invitation sent to invited@example.test');
-  await expect(page.locator('.invitation-status')).toHaveText('Pending');
+  await expect(page.locator('#invitation-list .invitation-status')).toHaveText('Pending');
   await expect(page.locator('#invite-form')).toContainText('Everyone already in this journey has to agree');
   await expect(page.locator('#invite-form')).toContainText('they learn nothing about the journey');
-  await expect(page.locator('#invitation-list')).toContainText('Time left to join');
+  // "left" is said once, by the value (#282).
+  await expect(page.locator('#invitation-list')).toContainText('Time to join: ');
+  await expect(page.locator('#invitation-list')).not.toContainText('Time left');
 
   invitationAccepted = true;
   await page.reload();
   await expect(page.getByRole('button', { name: 'Account settings' })).toBeVisible();
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#member-list')).toContainText('journey-member joined the journey');
-  await expect(page.locator('.invitation-status')).toHaveText('Accepted');
+  await expect(page.locator('#invitation-list .invitation-status')).toHaveText('Accepted');
 });
 
 test('Journey settings welcomes a group without exposing an internal ceiling', async ({ page }) => {
@@ -380,7 +433,8 @@ test('A proposal names who was asked, what they decided, and when', async ({ pag
   await expect(proposalList).toContainText('Proposed by second-person');
   await expect(proposalList).toContainText('My sister, who has been asking after you both.');
   await expect(proposalList).toContainText('1 of 3 have agreed · 2 still to answer');
-  await expect(proposalList).toContainText('Time left to answer');
+  await expect(proposalList).toContainText('Time to answer: ');
+  await expect(proposalList).not.toContainText('Time left');
 
   // The detail is folded away by default and holds the record, rather than the record being
   // reduced to a count that nobody can check.
@@ -391,7 +445,9 @@ test('A proposal names who was asked, what they decided, and when', async ({ pag
   await expect(record).toContainText('Asked');
 
   // A decline is attributed and dated, which is the point: it is somebody's decision.
-  const declined = proposalList.locator('details.proposal-detail').nth(1);
+  // Settled, so no longer among the people being decided on (#350), and its record is still there.
+  await expect(proposalList).not.toContainText('earlier@example.test');
+  const declined = page.locator('#settled-proposal-list details.proposal-detail').first();
   await declined.locator('summary').click();
   await expect(declined).toContainText('third-person');
   await expect(declined).toContainText('declined');

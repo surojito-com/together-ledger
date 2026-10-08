@@ -80,7 +80,7 @@ const roles = (page) => page.evaluate(() => {
   return { positive: read('--positive'), caution: read('--caution'), private: read('--private'), destructive: read('--destructive'), accent: read('--accent'), ink: read('--ink') };
 });
 
-const chips = (page) => page.evaluate(() => [...document.querySelectorAll('#invite-proposal-list .invitation-status, #invitation-list .invitation-status')]
+const chips = (page) => page.evaluate(() => [...document.querySelectorAll('#invite-proposal-list .invitation-status, #settled-proposal-list .invitation-status, #invitation-list .invitation-status')]
   .map((element) => ({ label: element.textContent.trim(), state: element.className.replace('invitation-status', '').trim(), colour: getComputedStyle(element).color })));
 
 test('a proposal tells its state through the roles that mean it, in every state it can reach', async ({ page }) => {

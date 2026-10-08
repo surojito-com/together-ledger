@@ -43,6 +43,7 @@ const MIGRATIONS = [
   '024_let-google-and-apple-open-an-account.sql',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
   '026_remember-a-refused-apple-deletion.sql',
+  '031_let-an-invitation-last-fourteen-days.sql',
 ];
 
 async function appAtItsOwnHome() {

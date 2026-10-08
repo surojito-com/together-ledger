@@ -7,6 +7,20 @@ export function normalizeEmail(value) {
   return email;
 }
 
+// An invited person's email as the people in a journey see it, and as its history keeps it (owner,
+// Oct 8, 2026, #348, #350): the first letter, always exactly two bullets, the last letter, then the
+// whole domain. A one- or two-letter name keeps only its first letter, so neither the name's length
+// nor all of it is ever told. History cannot be edited, and a person who is never added has not
+// agreed to be in it.
+export function maskEmail(value) {
+  const email = String(value || '');
+  const at = email.lastIndexOf('@');
+  if (at < 1) return '\u2022\u2022';
+  const name = Array.from(email.slice(0, at));
+  const shown = name.length <= 2 ? `${name[0]}\u2022\u2022` : `${name[0]}\u2022\u2022${name[name.length - 1]}`;
+  return `${shown}@${email.slice(at + 1)}`;
+}
+
 export function assertPassword(value) {
   const password = String(value || '');
   if (password.length < 12 || password.length > 128) throw new Error('Use a password between 12 and 128 characters.');

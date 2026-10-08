@@ -26,7 +26,10 @@ export type ProposalDecision = {
 
 export type InviteProposal = {
   id: string;
+  /** Masked by the server (#350): the whole address never reaches this phone. */
   email: string;
+  /** Their name, once they have joined. */
+  joinedDisplayName?: string | null;
   note: string;
   proposedByUserId: string;
   proposedByDisplayName: string;
@@ -42,11 +45,19 @@ export type InviteProposal = {
 
 export type Invitation = {
   id: string;
+  proposalId?: string | null;
+  /** Masked by the server (#350): the whole address never reaches this phone. */
   email: string;
+  /** Their name, once they have joined. */
+  joinedDisplayName?: string | null;
+  invitedByUserId?: string;
   invitedByDisplayName: string;
-  status: 'pending' | 'accepted' | 'expired' | 'revoked' | string;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked' | 'withdrawn' | string;
   sentAt: string | null;
   expiresAt: string | null;
+  sendAgainUntil?: string | null;
+  viewerMayWithdraw?: boolean;
+  viewerMaySendAgain?: boolean;
 };
 
 export type Person = { id: string; displayName: string };
@@ -67,6 +78,8 @@ export type Grace = {
 export type Capacity = {
   peopleHere: number;
   canInvite: boolean;
+  /** Full only because places are held for people invited (#350). */
+  heldForInvitations?: boolean;
   mode: string;
   restingMemberIds?: string[];
   /** Only the owner is told this: who rests first, ending with the one who keeps adding (#281). */
@@ -113,7 +126,7 @@ export function proposalDecisionLabel(decision: string) {
 }
 
 export function invitationStatusLabel(status: string) {
-  return ({ accepted: 'Accepted', expired: 'Expired', pending: 'Pending', revoked: 'Revoked' } as Record<string, string>)[status] || 'Recorded';
+  return ({ accepted: 'Accepted', expired: 'Expired', pending: 'Pending', revoked: 'Revoked', withdrawn: 'Withdrawn' } as Record<string, string>)[status] || 'Recorded';
 }
 
 /** Who created the journey: the creation event's actor, else whoever owns it now (the web's rule). */
@@ -123,9 +136,57 @@ export function journeyCreator(snapshot: SharingSnapshot) {
   return { userId: creation?.actorUserId || owner?.id || '', createdAt: creation?.createdAt || snapshot.journey.createdAt || '' };
 }
 
-/** "N people are here…", the web's sharing copy for a signed-in, hosted journey. */
-export function sharingCopy(memberCount: number, canInvite: boolean) {
-  return `${memberCount} ${memberCount === 1 ? 'person is' : 'people are'} here. ${canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.'} Each person signs in separately.`;
+export type Reserved = { held: boolean; invitations: Invitation[] };
+
+/**
+ * "N people are here…", the web's sharingCopy for a signed-in, hosted journey. Where the journey is
+ * full only because places are held for people invited, it says so, rather than that there is no
+ * open place (#350).
+ */
+export function sharingCopy(memberCount: number, canInvite: boolean, reserved?: Reserved) {
+  const here = `${memberCount} ${memberCount === 1 ? 'person is' : 'people are'} here.`;
+  let room = canInvite ? 'There is room to add another person, and everybody here has to agree to them.' : 'There is no open place right now.';
+  if (!canInvite && reserved?.held && reserved.invitations.length === 1) room = `1 place is reserved for ${invitedPerson(reserved.invitations[0])}, waiting for them to accept the invitation.`;
+  else if (!canInvite && reserved?.held && reserved.invitations.length > 1) room = `${reserved.invitations.length} places are reserved, waiting for the people invited to accept.`;
+  return `${here} ${room} Each person signs in separately.`;
+}
+
+/** The web's reservedFor. */
+export function reservedFor(snapshot: SharingSnapshot): Reserved {
+  return { held: Boolean(snapshot.capacity?.heldForInvitations), invitations: reservedInvitations(snapshot.invitations || []) };
+}
+
+/** The server sends only the masked email (#350); once the person has joined, their name. */
+export function invitedPerson(record: { email: string; joinedDisplayName?: string | null }) {
+  return record.joinedDisplayName || record.email;
+}
+
+/** Once everyone has agreed and it is out, the place is held for them: reserved, not being decided on. */
+export function reservedInvitations(invitations: Invitation[]) {
+  return invitations.filter((invitation) => invitation.status === 'pending');
+}
+
+/** "Being decided on" is only for people the journey hasn't finished agreeing on (#350). */
+export function splitProposals(proposals: InviteProposal[]) {
+  return { deciding: proposals.filter((proposal) => proposal.status === 'open'), settled: proposals.filter((proposal) => proposal.status !== 'open') };
+}
+
+export function reservedPlaceTitle(invitation: Invitation) {
+  return `1 place reserved — waiting for ${invitedPerson(invitation)} to accept the invitation`;
+}
+
+export function sendAgainNote(invitation: Invitation) {
+  return `Everyone has already agreed, so it can be sent again until ${dateTimeLabel(invitation.sendAgainUntil)} without asking them again.`;
+}
+
+/**
+ * Two different waits: the journeyers have a month to answer, the person invited two weeks to
+ * accept (#347). The value already says "left", so the prefix doesn't (#282). The web's words.
+ */
+export const COUNTDOWN = Object.freeze({ join: 'Time to join', answer: 'Time to answer' });
+
+export function countdown(prefix: string, expiresAt: string | null, now: number) {
+  return `${prefix}: ${remainingLabel(expiresAt, now)}`;
 }
 
 /**
@@ -212,6 +273,11 @@ export function decisionAnswered(entry: ProposalDecision) {
  * taken back, and removing someone, wear the destructive colour.
  */
 export const CONSEQUENCES = Object.freeze({
+  withdrawInvitation: (email: string) => ({
+    title: `Withdraw the invitation to ${email}?`,
+    consequence: 'Their link stops working, and the place it held is free again straight away. The journey’s history keeps a record that it was withdrawn.',
+    confirmLabel: 'Withdraw the invitation',
+  }),
   withdraw: (email: string) => ({
     title: `Withdraw the proposal to add ${email}?`,
     consequence: 'The question is taken back, and nothing is sent to them. Nobody is recorded as having refused, and this person can be proposed again later.',
@@ -252,6 +318,9 @@ export function decisionToast(agreeing: boolean, invitationSent: boolean | undef
   if (invitationSent) return 'Everyone agreed. The invitation is on its way to them.';
   return agreeing ? 'Your agreement is recorded. Nothing is sent until everyone has answered.' : 'Recorded. Nobody was added, and nothing was sent to them.';
 }
+
+export const INVITATION_WITHDRAWN = 'Withdrawn. The link no longer works, and the place is free again.';
+export const INVITATION_SENT_AGAIN = 'Sent again. Everyone had already agreed, so nobody was asked again.';
 
 export function proposeToast(invitationSent: boolean | undefined) {
   // A journey of one has nobody to ask, so the invitation goes out there and then.
