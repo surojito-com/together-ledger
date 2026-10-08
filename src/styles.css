@@ -473,7 +473,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .inline-form .button { flex: 0 0 auto; min-width: 190px; }
 #journey-record { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 15px; }
 #journey-record h4 { color: var(--muted); font-size: 12px; letter-spacing: .1em; margin: 0 0 8px; text-transform: uppercase; }
-#member-list, #invitation-list { display: grid; gap: 7px; }
+#member-list, #invitation-list, #reserved-place-list { display: grid; gap: 7px; }
 #invitation-history { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
 .journey-record-row { align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-m); display: flex; gap: 14px; justify-content: space-between; padding: 11px 12px; }
 .journey-record-row strong, .journey-record-row small { display: block; overflow-wrap: anywhere; }

@@ -52,14 +52,14 @@ export class SmtpMailer {
     return this.transport.sendMail({ from, to, subject, text, html });
   }
 
-  sendInvitation({ to, token, accountOrigin = this.accountOrigin }) {
+  sendInvitation({ to, token, accountOrigin = this.accountOrigin, days = 14 }) {
     const invitationUrl = actionUrl(accountOrigin, 'invite', token);
     return this.send({
       from: this.invitationFrom,
       to,
       subject: 'You have been invited to a Together Ledger journey',
-      text: email0010Text(invitationUrl),
-      html: email0010Invitation(invitationUrl),
+      text: email0010Text(invitationUrl, days),
+      html: email0010Invitation(invitationUrl, days),
     });
   }
 
@@ -107,11 +107,17 @@ function actionUrl(accountOrigin, action, token) {
 // as the invitation's own body does, rather than "two people".
 const ACCOUNT_EMAIL_FOOTER = 'Together Ledger is a private shared journey workspace for people to hold what happened and return to what matters.';
 
-function email0010Text(invitationUrl) {
-  return `Together Ledger\n\nYou have been invited to a shared journey.\n\nTogether Ledger is a private place for people to hold what happened, return to what matters, and make room for repair.\n\nOpen your invitation: ${invitationUrl}\n\nSign in with your own account to accept. This short-lived link works once.\n\nDid not expect this? You can safely ignore this email.\n\nTogether Ledger`;
+// An invitation lasts INVITATION_DAYS, 14 by default (#347), so its link is not short-lived like
+// the other two, and says how long it does last.
+function invitationLifetime(days) {
+  return `This link works once, for ${days} ${days === 1 ? 'day' : 'days'}.`;
 }
 
-function email0010Invitation(invitationUrl) {
+function email0010Text(invitationUrl, days) {
+  return `Together Ledger\n\nYou have been invited to a shared journey.\n\nTogether Ledger is a private place for people to hold what happened, return to what matters, and make room for repair.\n\nOpen your invitation: ${invitationUrl}\n\nSign in with your own account to accept. ${invitationLifetime(days)}\n\nDid not expect this? You can safely ignore this email.\n\nTogether Ledger`;
+}
+
+function email0010Invitation(invitationUrl, days) {
   const safeUrl = escapeHtml(invitationUrl);
   return `<!doctype html>
 <html lang="en">
@@ -150,7 +156,7 @@ function email0010Invitation(invitationUrl) {
                     </td>
                   </tr>
                 </table>
-                <p style="margin:0 0 24px;color:#665a63;font-size:14px;line-height:1.55;">Sign in with your own account to accept. This short-lived link works once.</p>
+                <p style="margin:0 0 24px;color:#665a63;font-size:14px;line-height:1.55;">Sign in with your own account to accept. ${invitationLifetime(days)}</p>
                 <p style="margin:0 0 8px;color:#665a63;font-size:13px;line-height:1.5;">If the button does not open, copy this link into your browser:</p>
                 <p style="margin:0 0 28px;font-size:13px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word;"><a href="${safeUrl}" style="color:#5b355f;text-decoration:underline;">${safeUrl}</a></p>
                 <hr style="border:0;border-top:1px solid #e9e1dd;margin:0 0 20px;" />

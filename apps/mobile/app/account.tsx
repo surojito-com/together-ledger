@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { accountMessage, ACCOUNT_NOTICES } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { ACCOUNT_WHILE_OFFLINE } from '../src/auth/session-state';
 import { useJourney } from '../src/journey/use-journey';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
 
@@ -38,6 +39,20 @@ export default function AccountScreen() {
   }
 
   if (session.status === 'loading') return <Screen title="Account"><Body>Checking this phone’s account…</Body></Screen>;
+
+  // Signed in, but the service could not be asked (#352). The password form would ask for
+  // something this phone does not need.
+  if (session.status === 'offline') {
+    return (
+      <Screen title="Account">
+        <Body>{ACCOUNT_WHILE_OFFLINE[session.reason]}</Body>
+        <Button kind="quiet" label="Try again" pending={pending === 'refresh'} onPress={() => run('refresh', async () => {
+          await session.refresh();
+          return null;
+        })} />
+      </Screen>
+    );
+  }
 
   if (session.status === 'signed-in') {
     const { user } = session;

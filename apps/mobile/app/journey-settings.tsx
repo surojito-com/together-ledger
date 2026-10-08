@@ -9,10 +9,15 @@ import {
   billingGlyph,
   billingSummary,
   CONSEQUENCES,
+  countdown,
+  COUNTDOWN,
   dateTimeLabel,
   decisionAnswered,
   decisionToast,
+  INVITATION_SENT_AGAIN,
+  INVITATION_WITHDRAWN,
   invitationStatusLabel,
+  invitedPerson,
   journeyCreator,
   mayManageMember,
   mayPropose,
@@ -23,13 +28,18 @@ import {
   proposalProgress,
   proposalStatusLabel,
   proposeToast,
-  remainingLabel,
+  reservedFor,
+  reservedInvitations,
+  reservedPlaceTitle,
   restQueue,
   ROOM_IS_THE_JOURNEYS,
+  sendAgainNote,
   sharingCopy,
   splitMembers,
+  splitProposals,
   showsUnpaidCapacityRest,
   type BillingStatus,
+  type Invitation,
   type InviteProposal,
   type SharingSnapshot,
 } from '../src/journey/sharing-view';
@@ -117,6 +127,20 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
     });
   };
 
+  const withdrawInvitation = async (invitation: Invitation) => {
+    if (!await confirmConsequence(CONSEQUENCES.withdrawInvitation(invitation.email))) return;
+    await act(`withdraw-invitation-${invitation.id}`, async () => {
+      await client.withdrawInvitation(journeyId, invitation.id);
+      return INVITATION_WITHDRAWN;
+    });
+  };
+
+  // One tap: everyone has already agreed, and that agreement still holds (#347).
+  const sendAgain = (invitation: Invitation) => act(`send-again-${invitation.id}`, async () => {
+    await client.sendInvitationAgain(journeyId, invitation.id);
+    return INVITATION_SENT_AGAIN;
+  });
+
   const transfer = async (memberId: string, name: string) => {
     if (!await confirmConsequence(CONSEQUENCES.transfer(name))) return;
     await act(`transfer-${memberId}`, async () => {
@@ -138,14 +162,15 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
     return 'Saved the resting order.';
   });
 
-  const proposals = snapshot.inviteProposals || [];
+  const { deciding, settled } = splitProposals(snapshot.inviteProposals || []);
   const invitations = snapshot.invitations || [];
+  const reserved = reservedInvitations(invitations);
   const queue = restQueue(snapshot.members, snapshot.capacity?.restOrder);
   const resting = new Set(snapshot.capacity?.restingMemberIds || []);
   const order = queue.map((member) => member.id);
 
   return (
-    <Screen title="Journey sharing" lead={sharingCopy(snapshot.members.length, canPropose)} refresh={{ refreshing, onRefresh: refresh }}>
+    <Screen title="Journey sharing" lead={sharingCopy(snapshot.members.length, canPropose, reservedFor(snapshot))} refresh={{ refreshing, onRefresh: refresh }}>
       {canPropose ? (
         <Section title="Propose a journeyer">
           <Field label="Propose a journeyer by email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="journeyer@example.com" hint="Everyone already in this journey has to agree before anything is sent. Until they all do, nothing reaches this person and they learn nothing about the journey." />
@@ -179,9 +204,25 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
         })() : <Body>The people in this journey appear here once the account service answers.</Body>}
       </Section>
 
-      {proposals.length ? (
+      {/* Once everyone has agreed and it is out, nothing is being decided: the place is held (#350). */}
+      {reserved.length ? (
+        <Section title="Places reserved">
+          {reserved.map((invitation) => (
+            <Row
+              key={invitation.id}
+              title={reservedPlaceTitle(invitation)}
+              meta={[`Sent by ${invitation.invitedByDisplayName} · ${dateTimeLabel(invitation.sentAt)}`, countdown(COUNTDOWN.join, invitation.expiresAt, now)]}
+              tag={invitationStatusLabel(invitation.status)}
+            >
+              {invitation.viewerMayWithdraw ? <Button kind="quiet" label="Withdraw the invitation" pending={pending === `withdraw-invitation-${invitation.id}`} onPress={() => withdrawInvitation(invitation)} /> : null}
+            </Row>
+          ))}
+        </Section>
+      ) : null}
+
+      {deciding.length ? (
         <Section title="People being decided on">
-          {proposals.map((proposal) => (
+          {deciding.map((proposal) => (
             <Proposal
               key={proposal.id}
               proposal={proposal}
@@ -196,17 +237,29 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
         </Section>
       ) : null}
 
+      {settled.length ? (
+        <Section title="Proposals already settled">
+          {settled.map((proposal) => (
+            <Proposal key={proposal.id} proposal={proposal} now={now} pending={pending} mayWithdraw={false} onAgree={() => {}} onDecline={() => {}} onWithdraw={() => {}} />
+          ))}
+        </Section>
+      ) : null}
+
       {invitations.length ? (
         <Section title="Invitation history">
           {invitations.map((invitation) => (
-            // Two different waits: the journeyers have a month to answer, the person invited has
-            // only as long as a single-use link safely lasts.
             <Row
               key={invitation.id}
-              title={`Invitation sent to ${invitation.email}`}
-              meta={[`Sent by ${invitation.invitedByDisplayName} · ${dateTimeLabel(invitation.sentAt)}`, ...(invitation.status === 'pending' ? [`Time left to join: ${remainingLabel(invitation.expiresAt, now)}`] : [])]}
+              title={`Invitation sent to ${invitedPerson(invitation)}`}
+              meta={[
+                `Sent by ${invitation.invitedByDisplayName} · ${dateTimeLabel(invitation.sentAt)}`,
+                ...(invitation.status === 'pending' ? [countdown(COUNTDOWN.join, invitation.expiresAt, now)] : []),
+                ...(invitation.viewerMaySendAgain ? [sendAgainNote(invitation)] : []),
+              ]}
               tag={invitationStatusLabel(invitation.status)}
-            />
+            >
+              {invitation.viewerMaySendAgain ? <Button kind="quiet" label="Send it again" pendingLabel="Sending…" pending={pending === `send-again-${invitation.id}`} onPress={() => sendAgain(invitation)} /> : null}
+            </Row>
           ))}
         </Section>
       ) : null}
@@ -252,10 +305,10 @@ function Proposal({ proposal, now, pending, mayWithdraw: canWithdraw, onAgree, o
     `Proposed by ${proposal.proposedByDisplayName} · ${dateTimeLabel(proposal.proposedAt)}`,
     ...(proposal.note ? [proposal.note] : []),
     proposalProgress(proposal),
-    ...(proposal.status === 'open' ? [`Time left to answer: ${remainingLabel(proposal.expiresAt, now)}`] : []),
+    ...(proposal.status === 'open' ? [countdown(COUNTDOWN.answer, proposal.expiresAt, now)] : []),
   ];
   return (
-    <Row title={proposal.email} meta={meta} tag={proposalStatusLabel(proposal.status)}>
+    <Row title={invitedPerson(proposal)} meta={meta} tag={proposalStatusLabel(proposal.status)}>
       {/* Agreeing and declining carry the same weight on purpose: the product has no opinion
           about how somebody answers a question about another person's access. */}
       {proposal.viewerMayDecide ? <Button kind="quiet" label="Agree to add them" pending={pending === `decide-${proposal.id}`} onPress={onAgree} /> : null}
@@ -263,7 +316,7 @@ function Proposal({ proposal, now, pending, mayWithdraw: canWithdraw, onAgree, o
       {canWithdraw ? <Button kind="quiet" label="Withdraw" pending={pending === `withdraw-${proposal.id}`} onPress={onWithdraw} /> : null}
       <Button kind="quiet" label={showDecisions ? 'Hide who was asked' : 'Who was asked, and when'} onPress={() => setShowDecisions((open) => !open)} />
       {showDecisions ? proposal.decisions.map((entry) => (
-        <Row key={entry.userId} title={entry.displayName} meta={[entry.email, `Asked ${dateTimeLabel(entry.requestedAt)} · ${decisionAnswered(entry)}`]} tag={proposalDecisionLabel(entry.decision)} />
+        <Row key={entry.userId} title={entry.displayName} meta={[`Asked ${dateTimeLabel(entry.requestedAt)} · ${decisionAnswered(entry)}`]} tag={proposalDecisionLabel(entry.decision)} />
       )) : null}
     </Row>
   );

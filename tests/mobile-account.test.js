@@ -14,6 +14,7 @@ export async function importMobile(path) {
 
 const { createAccountClient, OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
 const { accountMessage, ACCOUNT_FALLBACK_MESSAGE, NO_ROOM_ADDED_HERE } = await importMobile('src/auth/account-messages.ts');
+const { sessionAnswered, sessionFailed, LEDGER_WHILE_OFFLINE, ACCOUNT_WHILE_OFFLINE, STILL_SIGNED_IN } = await importMobile('src/auth/session-state.ts');
 
 function memoryTokens(initial = null) {
   let held = initial;
@@ -59,11 +60,93 @@ test('two requests that expire together spend the refresh token only once', asyn
   assert.equal(refreshes, 1);
 });
 
+const expired = reply(401, { error: { code: 'authentication_required', message: 'Sign in to continue.' } });
+
 test('a refused refresh forgets the tokens and asks the person to sign in again', async () => {
   const tokens = memoryTokens(pair(1));
-  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? reply(200, { data: null }) : reply(401, { error: { code: 'authentication_required', message: 'Sign in to continue.' } })) });
+  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? reply(401, { error: { code: 'invalid_token', message: 'Sign in again to continue.' } }) : expired) });
   await assert.rejects(client.session(), { code: 'authentication_required', status: 401 });
   assert.equal(tokens.held, null);
+});
+
+// #353: only the service refusing the tokens ends the sign-in. A refresh it could not answer
+// keeps them, and is said the way being offline is said, never as being signed out.
+test('a 500, a 429, a reply that is not JSON, or no pair at all keeps the tokens', async () => {
+  const notJson = { ok: false, status: 403, json: async () => { throw new SyntaxError('Unexpected token <'); } };
+  const cases = [
+    ['a 500', reply(500, { error: { code: 'internal_error', message: 'The service could not complete that request.' } })],
+    ['a 502 from the proxy', { ok: false, status: 502, json: async () => { throw new SyntaxError('Unexpected token <'); } }],
+    ['a 429 from the rate limit', reply(429, { error: { code: 'rate_limited', message: 'Too many requests.' } })],
+    ['a challenge page', notJson],
+    ['a 401 that is not the service refusing the token', { ok: false, status: 401, json: async () => { throw new SyntaxError('Unexpected token <'); } }],
+    ['a 200 with no pair', reply(200, { data: null })],
+  ];
+  for (const [name, answer] of cases) {
+    const tokens = memoryTokens(pair(1));
+    const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? answer : expired) });
+    await assert.rejects(client.session(), { code: 'unreachable', message: OFFLINE_MESSAGE }, name);
+    assert.deepEqual(tokens.held, pair(1), `${name} keeps the tokens`);
+    assert.equal(sessionFailed({ status: 'signed-in', user: { id: 'u1' } }, await client.session().catch((error) => error)).status, 'signed-in', `${name} keeps the person signed in`);
+  }
+});
+
+// The server's side of this is in tests/platform-api.test.js: a spent refresh token asked again
+// before anyone uses its pair gets a fresh one. Here, the phone that never heard back.
+test('a renewal whose reply was lost, asked again, stays signed in', async () => {
+  const tokens = memoryTokens(pair(1));
+  let issued = 1;
+  let live = null; // access-1 has run out; the service accepts only the newest pair it issued
+  let dropNextReply = true;
+  const spent = new Set();
+  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url, init) => {
+    if (url.endsWith('/auth/refresh')) {
+      const { refreshToken } = JSON.parse(init.body);
+      spent.add(refreshToken);
+      const fresh = pair(++issued);
+      live = fresh.token;
+      if (dropNextReply) {
+        dropNextReply = false;
+        throw new TypeError('Network request failed');
+      }
+      return reply(200, { data: { user: { id: 'u1' }, ...fresh } });
+    }
+    return init.headers.Authorization === `Bearer ${live}` ? reply(200, { data: { user: { id: 'u1' } } }) : expired;
+  } });
+  await assert.rejects(client.session(), { code: 'offline' });
+  assert.equal(tokens.held.refreshToken, 'refresh-1', 'the phone still holds the token it spent');
+  assert.ok(spent.has('refresh-1'), 'the service did spend it');
+  assert.deepEqual(await client.session(), { id: 'u1' });
+  assert.equal(tokens.held.refreshToken, 'refresh-3', 'the pair from the retry, not the lost one');
+});
+
+// #352: opening the app with no connection must not look signed out while the phone holds a sign-in.
+test('opening the app with the network failing says offline, not signed out', async () => {
+  const loading = { status: 'loading', user: null };
+  const offline = createAccountClient({ base: () => '/api/v1', tokens: memoryTokens(pair(1)), fetch: async () => { throw new TypeError('Network request failed'); } });
+  assert.deepEqual(sessionFailed(loading, await offline.session().catch((error) => error)), { status: 'offline', user: null, reason: 'offline' });
+
+  const down = createAccountClient({ base: () => '/api/v1', tokens: memoryTokens(pair(1)), fetch: async () => reply(503, { error: { code: 'unavailable', message: 'The service is unavailable.' } }) });
+  assert.deepEqual(sessionFailed(loading, await down.session().catch((error) => error)), { status: 'offline', user: null, reason: 'unreachable' });
+
+  // Only a refusal signs out, and a phone with no tokens never asks at all.
+  assert.deepEqual(sessionFailed({ status: 'offline', user: null, reason: 'offline' }, { code: 'authentication_required' }), { status: 'signed-out', user: null });
+  const empty = createAccountClient({ base: () => '/api/v1', tokens: memoryTokens(), fetch: async () => { throw new Error('never called'); } });
+  assert.deepEqual(sessionAnswered(await empty.session()), { status: 'signed-out', user: null });
+
+  // When the connection returns, the same check signs the person straight back in.
+  assert.deepEqual(sessionAnswered({ id: 'u1' }), { status: 'signed-in', user: { id: 'u1' } });
+
+  // And the screens say so instead of offering the password form.
+  const read = (file) => readFile(new URL(file, mobile), 'utf8');
+  const ledger = await read('app/ledger.tsx');
+  assert.match(ledger, /if \(state\.phase === 'offline'\) \{[\s\S]*?LEDGER_WHILE_OFFLINE\[state\.reason\][\s\S]*?\}\n  if \(state\.phase === 'signed-out'/, 'the ledger says offline before it ever offers Sign in');
+  assert.match(await read('app/account.tsx'), /if \(session\.status === 'offline'\) \{[\s\S]*?ACCOUNT_WHILE_OFFLINE\[session\.reason\]/);
+  assert.match(await read('app/settings.tsx'), /session\.status === 'offline' \? \(\s*<Body>\{STILL_SIGNED_IN\[session\.reason\]\}<\/Body>/);
+  for (const words of [...Object.values(LEDGER_WHILE_OFFLINE), ...Object.values(ACCOUNT_WHILE_OFFLINE), ...Object.values(STILL_SIGNED_IN)]) {
+    assert.match(words, /still signed in/, 'every offline screen says the person is still signed in');
+    assert.doesNotMatch(words, /\bwait/, 'and promises nothing waits');
+  }
+  assert.match(await read('src/journey/use-journey.ts'), /session\.status === 'offline'\s*\? \{ phase: 'offline', reason: session\.reason \}/);
 });
 
 test('offline and "no service in this build" stay two different messages, in the web\'s words', async () => {
@@ -139,4 +222,26 @@ test('account deletion is three taps from settings, and says what goes and what 
   assert.match(remove, /shell\.showStatus\(accountMessage\(error\), \{ source: 'account-deletion' \}\)/, 'a wrong password goes to the status region');
   assert.match(remove, /What is deleted:/);
   assert.match(remove, /What stays:/);
+});
+
+// #355: the screen said the history keeps no email, and that any payment for capacity has to end
+// first. Neither was true. What it says now is PRIVACY.md's own sentences, checked here word for word.
+test('the Delete account screen says what is kept, and which payment stops a deletion, in the privacy policy\'s words', async () => {
+  const remove = await readFile(new URL('app/delete-account.tsx', mobile), 'utf8');
+  const policy = await readFile(new URL('../PRIVACY.md', import.meta.url), 'utf8');
+  const keeps = /const DELETION_KEEPS = "What stays: ([^"]+)";/.exec(remove)?.[1];
+  const waits = /const DELETION_WAITS_ON_WEB_PAYMENT = '([^']+)';/.exec(remove)?.[1];
+  assert.ok(keeps && waits, 'both sentences are named constants');
+  for (const sentence of keeps.split(/(?<=\.) /)) assert.ok(policy.includes(sentence), `PRIVACY.md says: ${sentence}`);
+  assert.ok(policy.includes(waits), `PRIVACY.md says: ${waits}`);
+  assert.match(remove, /<Body>\{DELETION_KEEPS\}<\/Body>\s*<Body>\{DELETION_WAITS_ON_WEB_PAYMENT\}<\/Body>/);
+  assert.doesNotMatch(remove, /without your email|If you pay for capacity/);
+  // Only a web subscription refuses a deletion: the server's own check reads Stripe's table alone.
+  const billing = await readFile(new URL('../server/billing.js', import.meta.url), 'utf8');
+  const check = billing.slice(billing.indexOf('async assertAccountDeletable('), billing.indexOf('billing_subscription_active'));
+  assert.match(check, /FROM billing_subscriptions bs/);
+  assert.match(check, /bs\.payer_user_id=\$1 OR j\.owner_user_id=\$1/);
+  assert.doesNotMatch(check, /billing_store_purchases|source IN/);
+  // And the store-subscription paragraph stays.
+  assert.match(remove, /<Body>\{STORE_SUBSCRIPTION_NOT_CANCELLED\}<\/Body>/);
 });

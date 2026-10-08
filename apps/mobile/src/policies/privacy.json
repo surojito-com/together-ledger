@@ -133,7 +133,7 @@
         ],
         [
           {
-            "text": "invitation history, including the destination email, sender, sent time, expiry, and accepted, pending, revoked, or expired state;"
+            "text": "invitation history, including the destination email, sender, sent time, expiry, and accepted, pending, withdrawn, revoked, or expired state;"
           }
         ],
         [
@@ -157,7 +157,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "Raw passwords and raw tokens are never stored. On the web, session cookies are HTTP-only, secure, same-site, and paired with an origin-bound CSRF value, and a signed-in session lasts up to 7 days. The phone app keeps its sign-in keys in the phone's secure keychain; its access key lasts 30 minutes and is renewed with a key that lasts up to 30 days. Email links for verification and recovery expire after 30 minutes. A signed-in browser may keep a local copy of what it last loaded; anyone with access to an unlocked signed-in device may see it."
+          "text": "Raw passwords and raw tokens are never stored. On the web, session cookies are HTTP-only, secure, same-site, and paired with an origin-bound CSRF value, and a signed-in session lasts up to 7 days. The phone app keeps its sign-in keys in the phone's secure keychain; its access key lasts 30 minutes and is renewed with a key that lasts up to 30 days. The server records when each sign-in key is first used, so that a renewal whose reply was lost on the way can be asked for again without signing you out. Email links for verification and recovery expire after 30 minutes, and an invitation's link after 14 days. A signed-in browser may keep a local copy of what it last loaded; anyone with access to an unlocked signed-in device may see it."
         }
       ]
     },
@@ -202,7 +202,7 @@
           "code": true
         },
         {
-          "text": ". A moment that has been shared cannot be made private again, because access that has already happened cannot be undone. Places and photos follow the visibility of the moment they belong to. Invitation history and proposals are visible to the people in the journey. In browser-only mode, "
+          "text": ". A moment that has been shared cannot be made private again, because access that has already happened cannot be undone. Places and photos follow the visibility of the moment they belong to. Invitation history and proposals are visible to the people in the journey. They see the email address of someone invited only partly, such as s••d@gmail.com: its first and last letters, two dots, and the full domain. Once that person joins, they see their name instead. The journey's history records each step of inviting someone, from being proposed to accepting, running out, or being withdrawn, with the email shown the same way, never in full. In browser-only mode, "
         },
         {
           "text": "private",
@@ -249,7 +249,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "Verification, invitation, proposal, and recovery messages are sent through Resend. Verification, invitation, and recovery messages contain a short-lived, single-use link. Sending email necessarily shows the destination address, message content, and routing details to Resend and to the receiving mail system. Open and click tracking are turned off for the Together Ledger sending domain; messages carry no tracking pixel and no tracking-rewritten links."
+          "text": "Verification, invitation, proposal, and recovery messages are sent through Resend. Verification and recovery messages contain a short-lived, single-use link, and an invitation a single-use link that lasts 14 days. A proposal message names the person proposed with their email shown only partly. Sending email necessarily shows the destination address, message content, and routing details to Resend and to the receiving mail system. Open and click tracking are turned off for the Together Ledger sending domain; messages carry no tracking pixel and no tracking-rewritten links."
         }
       ]
     },
@@ -422,7 +422,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "We keep your account and your private journeys for as long as your account exists. Email links expire after 30 minutes, web sessions after 7 days, and invitation proposals lapse after 30 days. Browser-only data stays in your browser until you clear it."
+          "text": "We keep your account and your private journeys for as long as your account exists. Verification and recovery links expire after 30 minutes, invitation links after 14 days, and web sessions after 7 days. Invitation proposals lapse after 30 days, and an invitation that runs out within them can be sent again without asking everyone again. Browser-only data stays in your browser until you clear it."
         }
       ]
     },
@@ -447,7 +447,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "You can delete your account in Settings after confirming your password. If you own a journey that other people are still in, you first hand it to one of them; the product will not strand it. If you pay for capacity, that payment must end first."
+          "text": "You can delete your account in Settings after confirming your password. If you own a journey that other people are still in, you first hand it to one of them; the product will not strand it. If you pay on the web for room in a journey, or own a journey whose room is paid for on the web, that payment must end first. A subscription bought in the App Store or Google Play does not stop you deleting your account, and deleting your account does not cancel it."
         }
       ]
     },
@@ -463,7 +463,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account. The history also keeps what it recorded about the moments you shared, including their titles and places, as described under Who can see what, even for a moment you deleted first. The email address you were invited at stays in the journey's invitation history, and in any proposal to add you, where the people in the journey can still see it. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments."
+          "text": "What stays, because it already belongs to a shared journey: moments you had shared, with their places and photos, stay with the other people in that journey, and the journey's history records that a member deleted their account. The history also keeps what it recorded about the moments you shared, including their titles and places, as described under Who can see what, even for a moment you deleted first. The email address you were invited at stays in the journey's invitation history and in any proposal to add you. The people in the journey see it only partly, such as s••d@gmail.com, and the journey's history, which records each step of inviting you, shows it the same way. Expenses you paid for show Deleted account as the payer. Proposals and billing records stay as part of the journey's history. Stripe keeps its own records of past payments."
         }
       ]
     },

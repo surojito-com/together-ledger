@@ -17,6 +17,7 @@ const MIGRATIONS = [
   '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history', '022_agree-together-before-adding-someone',
   '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account', '025_revoke-sign-in-with-apple-when-an-account-is-deleted',
   '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
+  '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days',
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const origin = 'http://127.0.0.1:4174';

@@ -8,6 +8,7 @@ import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
 import { loggerOptions, redactUrl } from '../server/log-options.js';
+import { maskEmail } from '../server/security.js';
 import { stripPhotoMetadata } from '../src/photo-metadata.js';
 import { jpegOfRestarts, webpOfEmptyChunks } from './fixtures/photos/crafted.js';
 
@@ -53,6 +54,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   // pg-mem cannot parse NOT VALID. Real PostgreSQL runs 030 as written, and
   // tests/postgres-integration.test.js checks it keeps a week already given.
   await pool.query((await readFile(new URL('../server/migrations/030_ask-for-six-weeks-a-year.sql', import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
+  await pool.query(await readFile(new URL('../server/migrations/031_let-a-lost-renewal-reply-be-asked-again.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -373,7 +376,11 @@ test('TC-00010 through TC-00120 prove the shared journey is clear and durable', 
     assert.equal(mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'tc-b@example.test').accountOrigin, origin);
     const snapshot = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } });
     const invitation = snapshot.json().data.invitations[0];
-    assert.equal(invitation.email, 'tc-b@example.test');
+    // Everyone in the journey, the person who asked included, sees the address masked (#350).
+    assert.equal(invitation.email, 't\u2022\u2022b@example.test');
+    assert.equal(snapshot.body.includes('tc-b@example.test'), false, 'the whole address never leaves the server');
+    // It lasts 14 days, not the 30 minutes a verification link does (#347).
+    assert.equal(new Date(invitation.expiresAt) - new Date(invitation.sentAt), 14 * 24 * 60 * 60 * 1000);
     assert.equal(invitation.invitedByUserId, alice.user.id);
     assert.equal(invitation.invitedByDisplayName, 'tc-person-a');
     assert.equal(invitation.status, 'pending');
@@ -653,7 +660,9 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.equal(data.expenses[0].amountCents, 75000);
   assert.equal(data.concerns.length, 1);
   assert.equal(data.eventChainValid, true);
-  assert.deepEqual(data.events.map((event) => event.sequence), [1, 2, 3, 4, 5]);
+  // Asking and sending are in the history now (#348), between creating the journey and Bob joining.
+  assert.deepEqual(data.events.map((event) => event.sequence), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(data.events.slice(0, 4).map((event) => event.action), ['journey_created', 'invite_proposed', 'invitation_sent', 'member_joined']);
   assert.ok(data.events.every((event, index) => index === 0 || event.previousHash === data.events[index - 1].eventHash));
   assert.equal(data.events.find((event) => event.action === 'concern_added').after.detail, '[recorded]');
   const addedExpenseEvent = data.events.find((event) => event.action === 'expense_added');
@@ -794,7 +803,7 @@ test('synthetic group mode reserves independent places without advertising its c
   }
   let snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
   assert.equal(snapshot.invitations.filter((invitation) => invitation.status === 'pending').length, 2);
-  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
+  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 2, canInvite: true, heldForInvitations: false, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
   assert.equal(Object.hasOwn(snapshot.capacity, 'limit'), false);
 
   for (const client of [second, third]) {
@@ -821,7 +830,7 @@ test('synthetic group mode reserves independent places without advertising its c
   assert.equal(proposed.json().data.invitationSent, false);
   snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
   assert.equal(snapshot.capacity.openInvitations, 0);
-  const waiting = snapshot.inviteProposals.find((entry) => entry.email === 'waiting-on-everyone@example.test');
+  const waiting = snapshot.inviteProposals.find((entry) => entry.email === 'w\u2022\u2022e@example.test');
   assert.equal(waiting.status, 'open');
   assert.equal(waiting.pendingCount, 2);
 
@@ -845,7 +854,8 @@ test('synthetic group mode reserves independent places without advertising its c
   assert.equal(full.statusCode, 409, full.body);
   assert.equal(full.json().error.code, 'journey_full');
   snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${soloId}/snapshot`, headers: { cookie: third.cookie } })).json().data;
-  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 100, canInvite: false, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
+  // Full only because the places are held for the people invited: the journey says they are reserved (#350).
+  assert.deepEqual(snapshot.capacity, { peopleHere: 1, openInvitations: 100, canInvite: false, heldForInvitations: true, mode: 'test-groups', restingMemberIds: [], restOrder: [], grace: null });
   assert.equal(Object.hasOwn(snapshot.capacity, 'limit'), false);
 });
 
@@ -1027,7 +1037,8 @@ async function groupOfThree(overrides = {}) {
 
 async function proposalFor(app, client, journeyId, email) {
   const response = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: client.cookie } });
-  return response.json().data.inviteProposals.find((proposal) => proposal.email === email);
+  // The journey only ever sees the address masked (#350).
+  return response.json().data.inviteProposals.find((proposal) => proposal.email === maskEmail(email));
 }
 
 test('a new person waits on every journeyer, and a decline is named and dated', async (t) => {
@@ -1055,7 +1066,7 @@ test('a new person waits on every journeyer, and a decline is named and dated', 
   assert.equal(proposal.pendingCount, 2);
   assert.equal(proposal.viewerMayDecide, true);
   // Proposing is agreeing, and it is recorded as a decision with a time on it like any other.
-  const proposer = proposal.decisions.find((entry) => entry.email === second.user.email);
+  const proposer = proposal.decisions.find((entry) => entry.userId === second.user.id);
   assert.equal(proposer.decision, 'agree');
   assert.ok(proposer.requestedAt && proposer.decidedAt);
 
@@ -1078,7 +1089,12 @@ test('a new person waits on every journeyer, and a decline is named and dated', 
   assert.equal(proposal.declinedCount, 1);
   // The record says who declined, and when they were asked as well as when they answered.
   const decliner = proposal.decisions.find((entry) => entry.decision === 'decline');
-  assert.equal(decliner.email, third.user.email);
+  assert.equal(decliner.userId, third.user.id);
+  // Each journeyer asked is named, and their email is never sent (owner, Oct 8, 2026).
+  assert.ok(proposal.decisions.every((entry) => !('email' in entry)));
+  const sent = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
+  assert.equal(JSON.stringify(sent.inviteProposals).includes(third.user.email), false);
+  assert.equal(JSON.stringify(sent.inviteProposals).includes(second.user.email), false);
   assert.ok(decliner.displayName);
   assert.ok(decliner.requestedAt && decliner.decidedAt);
   assert.equal(mailer.messages.some((message) => message.to === 'newcomer@example.test'), false);
@@ -1176,6 +1192,216 @@ test('a journey of one has nobody to ask, so inviting is unchanged for two peopl
   assert.ok(mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'pair-second@example.test'));
   // Nobody was asked to agree, because there was nobody else here to ask.
   assert.equal(mailer.messages.some((message) => message.type === 'invite-proposal'), false);
+});
+
+// The invited person as everyone in a journey sees them, and as its history keeps them (#348, #350).
+test('an invited email is masked to its first and last letter, two bullets and the whole domain', () => {
+  const cases = [
+    ['sumid@gmail.com', 's••d@gmail.com'],
+    ['abc@example.test', 'a••c@example.test'],
+    ['a-much-longer-name-than-most@example.test', 'a••t@example.test'],
+    // One or two letters: the first, and never all of it.
+    ['ab@gmail.com', 'a••@gmail.com'],
+    ['a@gmail.com', 'a••@gmail.com'],
+    // The domain is kept whole, however many parts it has.
+    ['jo.k@mail.example.co.uk', 'j••k@mail.example.co.uk'],
+    ['sam+trip@example.test', 's••p@example.test'],
+    // A letter is a whole character, not half of one.
+    ['élodie@example.fr', 'é••e@example.fr'],
+    ['😀x😀@example.test', '😀••😀@example.test'],
+  ];
+  for (const [email, masked] of cases) assert.equal(maskEmail(email), masked, email);
+  // Always exactly two U+2022 bullets, so the length of the name is never told.
+  for (const [email] of cases) assert.equal([...maskEmail(email)].filter((character) => character === '•').length, 2, email);
+  assert.equal(maskEmail('not-an-address'), '••');
+  assert.equal(maskEmail(''), '••');
+});
+
+const invitationActions = new Set(['invite_proposed', 'invite_agreed', 'invite_declined', 'invite_proposal_withdrawn', 'invite_proposal_lapsed', 'invitation_sent', 'invitation_withdrawn', 'invitation_lapsed', 'invitation_sent_again']);
+
+async function journeyEvents(app, client, journeyId) {
+  return (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: client.cookie } })).json().data.events;
+}
+
+test('every step of inviting someone is in the history, masked, and the whole address is never stored there', async (t) => {
+  const { app, mailer, pool, owner, second, third, journeyId } = await groupOfThree();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const before = (await journeyEvents(app, owner, journeyId)).length;
+  const invite = (client, email) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations`, headers: authHeaders(client), payload: { email, note: 'My cousin, from the photos' } });
+  const decide = (client, proposalId, decision) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invite-proposals/${proposalId}/decision`, headers: authHeaders(client), payload: { decision } });
+
+  // Asked, agreed, agreed: sent.
+  const asked = await invite(second, 'sumid@example.test');
+  assert.equal(asked.statusCode, 202, asked.body);
+  const { proposalId } = asked.json().data;
+  assert.equal((await decide(owner, proposalId, 'agree')).statusCode, 202);
+  assert.equal((await decide(third, proposalId, 'agree')).json().data.invitationSent, true);
+  // The other journeyers are told about the proposal with the address masked too.
+  const told = mailer.messages.filter((message) => message.type === 'invite-proposal' && message.email.endsWith('@example.test') && message.email.startsWith('s'));
+  assert.ok(told.length > 0);
+  assert.ok(told.every((message) => message.email === 's••d@example.test'));
+
+  let snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
+  const invitation = snapshot.invitations.find((entry) => entry.email === 's••d@example.test');
+  assert.equal(invitation.status, 'pending');
+  assert.equal(invitation.proposalId, proposalId);
+  assert.equal(invitation.viewerMayWithdraw, true, 'the owner may withdraw it');
+  assert.equal(invitation.viewerMaySendAgain, false, 'it is still waiting');
+  assert.equal(snapshot.inviteProposals.find((entry) => entry.id === proposalId).status, 'agreed');
+  assert.equal(snapshot.capacity.openInvitations, 1);
+
+  // Withdrawn: only whoever asked, or the owner, and the place is free again at once.
+  const notTheirs = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}`, headers: authHeaders(third) });
+  assert.equal(notTheirs.statusCode, 403, notTheirs.body);
+  const thirdsView = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: third.cookie } })).json().data;
+  assert.equal(thirdsView.invitations.find((entry) => entry.id === invitation.id).viewerMayWithdraw, false);
+  const withdrawn = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}`, headers: authHeaders(owner) });
+  assert.equal(withdrawn.statusCode, 204, withdrawn.body);
+  snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data;
+  assert.equal(snapshot.capacity.openInvitations, 0, 'the reserved place is free again');
+  assert.equal(snapshot.invitations.find((entry) => entry.id === invitation.id).status, 'withdrawn');
+  const again = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}`, headers: authHeaders(owner) });
+  assert.equal(again.json().error.code, 'invitation_closed');
+  // The link stops working.
+  const invited = await register(app, mailer, { email: 'sumid@example.test', username: 'sumid' });
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'sumid@example.test').token;
+  const late = await app.inject({ method: 'POST', url: `/api/v1/invitations/accept`, headers: authHeaders(invited), payload: { token } });
+  assert.equal(late.json().error.code, 'invalid_invitation');
+
+  // Declined, and a proposal withdrawn.
+  const declinedId = (await invite(owner, 'bo@example.test')).json().data.proposalId;
+  assert.equal((await decide(second, declinedId, 'decline')).statusCode, 202);
+  const takenBackId = (await invite(third, 'carmen.r@example.test')).json().data.proposalId;
+  assert.equal((await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journeyId}/invite-proposals/${takenBackId}`, headers: authHeaders(third) })).statusCode, 204);
+
+  const events = (await journeyEvents(app, owner, journeyId)).slice(before);
+  assert.deepEqual(events.map((event) => [event.action, event.summary]), [
+    ['invite_proposed', 'Asked to add s••d@example.test'],
+    ['invite_agreed', 'Agreed to add s••d@example.test'],
+    ['invite_agreed', 'Agreed to add s••d@example.test'],
+    ['invitation_sent', 'Invitation sent to s••d@example.test'],
+    ['invitation_withdrawn', 'Withdrew the invitation to s••d@example.test'],
+    ['invite_proposed', 'Asked to add b••@example.test'],
+    ['invite_declined', 'Declined adding b••@example.test'],
+    ['invite_proposed', 'Asked to add c••r@example.test'],
+    ['invite_proposal_withdrawn', 'Withdrew the proposal to add c••r@example.test'],
+  ]);
+  assert.deepEqual(events.map((event) => event.actorUserId), [second.user.id, owner.user.id, third.user.id, third.user.id, owner.user.id, owner.user.id, second.user.id, third.user.id, third.user.id]);
+  assert.ok(events.every((event) => event.after.email.includes('••')));
+  assert.equal((await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: owner.cookie } })).json().data.eventChainValid, true, 'on the same hash chain');
+
+  // Nothing stored in the history carries a whole invited address, or the note about who they are.
+  const stored = JSON.stringify((await pool.query('SELECT * FROM journey_events WHERE journey_id=$1', [journeyId])).rows);
+  for (const whole of ['sumid@example.test', 'bo@example.test', 'carmen.r@example.test', 'My cousin']) assert.equal(stored.includes(whole), false, whole);
+  // Nor does anything the journey is sent.
+  const sent = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: second.cookie } })).body;
+  for (const whole of ['sumid@example.test', 'bo@example.test', 'carmen.r@example.test']) assert.equal(sent.includes(whole), false, whole);
+});
+
+test('an invitation lasts 14 days, its running out is recorded once, and whoever asked sends it again in one tap', async (t) => {
+  let clock = new Date('2026-08-02T12:00:00.000Z');
+  const { app, mailer, pool, owner, second, third, journeyId } = await groupOfThree({ now: () => clock });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const invite = (client, email) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations`, headers: authHeaders(client), payload: { email } });
+  const agreeBy = async (proposalId, ...clients) => {
+    for (const client of clients) await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invite-proposals/${proposalId}/decision`, headers: authHeaders(client), payload: { decision: 'agree' } });
+  };
+  const snapshotFor = async (client) => (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: client.cookie } })).json().data;
+
+  const xavier = (await invite(second, 'xavier@example.test')).json().data.proposalId;
+  await agreeBy(xavier, owner, third);
+  const unanswered = (await invite(second, 'yusuf@example.test')).json().data.proposalId;
+  const sentAt = clock;
+  let invitation = (await snapshotFor(second)).invitations.find((entry) => entry.proposalId === xavier);
+  assert.equal(invitation.expiresAt, new Date(sentAt.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString());
+
+  // Thirteen days on it is still waiting, and still holds its place.
+  clock = new Date(sentAt.getTime() + 13 * 24 * 60 * 60 * 1000);
+  const secondAgain = await signIn(app, 'consent-second');
+  const ownerAgain = await signIn(app, 'consent-owner');
+  assert.equal((await snapshotFor(secondAgain)).invitations.find((entry) => entry.proposalId === xavier).status, 'pending');
+
+  // Past 14 days it has run out. Nothing ran at that moment; the first read notices, and the
+  // history says so once, with the time it actually ran out, however many reads follow.
+  clock = new Date(sentAt.getTime() + 15 * 24 * 60 * 60 * 1000);
+  const [first] = await Promise.all([snapshotFor(secondAgain), snapshotFor(ownerAgain)]);
+  await snapshotFor(secondAgain);
+  invitation = first.invitations.find((entry) => entry.proposalId === xavier);
+  assert.equal(invitation.status, 'expired');
+  assert.equal(first.capacity.openInvitations, 0, 'it holds no place once it has run out');
+  let lapsed = (await snapshotFor(ownerAgain)).events.filter((event) => event.action === 'invitation_lapsed');
+  assert.equal(lapsed.length, 1);
+  assert.equal(lapsed[0].summary, 'The invitation to x••r@example.test ran out');
+  assert.equal(lapsed[0].after.expiredAt, invitation.expiresAt);
+  assert.equal(lapsed[0].createdAt, clock.toISOString(), 'written when it was noticed');
+  assert.equal(lapsed[0].actorUserId, second.user.id, 'under the name of whoever asked');
+
+  // Only whoever asked can send it again; the owner can't, and neither withdraws what isn't waiting.
+  assert.equal(invitation.viewerMaySendAgain, true);
+  assert.equal(invitation.sendAgainUntil, new Date(sentAt.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString());
+  const ownersView = (await snapshotFor(ownerAgain)).invitations.find((entry) => entry.id === invitation.id);
+  assert.equal(ownersView.viewerMaySendAgain, false);
+  assert.equal(ownersView.viewerMayWithdraw, false);
+  const byOwner = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}/send-again`, headers: authHeaders(ownerAgain) });
+  assert.equal(byOwner.statusCode, 403, byOwner.body);
+
+  // A mail that does not go out spends nothing: it can still be sent again.
+  const sendInvitation = mailer.sendInvitation;
+  mailer.sendInvitation = async () => { throw new Error('mail is down'); };
+  const failed = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}/send-again`, headers: authHeaders(secondAgain) });
+  mailer.sendInvitation = sendInvitation;
+  assert.equal(failed.statusCode, 503, failed.body);
+  assert.equal((await snapshotFor(secondAgain)).invitations.find((entry) => entry.id === invitation.id).viewerMaySendAgain, true);
+
+  // One tap, and nobody is asked again.
+  const decisionsBefore = (await pool.query('SELECT count(*)::int AS count FROM journey_invite_consents WHERE proposal_id=$1', [xavier])).rows[0].count;
+  const proposalsBefore = mailer.messages.filter((message) => message.type === 'invite-proposal').length;
+  const resent = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}/send-again`, headers: authHeaders(secondAgain) });
+  assert.equal(resent.statusCode, 202, resent.body);
+  assert.equal(mailer.messages.filter((message) => message.type === 'invite-proposal').length, proposalsBefore);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_invite_consents WHERE proposal_id=$1', [xavier])).rows[0].count, decisionsBefore);
+  const after = await snapshotFor(secondAgain);
+  const fresh = after.invitations.find((entry) => entry.proposalId === xavier && entry.status === 'pending');
+  assert.equal(fresh.expiresAt, new Date(clock.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString(), 'another 14 days');
+  assert.equal(after.invitations.find((entry) => entry.id === invitation.id).viewerMaySendAgain, false, 'only the newest can be sent again');
+  assert.equal(after.capacity.openInvitations, 1, 'and it holds a place again');
+  assert.deepEqual(after.events.filter((event) => event.action === 'invitation_sent_again').map((event) => event.summary), ['Sent the invitation to x••r@example.test again']);
+  const twice = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}/send-again`, headers: authHeaders(secondAgain) });
+  assert.equal(twice.json().error.code, 'invitation_closed');
+
+  // The new link is the one that works, for the invited email only, and the journey then names them.
+  const xavierAccount = await register(app, mailer, { email: 'xavier@example.test', username: 'xavier' });
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'xavier@example.test').token;
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/invitations/accept', headers: authHeaders(xavierAccount), payload: { token } })).statusCode, 200);
+  const joined = await snapshotFor(secondAgain);
+  assert.equal(joined.invitations.find((entry) => entry.id === fresh.id).joinedDisplayName, 'xavier');
+  assert.equal(joined.inviteProposals.find((entry) => entry.id === xavier).joinedDisplayName, 'xavier');
+  assert.equal(joined.events.at(-1).action, 'member_joined');
+
+  // The proposal nobody answered ran out after 30 days, recorded once with its real end.
+  clock = new Date(sentAt.getTime() + 31 * 24 * 60 * 60 * 1000);
+  const secondLater = await signIn(app, 'consent-second');
+  await Promise.all([snapshotFor(secondLater), snapshotFor(secondLater)]);
+  lapsed = (await snapshotFor(secondLater)).events.filter((event) => event.action === 'invite_proposal_lapsed');
+  assert.deepEqual(lapsed.map((event) => [event.entityId, event.summary]), [[unanswered, 'The proposal to add y••f@example.test ran out, and nobody was added']]);
+  assert.equal(lapsed[0].after.expiredAt, new Date(sentAt.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString());
+});
+
+test('an invitation can be sent again only within the 30 days everyone agreed for', async (t) => {
+  let clock = new Date('2026-08-02T12:00:00.000Z');
+  const { app, pool, owner, second, third, journeyId } = await groupOfThree({ now: () => clock });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const proposalId = (await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations`, headers: authHeaders(second), payload: { email: 'zara@example.test' } })).json().data.proposalId;
+  for (const client of [owner, third]) await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invite-proposals/${proposalId}/decision`, headers: authHeaders(client), payload: { decision: 'agree' } });
+  clock = new Date(clock.getTime() + 31 * 24 * 60 * 60 * 1000);
+  const secondAgain = await signIn(app, 'consent-second');
+  const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: secondAgain.cookie } })).json().data;
+  const invitation = snapshot.invitations.find((entry) => entry.proposalId === proposalId);
+  assert.equal(invitation.status, 'expired');
+  assert.equal(invitation.viewerMaySendAgain, false);
+  const refused = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations/${invitation.id}/send-again`, headers: authHeaders(secondAgain) });
+  assert.equal(refused.statusCode, 409);
+  assert.equal(refused.json().error.code, 'agreement_lapsed');
 });
 
 const billingConfig = { JOURNEY_CAPACITY_MODE: 'billing', BILLING_ENABLED: 'true', STRIPE_SECRET_KEY: 'sk_test_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_fake' };
@@ -2071,6 +2297,91 @@ test('a phone token expires, refreshing rotates it, and a spent refresh token re
 
   const expiredRefresh = await app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken: rotated.refreshToken } });
   assert.equal(expiredRefresh.statusCode, 401, expiredRefresh.body);
+});
+
+// #353: a renewal reaches the server but its reply never reaches the phone, which still holds the
+// spent refresh token. Asking again must not sign it out, as long as nobody has used the pair the
+// lost reply carried. Only hashes are kept, so the answer is a fresh pair, not the lost one.
+test('a spent refresh token asked again before its new pair is used gets a fresh pair in the same family', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+
+  const phone = await registerOnPhone(app, mailer, { email: 'lost-reply@example.test', username: 'lost-reply' });
+  const refresh = (refreshToken) => app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken } });
+
+  const lost = await refresh(phone.refreshToken);
+  assert.equal(lost.statusCode, 200, lost.body);
+  const lostPair = lost.json().data;
+
+  const retried = await refresh(phone.refreshToken);
+  assert.equal(retried.statusCode, 200, retried.body);
+  const retriedPair = retried.json().data;
+  assert.equal(retriedPair.user.username, 'lost-reply');
+  assert.notEqual(retriedPair.token, lostPair.token);
+  assert.notEqual(retriedPair.refreshToken, lostPair.refreshToken);
+
+  // The pair the lost reply carried is retired, not left live beside the new one.
+  const lostAccess = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(lostPair.token) });
+  assert.equal(lostAccess.statusCode, 401, lostAccess.body);
+
+  // One family throughout, and only one pair of it live.
+  const families = await pool.query('SELECT DISTINCT family_id FROM api_tokens');
+  assert.equal(families.rowCount, 1);
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 2);
+
+  // Still only hashes at rest.
+  for (const row of (await pool.query('SELECT token_hash FROM api_tokens')).rows) {
+    assert.equal(row.token_hash.length, 64);
+    assert.ok(![phone.token, phone.refreshToken, lostPair.token, lostPair.refreshToken, retriedPair.token, retriedPair.refreshToken].includes(row.token_hash));
+  }
+
+  // A reply lost twice is answered twice.
+  const lostAgain = await refresh(phone.refreshToken);
+  assert.equal(lostAgain.statusCode, 200, lostAgain.body);
+  const third = lostAgain.json().data;
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(retriedPair.token) })).statusCode, 401, 'the pair the second reply carried is retired');
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 2);
+
+  // The pair the phone finally receives works, and the renewed line carries on as normal.
+  const signedIn = await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(third.token) });
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
+  const next = await refresh(third.refreshToken);
+  assert.equal(next.statusCode, 200, next.body);
+});
+
+test('a spent refresh token asked again after its new pair was used retires the family', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const refresh = (refreshToken) => app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken } });
+
+  // Used by its access token.
+  const phone = await registerOnPhone(app, mailer, { email: 'used-access@example.test', username: 'used-access' });
+  const rotated = (await refresh(phone.refreshToken)).json().data;
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(rotated.token) })).statusCode, 200);
+  const replayed = await refresh(phone.refreshToken);
+  assert.equal(replayed.statusCode, 401, replayed.body);
+  assert.equal(replayed.json().error.code, 'invalid_token');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(rotated.token) })).statusCode, 401);
+  assert.equal((await refresh(rotated.refreshToken)).statusCode, 401);
+
+  // Used by its refresh token.
+  const second = await registerOnPhone(app, mailer, { email: 'used-refresh@example.test', username: 'used-refresh' });
+  const once = (await refresh(second.refreshToken)).json().data;
+  const twice = (await refresh(once.refreshToken)).json().data;
+  assert.ok(twice.token);
+  const stale = await refresh(second.refreshToken);
+  assert.equal(stale.statusCode, 401, stale.body);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(twice.token) })).statusCode, 401);
+
+  // The pair a retry retired is a copy if it ever turns up, so it retires the family too.
+  const third = await registerOnPhone(app, mailer, { email: 'surfaced@example.test', username: 'surfaced' });
+  const lostPair = (await refresh(third.refreshToken)).json().data;
+  const retried = (await refresh(third.refreshToken)).json().data;
+  const surfaced = await refresh(lostPair.refreshToken);
+  assert.equal(surfaced.statusCode, 401, surfaced.body);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/session', headers: phoneHeaders(retried.token) })).statusCode, 401);
+
+  assert.equal((await pool.query('SELECT * FROM api_tokens WHERE revoked_at IS NULL')).rowCount, 0);
 });
 
 test('a refresh token that has simply run out of time is refused', async (t) => {
