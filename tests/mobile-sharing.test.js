@@ -146,13 +146,14 @@ test('the grace banner says the same on the phone as on the web, in the caution 
   const sam = { id: 'sam', displayName: 'Sam' };
   const alex = { id: 'alex', displayName: 'Alex' };
   const bo = { id: 'bo', displayName: 'Bo' };
-  const waiting = { endsAt: '2026-10-13T00:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026, requestsUsed: 2, requestsPerYear: 7, requestDays: 7, canRequest: true, keepAdding: [sam, alex] };
+  const waiting = { endsAt: '2026-10-13T00:00:00.000Z', daysLeft: 5, payer: sam, calendarYear: 2026, requestsUsed: 2, requestsPerYear: 6, requestDays: 7, canRequest: true, keepAdding: [sam, alex] };
   const cases = [
     [waiting, 'bo', 5],
     [waiting, 'sam', 5],
     [waiting, 'alex', 5],
     [{ ...waiting, daysLeft: 1, canRequest: false }, 'sam', 5],
     [{ ...waiting, keepAdding: [sam] }, 'bo', 1],
+    [{ ...waiting, requestsUsed: 6, canRequest: false }, 'sam', 5],
     [{ ...waiting, requestsUsed: 7, canRequest: false }, 'sam', 5],
     [{ ...waiting, keepAdding: [sam, alex, bo] }, 'alex', 3],
   ];
@@ -161,10 +162,14 @@ test('the grace banner says the same on the phone as on the web, in the caution 
     assert.equal(view.graceRequestNote(grace, viewerId), graceRequestNote(grace, viewerId));
   }
   // The owner's draft wording (the Book, 4.7), as someone else in the journey reads it.
-  assert.equal(view.graceBannerCopy(waiting, 'bo', 5), "This journey is waiting on a payment from Sam. 5 days left · 2 of 7 extra weeks used this year. If it isn't paid, only Sam and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
-  assert.equal(view.graceBannerCopy(waiting, 'sam', 5), "This journey is waiting on a payment from you. 5 days left · 2 of 7 extra weeks used this year. If it isn't paid, only you and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
+  assert.equal(view.graceBannerCopy(waiting, 'bo', 5), "This journey is waiting on a payment from Sam. 5 days left · 2 of 6 extra weeks asked for this year. If it isn't paid, only Sam and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
+  assert.equal(view.graceBannerCopy(waiting, 'sam', 5), "This journey is waiting on a payment from you. 5 days left · 2 of 6 extra weeks asked for this year. If it isn't paid, only you and Alex can add new moments. Everyone else can still see everything, and nothing is lost. Paying again brings everyone back.");
   assert.equal(view.graceRequestNote({ ...waiting, canRequest: false }, 'sam'), 'Another week can be asked for once 7 days or fewer are left.');
   assert.equal(view.graceRequestNote({ ...waiting, canRequest: false }, 'bo'), '', 'only the payer is told when they can ask');
+  assert.equal(view.graceRequestNote({ ...waiting, requestsUsed: 6, canRequest: false }, 'sam'), 'All 6 extra weeks for 2026 have been asked for. The count starts again on January 1.');
+  assert.equal(view.graceRequestNote({ ...waiting, requestsUsed: 6, canRequest: false }, 'alex'), '');
+  // A journey that took a seventh week under the old limit of 7 reads as all six, never 7 of 6.
+  assert.match(view.graceBannerCopy({ ...waiting, requestsUsed: 7, canRequest: false }, 'bo', 5), /· 6 of 6 extra weeks asked for this year\./);
   assert.equal(view.mayRequestGrace(waiting, 'sam'), true);
   assert.equal(view.mayRequestGrace(waiting, 'alex'), false);
   assert.equal(view.mayRequestGrace(null, 'sam'), false);

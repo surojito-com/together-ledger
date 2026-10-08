@@ -50,6 +50,9 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
   if (beforeMigration029) await beforeMigration029(pool);
   await pool.query(await readFile(new URL('../server/migrations/029_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
+  // pg-mem cannot parse NOT VALID. Real PostgreSQL runs 030 as written, and
+  // tests/postgres-integration.test.js checks it keeps a week already given.
+  await pool.query((await readFile(new URL('../server/migrations/030_ask-for-six-weeks-a-year.sql', import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -1365,7 +1368,7 @@ test('everyone in a journey in grace is told who pays, the time left, the weeks 
       payer: { id: owner.user.id, displayName: 'Sam' },
       calendarYear: 2026,
       requestsUsed: 0,
-      requestsPerYear: 7,
+      requestsPerYear: 6,
       requestDays: 7,
       canRequest: true,
       // The payer, and the first to join, because nobody was chosen.
@@ -1411,7 +1414,7 @@ test('the payer asks for another 7 days, one week ahead at a time, and each requ
 
   // Every request is in the journey's append-only history, attributed to the payer.
   const events = (await pool.query("SELECT actor_user_id,summary,after_value FROM journey_events WHERE journey_id=$1 AND action='grace_requested' ORDER BY sequence", [journeyId])).rows;
-  assert.deepEqual(events.map((event) => event.summary), ['Asked for 7 more days to pay (1 of 7 in 2026)', 'Asked for 7 more days to pay (2 of 7 in 2026)']);
+  assert.deepEqual(events.map((event) => event.summary), ['Asked for 7 more days to pay (1 of 6 in 2026)', 'Asked for 7 more days to pay (2 of 6 in 2026)']);
   assert.ok(events.every((event) => event.actor_user_id === owner.user.id));
   assert.equal(events[1].after_value.graceUntil, '2026-08-23T12:00:00.000Z');
 });
@@ -1448,10 +1451,10 @@ test('two requests for the same week are answered in words, not as a server erro
   await assert.rejects(ask(owner), (error) => refusedWith('grace_request_conflict')(error) && error.status === 409 && /Refresh/.test(error.message));
 });
 
-test('seven weeks a calendar year, counted again from January 1', async (t) => {
+test('six weeks asked for a calendar year, and a seventh refused, counted again from January 1', async (t) => {
   const clock = { now: new Date('2026-12-28T12:00:00.000Z') };
   const { pool, owner, journeyId, automaticEnd, capacityFor, ask } = await journeyInGrace(t, clock);
-  for (let number = 1; number <= 7; number += 1) {
+  for (let number = 1; number <= 6; number += 1) {
     await pool.query(
       `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
        VALUES ($1,$2,$3,2026,$4,$5,$6,$7)`,
@@ -1459,14 +1462,15 @@ test('seven weeks a calendar year, counted again from January 1', async (t) => {
     );
   }
   const capacity = await capacityFor(owner);
-  assert.equal(capacity.grace.requestsUsed, 7);
+  assert.equal(capacity.grace.requestsUsed, 6);
+  assert.equal(capacity.grace.requestsPerYear, 6);
   assert.equal(capacity.grace.canRequest, false);
-  await assert.rejects(ask(owner), (error) => refusedWith('grace_requests_used')(error) && /starts again on January 1/.test(error.message));
+  await assert.rejects(ask(owner), (error) => refusedWith('grace_requests_used')(error) && /All 6 extra weeks for 2026 have been asked for\./.test(error.message) && /starts again on January 1/.test(error.message));
 
   // The database holds the limit too, so two requests racing cannot both be the seventh.
   await assert.rejects(pool.query(
     `INSERT INTO journey_grace_requests (id,journey_id,requested_by_user_id,calendar_year,request_number,grace_basis,grace_until,requested_at)
-     VALUES ($1,$2,$3,2026,8,$4,$4,$4)`,
+     VALUES ($1,$2,$3,2026,7,$4,$4,$4)`,
     ['55555555-5555-4555-8555-555555555555', journeyId, owner.user.id, automaticEnd],
   ));
 
@@ -1475,16 +1479,17 @@ test('seven weeks a calendar year, counted again from January 1', async (t) => {
   assert.equal((await ask(owner)).grace.requestsUsed, 1);
 });
 
-test('a store row left active past its end, or a pass not yet started, never hides a grace', async (t) => {
+test('a store row left active past its end and its grace, or a pass not yet started, never hides a grace', async (t) => {
   const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
   const { pool, owner, journeyId, capacityFor, ask } = await journeyInGrace(t, clock);
   // A store subscription stays 'active' after it ends, and is ordered first, most generous first.
-  // So is a bigger pass bought to start later. Neither is room today.
+  // So is a bigger pass bought to start later. Neither is room today: the first ended more than
+  // its 7 days of grace ago, and the second hasn't started.
   await pool.query(
     `INSERT INTO billing_entitlements (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,effective_at,expires_at,last_verified_at,created_at,updated_at)
      VALUES ($1,$2,$3,'additional-journey-capacity','apple','test','store-ended','active',99,$4,$5,$6,$6,$6),
             ($7,$2,$3,'additional-journey-capacity','apple','test','store-later','active',99,$8,$9,$6,$6,$6)`,
-    ['77777777-1111-4111-8111-111111111111', owner.user.id, journeyId, new Date('2026-07-01T12:00:00.000Z'), new Date('2026-08-01T12:00:00.000Z'), clock.now,
+    ['77777777-1111-4111-8111-111111111111', owner.user.id, journeyId, new Date('2026-06-20T12:00:00.000Z'), new Date('2026-07-20T12:00:00.000Z'), clock.now,
       '77777777-2222-4222-8222-222222222222', new Date('2026-08-20T12:00:00.000Z'), new Date('2026-09-20T12:00:00.000Z')],
   );
   const capacity = await capacityFor(owner);
@@ -1504,6 +1509,104 @@ test('weeks asked for during one lapse are not carried into the next', async (t)
   const capacity = await capacityFor(owner);
   assert.equal(capacity.grace.endsAt, '2026-08-11T12:00:00.000Z');
   assert.equal(capacity.grace.requestsUsed, 1, 'the year still counts the week asked for before');
+});
+
+// The same journey, paid for in a store instead: no Stripe row, one store row with the room. A
+// store row stays 'active' past its end, because a pass simply runs out and a subscription that
+// isn't renewed sends nothing more (owner, Oct 8, 2026: its end gets the same grace).
+async function journeyPaidInStore(t, clock, { source = 'apple', recordId = 'store-room', effectiveAt, expiresAt, quantity = 1, reason = null }) {
+  const context = await journeyInGrace(t, clock);
+  await context.pool.query('DELETE FROM billing_entitlements WHERE journey_id=$1', [context.journeyId]);
+  const addRoom = (row) => context.pool.query(
+    `INSERT INTO billing_entitlements (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,effective_at,expires_at,last_verified_at,reason,created_at,updated_at)
+     VALUES ($1,$2,$3,'additional-journey-capacity',$4,'test',$5,'active',$6,$7,$8,$9,$10,$9,$9)`,
+    [row.id, context.owner.user.id, context.journeyId, row.source || source, row.recordId, row.quantity ?? quantity, row.effectiveAt, row.expiresAt, clock.now, row.reason ?? null],
+  );
+  await addRoom({ id: '88888888-1111-4111-8111-111111111111', recordId, effectiveAt, expiresAt, reason });
+  return { ...context, addRoom };
+}
+
+test('a week pass that runs out gives the same 7 days of grace as a failed payment, then the extra people rest', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { owner, first, later, capacityFor } = await journeyPaidInStore(t, clock, {
+    recordId: 'room_51_week_pass:1', effectiveAt: new Date('2026-07-26T10:00:00.000Z'), expiresAt: new Date('2026-08-02T10:00:00.000Z'),
+  });
+
+  // Ended two hours ago. The room stays, new invitations wait, and everyone is told.
+  for (const viewer of [owner, first, later]) {
+    const capacity = await capacityFor(viewer);
+    assert.equal(capacity.grace?.endsAt, '2026-08-09T10:00:00.000Z', 'grace runs 7 days from the end of the pass');
+    assert.deepEqual(capacity.grace.payer, { id: owner.user.id, displayName: 'Sam' });
+    assert.equal(capacity.grace.requestsPerYear, 6);
+    assert.deepEqual(capacity.restingMemberIds, []);
+    assert.equal(capacity.canInvite, false);
+  }
+
+  clock.now = new Date('2026-08-09T10:00:00.000Z');
+  const rested = await capacityFor(later);
+  assert.equal(rested.grace, null);
+  assert.deepEqual(rested.restingMemberIds, [later.user.id], 'nobody is removed: the latest to join rests');
+});
+
+test('a store subscription that lapses gets the same grace; one a newer purchase replaced does not', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { later, capacityFor, addRoom } = await journeyPaidInStore(t, clock, {
+    source: 'google', recordId: 'room_51_monthly:token', effectiveAt: new Date('2026-07-01T09:00:00.000Z'), expiresAt: new Date('2026-08-01T09:00:00.000Z'),
+  });
+  assert.equal((await capacityFor(later)).grace?.endsAt, '2026-08-08T09:00:00.000Z');
+
+  // A replaced subscription ended because something newer took its place. Once that newer one
+  // has also gone, only the newer one's end counts.
+  clock.now = new Date('2026-08-20T12:00:00.000Z');
+  await addRoom({
+    id: '88888888-2222-4222-8222-222222222222', recordId: 'room_101_monthly:replaced', quantity: 99, reason: 'store_subscription_replaced',
+    effectiveAt: new Date('2026-07-01T09:00:00.000Z'), expiresAt: new Date('2026-08-19T12:00:00.000Z'),
+  });
+  const capacity = await capacityFor(later);
+  assert.equal(capacity.grace, null, 'no grace from a replaced subscription');
+  assert.deepEqual(capacity.restingMemberIds, [later.user.id]);
+});
+
+test('a newer pass that starts during grace ends it, and the weeks asked for still count', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { owner, later, capacityFor, ask, addRoom } = await journeyPaidInStore(t, clock, {
+    recordId: 'room_51_week_pass:1', effectiveAt: new Date('2026-07-26T10:00:00.000Z'), expiresAt: new Date('2026-08-02T10:00:00.000Z'),
+  });
+  clock.now = new Date('2026-08-04T12:00:00.000Z');
+  await ask(owner);
+  assert.equal((await capacityFor(later)).grace.requestsUsed, 1);
+
+  // A month pass bought now starts now: nothing is running for it to wait behind.
+  await addRoom({ id: '88888888-3333-4333-8333-333333333333', recordId: 'room_51_month_pass:2', quantity: 49, effectiveAt: clock.now, expiresAt: new Date('2026-09-04T12:00:00.000Z') });
+  const paid = await capacityFor(later);
+  assert.equal(paid.grace, null, 'the banner goes');
+  assert.equal(paid.canInvite, true, 'and invitations no longer wait');
+  assert.deepEqual(paid.restingMemberIds, []);
+
+  // When that pass runs out too, a new grace begins from its end, and this year's count stands.
+  clock.now = new Date('2026-09-05T12:00:00.000Z');
+  const lapsedAgain = await capacityFor(later);
+  assert.equal(lapsedAgain.grace?.endsAt, '2026-09-11T12:00:00.000Z');
+  assert.equal(lapsedAgain.grace.requestsUsed, 1);
+});
+
+test('after a pass ends, the payer can ask for another week, and it is in the history', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { pool, owner, first, journeyId, capacityFor, ask } = await journeyPaidInStore(t, clock, {
+    recordId: 'room_51_week_pass:1', effectiveAt: new Date('2026-07-26T10:00:00.000Z'), expiresAt: new Date('2026-08-02T10:00:00.000Z'),
+  });
+  await assert.rejects(ask(first), refusedWith('not_payer'));
+  const asked = await ask(owner);
+  assert.equal(asked.grace.endsAt, '2026-08-16T10:00:00.000Z', 'the week begins where the automatic grace ends');
+  assert.equal(asked.grace.requestsUsed, 1);
+  assert.equal((await capacityFor(first)).grace.endsAt, '2026-08-16T10:00:00.000Z', 'and everyone sees it');
+
+  const events = (await pool.query("SELECT summary FROM journey_events WHERE journey_id=$1 AND action='grace_requested'", [journeyId])).rows;
+  assert.deepEqual(events.map((event) => event.summary), ['Asked for 7 more days to pay (1 of 6 in 2026)']);
+
+  // The asked-for week holds past the automatic end.
+  clock.now = new Date('2026-08-12T12:00:00.000Z');
+  assert.equal((await capacityFor(first)).grace?.endsAt, '2026-08-16T10:00:00.000Z');
 });
 
 test('nobody outside a payment can ask for more time', async (t) => {

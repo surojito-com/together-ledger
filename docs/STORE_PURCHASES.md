@@ -133,6 +133,20 @@ starts straight away, because making room for more people is why it was bought, 
 beneath it. Passes from either store count, because the room is the journey's. A pass starts when our server
 honours it, never earlier, so a purchase that reaches us late loses none of its days.
 
+### When room bought in a store ends
+
+Decided by the owner, Oct 8, 2026: **a pass that runs out, or a monthly subscription that lapses, gets the same grace
+as a failed web payment.** Neither store tells us anything when that happens: a pass simply reaches its end, and a
+subscription that isn't renewed sends no renewal. So the row stays `active`, and `paymentFor` (`server/platform.js`)
+reads a store row whose end has passed as in grace for `BILLING_GRACE_DAYS` (7) from that end:
+
+- New invitations wait, a banner tells everyone, and the payer can ask for another week, up to 6 times per journey
+  per calendar year (migration 030), exactly as for Stripe.
+- Room that has started always comes first, so a pass bought during the grace ends it straight away. That pass
+  starts at once, because a pass that has ended isn't running for it to wait behind.
+- A subscription marked `store_subscription_replaced` gets no grace: something newer took its place.
+- When the grace and any weeks asked for are over, the people beyond two rest. Nobody is removed.
+
 ### Subscriptions over time
 
 Decided by the owner, Oct 8, 2026, after review of #335:
@@ -147,7 +161,9 @@ Decided by the owner, Oct 8, 2026, after review of #335:
   resubscription or an upgrade, and the person may make it from another journey (that journey's `appAccountToken`).
   - The entitlement moves to that journey.
   - The journey it left goes into the usual grace (`BILLING_GRACE_DAYS`, 7) if its room was still running:
-    invitations wait, and when grace ends the people beyond two rest. Nobody is removed.
+    invitations wait, and when grace ends the people beyond two rest. Nobody is removed. If its room had
+    already lapsed and was still inside its grace (end plus 7 days, plus any week asked for), it keeps exactly
+    the time it had left (owner, Oct 8, 2026), so the banner stays and nobody rests early.
   - Both journeys' records get an event, `paid_room_moved_out` and `paid_room_moved_in`, without naming the other
     journey.
   - A move needs a strictly newer payment, so an older transaction from the first journey arriving late moves
@@ -156,6 +172,8 @@ Decided by the owner, Oct 8, 2026, after review of #335:
   token naming the one it replaces (`linkedPurchaseToken`).
   - The old token's room ends when the new purchase starts. For a deferred downgrade from 101 to 51, that is the end
     of the 101 period already paid for, not the moment of the downgrade.
+  - When that new purchase was made from another journey, the old journey gets the usual 7 days of grace starting
+    when its old room ends, and its record says so at once (owner, Oct 8, 2026).
   - The old token's room is marked `store_subscription_replaced` and is never made active again, even if the old
     token is sent while Google still reports it active.
   - A replaced token we had never seen is recorded the same way, so sending it later grants nothing.

@@ -31,7 +31,7 @@ Apple and Google transactions must never be recreated as Stripe charges. Native 
 - Idempotent webhook records with bounded retry state.
 - Provider event times prevent delayed subscription and invoice deliveries from restoring older payment state; the latest stored subscription quantity remains authoritative when invoice metadata is stale.
 - Journey-scoped subscription, invoice, and provider-neutral capacity-entitlement records.
-- A seven-day recovery grace period by default, configurable before launch.
+- A seven-day recovery grace period by default, configurable before launch. It also follows a subscription the payer cancels, counted from when its paid month ends (owner, Oct 8, 2026). A subscription Stripe cancels after a failed payment gets no second grace.
 - A signed-in journey-owner surface that clearly labels test mode, says “another person” rather than “seat,” and sends the person only to validated Stripe-hosted domains.
 - Duplicate active subscriptions for the same journey are blocked, and account deletion waits until any paid or owned journey subscription has ended so deleting a login cannot leave an unseen renewal behind.
 - Failed payment never removes a person or destroys shared history; it changes only paid-capacity state and blocks future expansion once the recovery policy requires it.
