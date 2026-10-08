@@ -1,0 +1,19 @@
+{
+  "kind": "androidpublisher#subscriptionPurchaseV2",
+  "regionCode": "US",
+  "lineItems": [
+    {
+      "productId": "room_51_monthly",
+      "expiryTime": "2026-11-08T12:00:00.000Z",
+      "autoRenewingPlan": { "autoRenewEnabled": true },
+      "offerDetails": { "basePlanId": "monthly", "offerTags": [] }
+    }
+  ],
+  "subscriptionState": "SUBSCRIPTION_STATE_PENDING",
+  "testPurchase": {},
+  "acknowledgementState": "ACKNOWLEDGEMENT_STATE_PENDING",
+  "externalAccountIdentifiers": {
+    "obfuscatedExternalAccountId": "set-by-test",
+    "obfuscatedExternalProfileId": "set-by-test"
+  }
+}

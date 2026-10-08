@@ -71,7 +71,7 @@ An unexpired invitation reserves its own place. Creating or accepting an invitat
 | PATCH | `/journeys/:journeyId/milestones/:key` | Set a bounded action milestone. |
 | GET | `/journeys/:journeyId/events?after=0` | Read the authoritative event stream. |
 
-## Web billing
+## Billing: the web and the stores
 
 Stripe billing is disabled unless the server has an explicit, mode-matched configuration. Checkout and Customer Portal Session creation require an authenticated, verified journey owner, an allowed browser origin, and the session CSRF token. Portal Sessions also require a separately enabled, allow-listed Stripe configuration that passes the approved-policy check on every request.
 
@@ -81,11 +81,15 @@ Stripe billing is disabled unless the server has an explicit, mode-matched confi
 | POST | `/journeys/:journeyId/billing/checkout-sessions` | Create Stripe-hosted subscription Checkout for the allow-listed $1 USD monthly additional-person Price. This candidate accepts only `paidCapacity: 1`; browser-supplied amounts, other quantities, and Price IDs are rejected. |
 | POST | `/journeys/:journeyId/billing/portal-sessions` | For the verified journey owner with the mapped Customer and non-terminal journey subscription, create a Stripe-hosted Portal Session. The server first verifies that the allow-listed configuration permits invoice history, payment-method updates, and cancel-at-renewal only. |
 | POST | `/journeys/:journeyId/billing/store-identity` | For a signed-in, verified journeyer, return the values the phone must send to Apple (`appAccountToken`) or Google (`obfuscatedAccountId`, `obfuscatedProfileId`) when it starts a purchase, so the purchase comes back tied to this account and journey. Created once and the same ever after. See [STORE_PURCHASES.md](STORE_PURCHASES.md). |
+| POST | `/billing/store-purchases/apple` | Verify a StoreKit 2 signed transaction (`signedTransaction`) on this server against Apple's root certificate, and turn it into room in its journey, or an extra photo or place on `momentId`. `201` when this request granted it, `200` when it had been granted already. See [STORE_PURCHASES.md](STORE_PURCHASES.md). |
+| POST | `/billing/store-purchases/google` | Look up a Google Play purchase (`productId`, `purchaseToken`) with the Play Developer API, grant it the same way, then acknowledge it with Google. Same answers as Apple's. |
 | POST | `/billing/webhooks/stripe` | Verify Stripe's signature over the raw body, reject the wrong environment, and idempotently project supported events into billing records and entitlements. This route uses Stripe authentication rather than a browser session. |
 
 Every route that opens Stripe (journey Checkout, the Portal, and the image and place Checkouts under `/moments/:momentId/`) refuses the phone app's credential with `403 not_from_the_app`, before any Stripe session is made. The app reads where capacity stands from `GET /journeys/:journeyId/billing` and never starts a web purchase; phones pay through Apple and Google instead (#267, #268). A browser session is unaffected.
 
 The Checkout success redirect never grants access. Verified provider events update the entitlement ledger. See [STRIPE.md](STRIPE.md) for setup, event coverage, and remaining release boundaries.
+
+`GET /journeys/:journeyId/moments/:momentId/image-slots` lists the extra photos the signed-in person has paid for on that moment, whether on the web or in a store (#272), and an upload spends one with `?paidSlotId=`.
 
 Account deletion returns `409 billing_subscription_active` while the person pays for, or owns a journey with, a non-terminal web subscription. The billing relationship must be resolved before deletion; the service never silently leaves a recurring charge behind. Portal cancellation takes effect at renewal and does not remove an existing person, shared history, or a valid invitation reservation.
 

@@ -15,7 +15,7 @@ const rootDirectory = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SESSION_COOKIE = 'tl_session';
 const APP_CLIENT_HEADER = 'x-together-client';
 
-export async function buildApp({ platform, config, billing = new DisabledBillingService(), logger = false }) {
+export async function buildApp({ platform, config, billing = new DisabledBillingService(), store = null, logger = false }) {
   const app = Fastify({ logger, trustProxy: config.trustProxy, bodyLimit: 64 * 1024 });
   await app.register(cookie);
   await app.register(helmet, { contentSecurityPolicy: false });
@@ -252,12 +252,25 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     const session = await billing.createPortalSession(request.auth.userId, request.params.journeyId);
     return reply.code(201).send({ data: session });
   });
-  app.get('/api/v1/journeys/:journeyId/moments/:momentId/image-slots', { preHandler: authenticate }, async (request) => ({ data: { slots: await billing.imageSlots(request.auth.userId, request.params.journeyId, request.params.momentId) } }));
+  app.get('/api/v1/journeys/:journeyId/moments/:momentId/image-slots', { preHandler: authenticate }, async (request) => ({ data: { slots: await platform.imageSlots(request.auth.userId, request.params.journeyId, request.params.momentId) } }));
   app.post('/api/v1/journeys/:journeyId/moments/:momentId/image-slots/checkout-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createImageCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
   app.post('/api/v1/journeys/:journeyId/moments/:momentId/location-slots/checkout-sessions', { preHandler: stripeSession, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => reply.code(201).send({ data: await billing.createLocationCheckoutSession(request.auth.userId, request.params.journeyId, request.params.momentId, request.body || {}) }));
   // What a phone sends to Apple or Google when it starts a purchase (#269). Created the first time
   // and the same ever after, so it is a POST that is safe to repeat.
   app.post('/api/v1/journeys/:journeyId/billing/store-identity', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({ data: await platform.storePurchaseIdentity(request.auth.userId, request.params.journeyId) }));
+  // A purchase made in the App Store or Google Play, checked here before it becomes anything
+  // (#272, docs/STORE_PURCHASES.md). 201 when this request granted it, 200 when it had been
+  // granted already: the same transaction twice grants once, so a phone can always send it again.
+  function storeService() {
+    if (!store) throw new PlatformError(503, 'store_unavailable', 'Store purchases can\u2019t be checked right now. Your purchase is safe with the store, and it will be added when Together Ledger can check it.', { retryable: true });
+    return store;
+  }
+  const storePurchase = (verify) => async (request, reply) => {
+    const result = await verify(storeService(), request.auth.userId, request.body || {});
+    return reply.code(result.granted ? 201 : 200).send({ data: result });
+  };
+  app.post('/api/v1/billing/store-purchases/apple', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, storePurchase((service, userId, body) => service.verifyApple(userId, body)));
+  app.post('/api/v1/billing/store-purchases/google', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, storePurchase((service, userId, body) => service.verifyGoogle(userId, body)));
   app.post('/api/v1/billing/webhooks/stripe', { config: { rawBody: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const result = await billing.handleWebhook(request.rawBody, request.headers['stripe-signature']);
     return reply.code(200).send(result);
@@ -360,8 +373,9 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(204).send();
   });
   app.post('/api/v1/journeys/:journeyId/moments/:momentId/images', { preHandler: protectMutation, bodyLimit: 25 * 1024 * 1024 }, async (request, reply) => {
+    // A paid slot is checked and spent in one statement inside the upload, whether the web or a
+    // store paid for it (#272).
     const paidSlotId = request.query?.paidSlotId || null;
-    if (paidSlotId) await billing.assertImageSlot(request.auth.userId, request.params.journeyId, request.params.momentId, paidSlotId);
     return reply.code(201).send({ data: { image: await platform.uploadMomentImage(request.auth.userId, request.params.journeyId, request.params.momentId, request.headers['content-type'], request.body, paidSlotId, request.headers['x-together-image-name']) } });
   });
   app.get('/api/v1/journeys/:journeyId/moments/:momentId/images/:imageId', { preHandler: authenticate }, async (request, reply) => {

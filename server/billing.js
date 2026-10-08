@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
+import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { PlatformError } from './platform.js';
 
@@ -79,8 +80,6 @@ export class DisabledBillingService {
   async createImageCheckoutSession() { throw new PlatformError(503, 'billing_unavailable', 'Additional image billing is not available yet.'); }
   async createLocationCheckoutSession() { throw new PlatformError(503, 'billing_unavailable', 'Additional place billing is not available yet.'); }
   async assertLocationCapacity() { throw new PlatformError(409, 'location_payment_required', 'Another place needs an active monthly place add-on.'); }
-  async imageSlots() { return []; }
-  async assertImageSlot() { throw new PlatformError(409, 'image_payment_required', 'Another image needs a verified one-time photo payment.'); }
 
   async assertAccountDeletable() {}
 
@@ -292,21 +291,12 @@ export class StripeBillingService {
     return { url: session.url, id: session.id, environment: this.environment };
   }
 
+  // A place bought in a store (#272) counts the same as one paid for here.
   async assertLocationCapacity(userId, journeyId, momentId, locationCount) {
-    const slots = await this.pool.query(`SELECT m.location_billing_baseline,count(mls.id)::int AS count FROM journey_moments m LEFT JOIN moment_location_slots mls ON mls.moment_id=m.id AND mls.payer_user_id=$3 AND mls.environment=$4 AND mls.state IN ('active','grace') WHERE m.id=$1 AND m.journey_id=$2 GROUP BY m.location_billing_baseline`, [momentId, journeyId, userId, this.environment]);
+    const paid = paidEnvironments(this.config, { environment: 'mls.environment', payer: 'mls.payer_user_id', from: 4 });
+    const slots = await this.pool.query(`SELECT m.location_billing_baseline,count(mls.id)::int AS count FROM journey_moments m LEFT JOIN moment_location_slots mls ON mls.moment_id=m.id AND mls.payer_user_id=$3 AND ${paid.sql} AND mls.state IN ('active','grace') WHERE m.id=$1 AND m.journey_id=$2 GROUP BY m.location_billing_baseline`, [momentId, journeyId, userId, ...paid.params]);
     const required = Math.max(0, Number(locationCount) - Number(slots.rows[0]?.location_billing_baseline || 1));
     if (!slots.rowCount || Number(slots.rows[0].count) < required) throw new PlatformError(409, 'location_payment_required', 'Another place needs an active monthly place add-on.');
-  }
-
-  async imageSlots(userId, journeyId, momentId) {
-    const slots = await this.pool.query(`SELECT mis.id,mis.state FROM moment_image_slots mis JOIN journey_members jm ON jm.journey_id=mis.journey_id AND jm.user_id=$1 WHERE mis.journey_id=$2 AND mis.moment_id=$3 AND mis.payer_user_id=$1 AND mis.environment=$4 ORDER BY mis.created_at`, [userId, journeyId, momentId, this.environment]);
-    return slots.rows.map((slot) => ({ id: slot.id, state: slot.state }));
-  }
-
-  async assertImageSlot(userId, journeyId, momentId, slotId) {
-    if (!REQUEST_ID.test(String(slotId || ''))) throw new PlatformError(409, 'image_payment_required', 'Another image needs a verified one-time photo payment.');
-    const slot = await this.pool.query(`SELECT id FROM moment_image_slots WHERE id=$1 AND journey_id=$2 AND moment_id=$3 AND payer_user_id=$4 AND environment=$5 AND state='active' AND used_at IS NULL`, [slotId, journeyId, momentId, userId, this.environment]);
-    if (!slot.rowCount) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
   }
 
   async createPortalSession(userId, journeyId) {
@@ -351,12 +341,14 @@ export class StripeBillingService {
     }
   }
 
+  // The web billing page, about the web's subscription. Room bought in a store, or a pass waiting
+  // to start, is not this page's to show as "the" entitlement; capacity reads every source.
   async status(userId, journeyId) {
     const owner = await this.requireJourneyOwner(userId, journeyId);
     const [entitlements, subscriptions, invoices] = await Promise.all([
       this.pool.query(
         `SELECT capability,source,state,quantity,effective_at,expires_at,last_verified_at,reason
-         FROM billing_entitlements WHERE journey_id=$1 AND environment=$2 ORDER BY updated_at DESC`,
+         FROM billing_entitlements WHERE journey_id=$1 AND environment=$2 AND source='stripe' ORDER BY updated_at DESC`,
         [journeyId, this.environment],
       ),
       this.pool.query(

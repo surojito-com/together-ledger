@@ -407,6 +407,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .money-fields > div { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) minmax(190px, .55fr); }
 .money-fields label { display: block; }
 .moment-image-field input[type="file"] { padding: 10px; }
+.moment-image-privacy { display: block; margin-top: 6px; }
 .moment-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .moment-image-attachment { align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-s); color: var(--ink); cursor: pointer; display: inline-flex; gap: 10px; max-width: 100%; padding: 8px 10px; text-align: left; }
 .moment-image-attachment img { background: var(--soft); border-radius: var(--radius-xs); height: 64px; object-fit: cover; width: 64px; }

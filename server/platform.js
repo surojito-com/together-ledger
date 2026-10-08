@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
 import { appleEventFrom, appleSignInFor } from './apple.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
+import { PhotoMetadataError, stripPhotoMetadata } from '../src/photo-metadata.js';
 import {
   assertPassword,
   csrfForSession,
@@ -995,6 +997,18 @@ export class PlatformService {
     );
   }
 
+  // The extra photos this person has paid for on a moment, whichever way they paid: a Stripe
+  // payment or a store purchase (#272). Same shape as the web billing service has always returned.
+  async imageSlots(userId, journeyId, momentId) {
+    const paid = paidEnvironments(this.config, { environment: 'mis.environment', payer: 'mis.payer_user_id', from: 4 });
+    const slots = await this.pool.query(
+      `SELECT mis.id,mis.state FROM moment_image_slots mis JOIN journey_members jm ON jm.journey_id=mis.journey_id AND jm.user_id=$1
+       WHERE mis.journey_id=$2 AND mis.moment_id=$3 AND mis.payer_user_id=$1 AND ${paid.sql} ORDER BY mis.created_at,mis.id`,
+      [userId, journeyId, momentId, ...paid.params],
+    );
+    return slots.rows.map((slot) => ({ id: slot.id, state: slot.state }));
+  }
+
   async lockJourney(client, journeyId) {
     if (this.config.NODE_ENV !== 'test') await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [journeyId]);
   }
@@ -1012,16 +1026,23 @@ export class PlatformService {
     return queue.rows.map((row) => row.user_id);
   }
 
-  // What the journey's payment allows now. A grace lasts until its automatic end, or until the
-  // last week the payer asked for during this lapse. Once that has passed the journey rests: no
-  // banner and no asking, even while Stripe has neither been paid nor cancelled (its 'unpaid'
-  // and 'paused' states), so a payment given up on cannot keep a grace alive year after year.
+  // What the journey's payment allows now. Room can be paid for on the web or in a store (#267,
+  // #272), and a pass can be bought to start when the running one ends, so only what has started
+  // counts. Until the rules for holding more than one are settled (#274, #276), the journey has
+  // the most generous room it holds that is fully paid, then the most generous in grace.
+  //
+  // A grace lasts until its automatic end, or until the last week the payer asked for during this
+  // lapse. Once that has passed the journey rests: no banner and no asking, even while Stripe has
+  // neither been paid nor cancelled (its 'unpaid' and 'paused' states), so a payment given up on
+  // cannot keep a grace alive year after year. A store row stays 'active' past its end, so every
+  // row is judged by its own dates, never by its place in the order.
   async paymentFor(client, journeyId) {
+    const paid = paidEnvironments(this.config, { from: 3 });
     const entitlements = await client.query(
-      `SELECT id,state,quantity,expires_at,payer_user_id FROM billing_entitlements
-       WHERE journey_id=$1 AND capability=$2 AND environment=$3 AND state IN ('active','grace')
-       ORDER BY updated_at DESC`,
-      [journeyId, CAPACITY_CAPABILITY, this.config.stripeEnvironment],
+      `SELECT id,state,quantity,effective_at,expires_at,payer_user_id FROM billing_entitlements
+       WHERE journey_id=$1 AND capability=$2 AND ${paid.sql} AND state IN ('active','grace')
+       ORDER BY CASE WHEN state='active' THEN 0 ELSE 1 END, quantity DESC, updated_at DESC`,
+      [journeyId, CAPACITY_CAPABILITY, ...paid.params],
     );
     const now = this.now();
     const calendarYear = now.getUTCFullYear();
@@ -1040,8 +1061,12 @@ export class PlatformService {
       }
       return { ...row, until };
     });
-    const live = rows.find((row) => !row.until || row.until > now) || null;
-    const grace = live?.state === 'grace' ? live : null;
+    const started = (row) => !row.effective_at || new Date(row.effective_at) <= now;
+    const current = rows.filter((row) => started(row) && (!row.until || row.until > now));
+    const live = current[0] || null;
+    // Paid room that is running means the journey is not waiting on a payment. Otherwise the
+    // grace is the first one still running, found by its state rather than taken from the top.
+    const grace = live?.state === 'grace' ? current.find((row) => row.state === 'grace') : null;
     return {
       live,
       grace,
@@ -1596,6 +1621,20 @@ export class PlatformService {
   async uploadMomentImage(userId, journeyId, momentId, contentType, bytes, paidSlotId = null, originalFilename = '') {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) throw new PlatformError(400, 'unsupported_image', 'Choose a JPEG, PNG, or WebP image.');
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 25 * 1024 * 1024) throw new PlatformError(400, 'invalid_image', 'Choose an image no larger than 25 MB.');
+    // The device removes a photo's location and camera details before sending it (#258). This does
+    // it again before anything is stored, because an older client or a hand-made request may not
+    // have. What is stored is the cleaned file, under the type its bytes really are. Only a member
+    // of the journey gets as far as the file being read; the transaction below checks again.
+    await this.requireMember(this.pool, userId, journeyId);
+    let photo;
+    try {
+      photo = stripPhotoMetadata(bytes);
+    } catch (error) {
+      if (error instanceof PhotoMetadataError) throw new PlatformError(400, 'unreadable_image', error.message);
+      throw error;
+    }
+    const storedType = photo.contentType;
+    const stored = Buffer.from(photo.bytes.buffer, photo.bytes.byteOffset, photo.bytes.byteLength);
     return withTransaction(this.pool, async (client) => {
       await this.requireMember(client, userId, journeyId);
       await this.lockJourney(client, journeyId);
@@ -1604,10 +1643,12 @@ export class PlatformService {
       const existing = await client.query('SELECT id FROM moment_images WHERE moment_id=$1 FOR UPDATE', [momentId]);
       if (existing.rowCount && !paidSlotId) throw new PlatformError(409, 'included_image_already_used', 'This moment already holds its included image. Another image needs a one-time photo payment.');
       if (paidSlotId) {
-        const slot = await client.query(`UPDATE moment_image_slots SET used_at=$1,updated_at=$1 WHERE id=$2 AND journey_id=$3 AND moment_id=$4 AND payer_user_id=$5 AND environment=$6 AND state='active' AND used_at IS NULL RETURNING id`, [this.now(), paidSlotId, journeyId, momentId, userId, this.config.stripeEnvironment]);
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(paidSlotId))) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
+        const paid = paidEnvironments(this.config, { from: 6 });
+        const slot = await client.query(`UPDATE moment_image_slots SET used_at=$1,updated_at=$1 WHERE id=$2 AND journey_id=$3 AND moment_id=$4 AND payer_user_id=$5 AND ${paid.sql} AND state='active' AND used_at IS NULL RETURNING id`, [this.now(), paidSlotId, journeyId, momentId, userId, ...paid.params]);
         if (!slot.rowCount) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
       }
-      const image = await client.query(`INSERT INTO moment_images (id,journey_id,moment_id,uploaded_by_user_id,content_type,content_length,bytes,paid_slot_id,original_filename) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), journeyId, momentId, userId, contentType, bytes.length, bytes, paidSlotId, cleanImageFilename(originalFilename, contentType)]);
+      const image = await client.query(`INSERT INTO moment_images (id,journey_id,moment_id,uploaded_by_user_id,content_type,content_length,bytes,paid_slot_id,original_filename) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), journeyId, momentId, userId, storedType, stored.length, stored, paidSlotId, cleanImageFilename(originalFilename, storedType)]);
       return publicMomentImage(image.rows[0]);
     });
   }
@@ -1829,6 +1870,10 @@ export class PlatformService {
         const others = await client.query('SELECT * FROM journey_members WHERE journey_id=$1 AND user_id<>$2 ORDER BY joined_at LIMIT 1', [membership.journey_id, userId]);
         if (!others.rowCount) {
           if (this.config.NODE_ENV !== 'test') await client.query(`SET LOCAL together.allow_event_purge='on'`);
+          // Room bought in a store goes with the journey it was for. What was bought, and when,
+          // stays in billing_store_purchases, which names the journey without depending on it
+          // (migration 028), for a refund or a reconciliation that arrives later.
+          await client.query(`DELETE FROM billing_entitlements WHERE journey_id=$1 AND source IN ('apple','google')`, [membership.journey_id]);
           await client.query('DELETE FROM journeys WHERE id=$1', [membership.journey_id]);
         } else {
           await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [membership.journey_id, userId]);

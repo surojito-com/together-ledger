@@ -5,6 +5,7 @@ import { createPool, runMigrations } from './db.js';
 import { loggerOptions } from './log-options.js';
 import { ConsoleBlockedMailer, SmtpMailer } from './mailer.js';
 import { PlatformService } from './platform.js';
+import { createStorePurchaseService } from './store-purchases.js';
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -28,9 +29,11 @@ const platform = new PlatformService({
 // Journeys migration 029 moved from fully paused to read-only get their history entry here, once.
 await platform.recordRestingMadeReadOnly();
 const billing = createBillingService({ pool, config });
+const store = config.storePurchasesConfigured ? createStorePurchaseService({ pool, config, platform }) : null;
 const app = await buildApp({
   platform,
   billing,
+  store,
   config,
   logger: loggerOptions,
 });
@@ -44,8 +47,18 @@ const appleRetry = setInterval(() => {
 }, 10 * 60 * 1000);
 appleRetry.unref();
 
+// Google refunds a purchase nobody acknowledged within three days (#272). One that could not be
+// acknowledged when it was granted is tried again here every ten minutes, with backoff.
+const googleAcknowledgements = store ? setInterval(() => {
+  store.acknowledgePending()
+    .then((tally) => { if (tally.acknowledged || tally.retrying) app.log.info(tally, 'google acknowledgements'); })
+    .catch((error) => app.log.error({ err: { name: error?.name } }, 'google acknowledgements failed'));
+}, 10 * 60 * 1000) : null;
+googleAcknowledgements?.unref();
+
 async function shutdown(signal) {
   clearInterval(appleRetry);
+  if (googleAcknowledgements) clearInterval(googleAcknowledgements);
   app.log.info({ signal }, 'shutting down');
   await app.close();
   await pool.end();

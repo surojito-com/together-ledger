@@ -8,6 +8,8 @@ import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
 import { loggerOptions, redactUrl } from '../server/log-options.js';
+import { stripPhotoMetadata } from '../src/photo-metadata.js';
+import { jpegOfRestarts, webpOfEmptyChunks } from './fixtures/photos/crafted.js';
 
 const origin = 'http://127.0.0.1:4174';
 const appOrigin = 'https://app.together-ledger.com';
@@ -171,10 +173,12 @@ test('hosted moment images can be named, retrieved, and removed by an authorized
   });
   assert.equal(momentResponse.statusCode, 201, momentResponse.body);
   const moment = momentResponse.json().data.moment;
+  const photo = await readFile(new URL('./fixtures/photos/sideways-with-gps.png', import.meta.url));
+  const inserted = recordImageInserts(pool);
   const uploadResponse = await app.inject({
     method: 'POST', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images`,
     headers: { ...authHeaders(alice), 'content-type': 'image/png', 'x-together-image-name': encodeURIComponent('A quiet photo.png') },
-    payload: Buffer.from('image-bytes'),
+    payload: photo,
   });
   assert.equal(uploadResponse.statusCode, 201, uploadResponse.body);
   const image = uploadResponse.json().data.image;
@@ -182,11 +186,109 @@ test('hosted moment images can be named, retrieved, and removed by an authorized
   const fetched = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images/${image.id}`, headers: { cookie: alice.cookie } });
   assert.equal(fetched.statusCode, 200, fetched.body);
   assert.equal(fetched.headers['content-type'], 'image/png');
-  assert.deepEqual(fetched.rawPayload, Buffer.from('image-bytes'));
+  assert.deepEqual(inserted[0], Buffer.from(stripPhotoMetadata(photo).bytes));
   const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images/${image.id}`, headers: authHeaders(alice) });
   assert.equal(removed.statusCode, 204, removed.body);
   const retained = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images/${image.id}`, headers: { cookie: alice.cookie } });
   assert.equal(retained.statusCode, 200, retained.body);
+});
+
+// pg-mem cannot carry a binary bytea: every byte that is not UTF-8 comes back as U+FFFD. So these
+// tests check the bytes the server hands the database; tests/postgres-integration.test.js proves
+// the same photo comes back out of a real PostgreSQL unchanged.
+function recordImageInserts(pool) {
+  const inserted = [];
+  const query = pool.query.bind(pool);
+  pool.query = (text, values, ...rest) => {
+    if (typeof text === 'string' && text.startsWith('INSERT INTO moment_images')) inserted.push(values[6]);
+    return query(text, values, ...rest);
+  };
+  return inserted;
+}
+
+// The device removes a photo's location and camera details before it is sent (#258). The server
+// does it again, because an older client or a hand-made request may not have.
+test('a photo sent with its metadata is stored without it, and one that cannot be read is refused', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const alice = await register(app, mailer, { email: 'photo-sender@example.test', username: 'photo-sender' });
+  const journeyResponse = await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
+    payload: { name: 'Photos from far away', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  });
+  const journey = journeyResponse.json().data.journey;
+  const upload = async (file, contentType) => {
+    const momentResponse = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+      payload: { kind: 'memory', title: `A photo, ${file}`, detail: '', occurredOn: '2026-10-07', visibility: 'shared-now', moneyCents: null, moneyCurrency: '' },
+    });
+    const moment = momentResponse.json().data.moment;
+    const bytes = file.includes('.') ? await readFile(new URL(`./fixtures/photos/${file}`, import.meta.url)) : Buffer.from(file);
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images`,
+      headers: { ...authHeaders(alice), 'content-type': contentType }, payload: bytes,
+    });
+    if (response.statusCode !== 201) return { response };
+    const image = response.json().data.image;
+    const fetched = await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images/${image.id}`, headers: { cookie: alice.cookie } });
+    const stored = await pool.query('SELECT content_type, content_length FROM moment_images WHERE id=$1', [image.id]);
+    return { response, image, bytes, fetched, stored: { ...stored.rows[0], bytes: inserted.at(-1) } };
+  };
+  const inserted = recordImageInserts(pool);
+
+  for (const [file, contentType] of [['sideways-with-gps.jpg', 'image/jpeg'], ['progressive-with-gps.jpg', 'image/jpeg'], ['sideways-with-gps.png', 'image/png'], ['sideways-with-gps.webp', 'image/webp']]) {
+    const { response, bytes, fetched, stored } = await upload(file, contentType);
+    assert.equal(response.statusCode, 201, `${file}: ${response.body}`);
+    const clean = Buffer.from(stripPhotoMetadata(bytes).bytes);
+    assert.ok(clean.length < bytes.length);
+    assert.deepEqual(stored.bytes, clean, `${file} is stored cleaned`);
+    assert.equal(Number(stored.content_length), clean.length);
+    assert.equal(stored.content_type, contentType);
+    assert.equal(fetched.statusCode, 200, fetched.body);
+    for (const word of ['Kolkata', 'Fixture Camera Co', 'SN-FIXTURE-0042', 'ns.adobe.com/xap']) assert.equal(stored.bytes.includes(word), false, `${file} still carries ${word}`);
+  }
+
+  // A PNG labelled as a JPEG is stored, and served, as the PNG it is.
+  const relabelled = await upload('sideways-with-gps.png', 'image/jpeg');
+  assert.equal(relabelled.response.statusCode, 201, relabelled.response.body);
+  assert.equal(relabelled.image.contentType, 'image/png');
+  assert.equal(relabelled.fetched.headers['content-type'], 'image/png');
+
+  const unreadable = await upload('not a photo at all', 'image/jpeg');
+  assert.equal(unreadable.response.statusCode, 400, unreadable.response.body);
+  assert.equal(unreadable.response.json().error.code, 'unreadable_image');
+});
+
+// A file built to make the strip expensive is refused quickly, and only a journey member's upload
+// is read at all (#332 review).
+test('a crafted 25 MB upload is refused at once, and a non-member never gets it read', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const alice = await register(app, mailer, { email: 'crafted-owner@example.test', username: 'crafted-owner' });
+  const bob = await register(app, mailer, { email: 'crafted-stranger@example.test', username: 'crafted-stranger' });
+  const journey = (await app.inject({
+    method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice),
+    payload: { name: 'Not for strangers', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 },
+  })).json().data.journey;
+  const moment = (await app.inject({
+    method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice),
+    payload: { kind: 'memory', title: 'A moment', detail: '', occurredOn: '2026-10-08', visibility: 'shared-now', moneyCents: null, moneyCurrency: '' },
+  })).json().data.moment;
+  const send = (who, contentType, payload) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}/images`, headers: { ...authHeaders(who), 'content-type': contentType }, payload });
+
+  for (const [contentType, payload] of [['image/jpeg', jpegOfRestarts()], ['image/webp', webpOfEmptyChunks()]]) {
+    const started = performance.now();
+    const response = await send(alice, contentType, payload);
+    const elapsed = performance.now() - started;
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error.code, 'unreadable_image');
+    assert.ok(elapsed < 3000, `${contentType} took ${Math.round(elapsed)} ms`);
+  }
+
+  // Refused for access, not for the file: a stranger's upload never reaches the strip.
+  const stranger = await send(bob, 'image/jpeg', jpegOfRestarts());
+  assert.equal(stranger.statusCode, 403, stranger.body);
+  assert.equal(stranger.json().error.code, 'forbidden');
 });
 
 test('TC-00010 through TC-00120 prove the shared journey is clear and durable', async (t) => {
@@ -1371,6 +1473,24 @@ test('seven weeks a calendar year, counted again from January 1', async (t) => {
   clock.now = new Date('2027-01-01T00:00:00.000Z');
   assert.equal((await capacityFor(owner)).grace.requestsUsed, 0);
   assert.equal((await ask(owner)).grace.requestsUsed, 1);
+});
+
+test('a store row left active past its end, or a pass not yet started, never hides a grace', async (t) => {
+  const clock = { now: new Date('2026-08-02T12:00:00.000Z') };
+  const { pool, owner, journeyId, capacityFor, ask } = await journeyInGrace(t, clock);
+  // A store subscription stays 'active' after it ends, and is ordered first, most generous first.
+  // So is a bigger pass bought to start later. Neither is room today.
+  await pool.query(
+    `INSERT INTO billing_entitlements (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,effective_at,expires_at,last_verified_at,created_at,updated_at)
+     VALUES ($1,$2,$3,'additional-journey-capacity','apple','test','store-ended','active',99,$4,$5,$6,$6,$6),
+            ($7,$2,$3,'additional-journey-capacity','apple','test','store-later','active',99,$8,$9,$6,$6,$6)`,
+    ['77777777-1111-4111-8111-111111111111', owner.user.id, journeyId, new Date('2026-07-01T12:00:00.000Z'), new Date('2026-08-01T12:00:00.000Z'), clock.now,
+      '77777777-2222-4222-8222-222222222222', new Date('2026-08-20T12:00:00.000Z'), new Date('2026-09-20T12:00:00.000Z')],
+  );
+  const capacity = await capacityFor(owner);
+  assert.equal(capacity.grace?.endsAt, '2026-08-09T12:00:00.000Z', 'the grace still shows');
+  assert.equal(capacity.canInvite, false, 'and invitations still wait, as in any grace');
+  assert.equal((await ask(owner)).grace.endsAt, '2026-08-16T12:00:00.000Z', 'and the payer can still ask');
 });
 
 test('weeks asked for during one lapse are not carried into the next', async (t) => {
