@@ -1,3 +1,5 @@
+import { stripPhotoMetadata } from './photo-metadata.js';
+
 export class ApiError extends Error {
   constructor(message, { code = 'request_failed', status = 0 } = {}) {
     super(message);
@@ -122,10 +124,14 @@ export class TogetherApi {
     return response.blob();
   }
 
+  // The photo's location and camera details are removed here, before anything is sent (#258). The
+  // dialog has usually done it already, when the photo was picked; doing it again costs nothing
+  // and means no caller can send a photo as it came. A file that cannot be read is not sent.
   async uploadMomentImage(journeyId, momentId, file, paidSlotId = '') {
+    const { bytes, contentType } = stripPhotoMetadata(new Uint8Array(await file.arrayBuffer()));
     const slot = paidSlotId ? `?paidSlotId=${encodeURIComponent(paidSlotId)}` : '';
     const response = await fetch(`${this.base}/journeys/${encodeURIComponent(journeyId)}/moments/${encodeURIComponent(momentId)}/images${slot}`, {
-      method: 'POST', credentials: this.crossOrigin ? 'include' : 'same-origin', headers: { 'Content-Type': file.type, 'X-Together-CSRF': this.csrfToken, 'X-Together-Image-Name': encodeURIComponent(file.name) }, body: file,
+      method: 'POST', credentials: this.crossOrigin ? 'include' : 'same-origin', headers: { 'Content-Type': contentType, 'X-Together-CSRF': this.csrfToken, 'X-Together-Image-Name': encodeURIComponent(file.name) }, body: bytes,
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new ApiError(payload?.error?.message || 'The image could not be added.', { code: payload?.error?.code, status: response.status });

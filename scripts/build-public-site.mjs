@@ -12,6 +12,7 @@ const publicFiles = [
   'src/app.js',
   'src/model.js',
   'src/moment-themes.js',
+  'src/photo-metadata.js',
   'src/store.js',
   'src/styles.css',
   'src/themes.js',
