@@ -38,6 +38,7 @@ const MIGRATIONS = [
   '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
   '026_remember-a-refused-apple-deletion.sql',
+  '031_let-a-lost-renewal-reply-be-asked-again.sql',
 ];
 
 function provider(kid) {

@@ -14,7 +14,9 @@ async function importMobile(path) {
 const read = (path) => readFile(new URL(path, mobile), 'utf8');
 const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
 
-const { STATUS_TONES, showStatus, clearStatus, closeDialog } = await importMobile('src/shell/status.ts');
+const { STATUS_TONES, CONNECTION_MESSAGES, showStatus, clearStatus, closeDialog } = await importMobile('src/shell/status.ts');
+const { OFFLINE_NOTICE, CONNECTION_SOURCE, connectionChange } = await importMobile('src/shell/connection.ts');
+const { OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
 const { openingSurface } = await importMobile('src/shell/surface.ts');
 const { TOAST_MS, PENDING_LABEL, KEEP_LABEL } = await importMobile('src/shell/defaults.ts');
 
@@ -33,6 +35,41 @@ test('messages clear per source, so a returning connection never wipes a problem
   assert.equal(clearStatus(offline, 'connection'), null, 'reconnecting clears its own notice');
   assert.equal(clearStatus(problem), null, 'Dismiss clears whatever is showing');
   assert.equal(clearStatus(null, 'connection'), null);
+});
+
+// #300, #352: offline, or the service out of reach, loses nothing, so it is never the
+// destructive colour. Every other message keeps its tone until #244 decides otherwise.
+test('being offline or out of reach is a caution, never a problem', () => {
+  assert.deepEqual([...CONNECTION_MESSAGES], [OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE], 'the account client\'s own words, held the same in both files');
+  assert.equal(showStatus(OFFLINE_MESSAGE, { source: 'moment' }).tone, 'caution');
+  assert.equal(showStatus(UNAVAILABLE_MESSAGE).tone, 'caution');
+  assert.equal(showStatus('The service could not complete that request.').tone, 'problem', 'other problems are left as they are');
+  assert.equal(showStatus(OFFLINE_MESSAGE, { tone: 'problem' }).tone, 'problem', 'a caller that names a tone still gets it');
+});
+
+test('the phone watches its connection, shows a standing caution, and clears it when the connection returns', async () => {
+  assert.equal(connectionChange(null, false), 'went-offline', 'opening the app offline says so');
+  assert.equal(connectionChange(null, true), null, 'opening it online changes nothing');
+  assert.equal(connectionChange(true, false), 'went-offline');
+  assert.equal(connectionChange(false, true), 'came-back');
+  assert.equal(connectionChange(false, false), null);
+  assert.equal(connectionChange(false, null), null, 'not knowing yet is not coming back');
+
+  // The web promises that anything "will wait". Nothing waits on the phone yet, so it says only what is true.
+  assert.doesNotMatch(OFFLINE_NOTICE, /\bwait/);
+  assert.match(OFFLINE_NOTICE, /^You are offline\./, 'it opens as the web\'s does');
+
+  const layout = await read('app/_layout.tsx');
+  assert.match(layout, /onOffline: \(\) => showStatus\(OFFLINE_NOTICE, \{ tone: 'caution', source: CONNECTION_SOURCE \}\)/);
+  assert.match(layout, /onOnline: \(\) => \{\s*clearStatus\(CONNECTION_SOURCE\);\s*recheck\(\);/, 'back online clears only its own notice, then checks again');
+  assert.match(layout, /onForeground: recheck/);
+  assert.match(layout, /const recheck = useCallback\(\(\) => \{\s*refresh\(\);\s*reload\(\);/, 'checking again means the session and the journeys, with no restart or password');
+  assert.equal(CONNECTION_SOURCE, 'connection');
+
+  const watch = await read('src/shell/use-connection.ts');
+  assert.match(watch, /from '@react-native-community\/netinfo'/);
+  assert.match(watch, /NetInfo\.configure\(\{ reachabilityShouldRun: \(\) => false \}\)/, 'the library never asks Google whether the internet can be reached');
+  assert.match(watch, /AppState\.addEventListener\('change'/);
 });
 
 test('a problem raised inside a dialog leaves with it; one raised on the screen stays', () => {
