@@ -69,3 +69,11 @@ test('sign-in tokens are kept out of Android cloud backup and device transfer, a
   assert.match(tokenStorage, /from 'expo-secure-store'/);
   assert.match(tokenStorage, /WHEN_UNLOCKED_THIS_DEVICE_ONLY/, 'on iOS the keychain item stays on this device');
 });
+
+test('the APK check fails when it reads nothing, rather than passing an empty list', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/phone-test-apk.yml', import.meta.url), 'utf8');
+  const step = workflow.slice(workflow.indexOf('- name: Check the APK asks only for the network'));
+  assert.match(step, /set -euo pipefail/, 'a missing aapt2 or APK must not hide behind tee');
+  assert.match(step, /grep -qxF android\.permission\.INTERNET/, 'a list without INTERNET means the read failed');
+  assert.match(step, /uses-permission\(-sdk-23\)\?/, 'uses-permission-sdk-23 grants a permission too');
+});

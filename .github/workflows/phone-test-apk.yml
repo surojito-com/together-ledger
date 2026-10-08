@@ -50,12 +50,22 @@ jobs:
       # build time. This reads them from the built APK and fails if it asks for more than the
       # network (#258). The DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION androidx.core adds is the
       # app's own signature permission, which nothing outside the app can hold.
+      #
+      # It must never pass on reading nothing: pipefail stops a missing aapt2 or APK being hidden
+      # behind tee, and a list without INTERNET (which the app always asks for) means the read
+      # failed, not that the APK is clean. Android 6+ grants uses-permission-sdk-23 the same way.
       - name: Check the APK asks only for the network
         run: |
+          set -euo pipefail
           aapt2="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/aapt2"
           "$aapt2" dump permissions apps/mobile/android/app/build/outputs/apk/release/app-release.apk | tee permissions.txt
           { echo '### Permissions in the APK'; echo '```'; cat permissions.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          unexpected="$(grep -oP "uses-permission: name='\K[^']+" permissions.txt | grep -vxF -e android.permission.INTERNET -e com.togetherledger.ledger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION || true)"
+          requested="$(grep -oP "uses-permission(-sdk-23)?: name='\K[^']+" permissions.txt || true)"
+          if ! grep -qxF android.permission.INTERNET <<< "$requested"; then
+            echo "::error::No android.permission.INTERNET in what was read from the APK, so the read failed; this check cannot vouch for it."
+            exit 1
+          fi
+          unexpected="$(grep -vxF -e android.permission.INTERNET -e com.togetherledger.ledger.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION <<< "$requested" || true)"
           if [ -n "$unexpected" ]; then
             echo "::error::The APK asks for permissions apps/mobile/app.json does not grant: $unexpected"
             exit 1
