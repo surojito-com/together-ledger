@@ -588,13 +588,15 @@ test('delayed invoice events cannot restore stale payment state or paid capacity
   )).rows[0];
   assert.deepEqual(entitlement, { state: 'active', quantity: 1 });
 
+  // Cancelled without a failed payment, so its room ends into the automatic grace (owner, Oct 8,
+  // 2026). A paid invoice arriving late still cannot make it active again.
   await deliver(subscription('evt_subscription_canceled', base + 50, 'canceled', 1));
   await deliver(invoice('evt_invoice_paid_after_cancellation', base + 60, 'invoice.paid'));
   entitlement = (await pool.query(
     `SELECT state,quantity FROM billing_entitlements
      WHERE source_record_id='sub_test_ordering'`,
   )).rows[0];
-  assert.deepEqual(entitlement, { state: 'expired', quantity: 1 });
+  assert.deepEqual(entitlement, { state: 'grace', quantity: 1 });
 });
 
 test('a payment that fails again keeps the first 7 days of grace, and the owner sees the weeks asked for', async (t) => {
@@ -648,6 +650,96 @@ test('a payment that fails again keeps the first 7 days of grace, and the owner 
   const extended = (await billing.status(userId, journeyId)).entitlement;
   assert.equal(extended.state, 'grace');
   assert.equal(new Date(extended.expiresAt).toISOString(), '2026-09-21T19:00:00.000Z');
+});
+
+// Whenever paid room ends without being renewed, the journey gets the 7 automatic days, a web
+// subscription the payer cancels included (owner, Oct 8, 2026). An ending Stripe made because
+// payment failed gets no second grace: that subscription has had its grace already.
+async function stripeLifecycle(t, subscriptionId, requestId) {
+  const pool = await billingPool();
+  t.after(async () => pool.end());
+  const billing = new StripeBillingService({ pool, config: billingConfig(), stripe: fakeStripe(), now: () => now });
+  await billing.createCheckoutSession(userId, journeyId, { offerId: 'additional-person-monthly', paidCapacity: 1, requestId });
+  const base = Math.floor(now.getTime() / 1000);
+  const metadata = { together_user_id: userId, together_journey_id: journeyId, together_offer_id: 'additional-person-monthly', together_paid_capacity: '1' };
+  const deliver = (event) => billing.handleWebhook(Buffer.from(JSON.stringify(event)), 'valid-signature');
+  const subscription = (id, created, status, extra = {}) => deliver({
+    id, type: status === 'canceled' ? 'customer.subscription.deleted' : 'customer.subscription.updated', created, livemode: false,
+    data: { object: {
+      id: subscriptionId, customer: 'cus_test_member', status, created: base,
+      current_period_start: base, current_period_end: base + 2_592_000, cancel_at_period_end: false, metadata,
+      items: { data: [{ quantity: 1, price: { id: 'price_additional_person_test' } }] }, ...extra,
+    } },
+  });
+  const failed = (id, created) => deliver({
+    id, type: 'invoice.payment_failed', created, livemode: false,
+    data: { object: {
+      id: `in_${id}`, object: 'invoice', customer: 'cus_test_member', status: 'open', created,
+      amount_due: 100, amount_paid: 0, currency: 'usd',
+      parent: { subscription_details: { subscription: subscriptionId, metadata } },
+      lines: { data: [{ period: { end: base + 2_592_000 } }] },
+    } },
+  });
+  const entitlement = async () => (await pool.query(
+    'SELECT state,reason,expires_at FROM billing_entitlements WHERE source_record_id=$1', [subscriptionId],
+  )).rows[0];
+  return { billing, base, subscription, failed, entitlement };
+}
+
+test('a web subscription the payer cancels gets 7 days of grace from when its room ends', async (t) => {
+  const { billing, base, subscription, entitlement } = await stripeLifecycle(t, 'sub_test_cancelled', 'aaaaaaaa-2222-4222-8222-222222222222');
+  await subscription('evt_cancel_active', base, 'active');
+
+  // Cancelled at the end of the paid month. Stripe's canceled_at is when the payer asked, a day
+  // in; the room ended when the month did (ended_at), and the grace runs 7 days from there.
+  const ended = base + 2_592_000;
+  const cancelled = { cancellation_details: { reason: 'cancellation_requested' }, canceled_at: base + 86_400, ended_at: ended };
+  await subscription('evt_cancel_ended', ended, 'canceled', cancelled);
+  const graceEnd = new Date((ended + 7 * 86_400) * 1000).toISOString();
+  let row = await entitlement();
+  assert.equal(row.state, 'grace');
+  assert.equal(row.reason, 'subscription_ended');
+  assert.equal(new Date(row.expires_at).toISOString(), graceEnd);
+
+  // The same ending told again, by a retry or by reconciliation, keeps the same automatic end, so
+  // the weeks asked for on top of it still line up.
+  await subscription('evt_cancel_ended_again', ended + 600, 'canceled', cancelled);
+  row = await entitlement();
+  assert.equal(row.state, 'grace');
+  assert.equal(new Date(row.expires_at).toISOString(), graceEnd);
+  assert.equal((await billing.status(userId, journeyId)).entitlement.state, 'grace');
+});
+
+test('a web subscription Stripe ends after a failed payment gets no second grace', async (t) => {
+  const { base, subscription, failed, entitlement } = await stripeLifecycle(t, 'sub_test_failed_end', 'aaaaaaaa-3333-4333-8333-333333333333');
+  await subscription('evt_failed_active', base, 'active');
+  await failed('evt_failed_payment', base + 10);
+  assert.equal((await entitlement()).state, 'grace');
+
+  // Stripe gives up on the payment and cancels. Its grace was the first one.
+  await subscription('evt_failed_canceled', base + 20 * 86_400, 'canceled', { cancellation_details: { reason: 'payment_failed' }, ended_at: base + 20 * 86_400 });
+  const row = await entitlement();
+  assert.equal(row.state, 'expired');
+  assert.equal(row.reason, 'subscription_canceled');
+});
+
+test('a web subscription ended for a failed payment gets no grace even when Stripe gives no reason', async (t) => {
+  const { base, subscription, failed, entitlement } = await stripeLifecycle(t, 'sub_test_failed_quiet', 'aaaaaaaa-4444-4444-8444-444444444444');
+  await subscription('evt_quiet_active', base, 'active');
+  await failed('evt_quiet_payment', base + 10);
+  await subscription('evt_quiet_canceled', base + 20 * 86_400, 'canceled');
+  assert.equal((await entitlement()).state, 'expired');
+});
+
+test('a payment that failed and was then paid does not take the grace from a later cancellation', async (t) => {
+  const { base, subscription, failed, entitlement } = await stripeLifecycle(t, 'sub_test_recovered', 'aaaaaaaa-5555-4555-8555-555555555555');
+  await subscription('evt_recovered_active', base, 'active');
+  await failed('evt_recovered_failure', base + 10);
+  await subscription('evt_recovered_paid', base + 3 * 86_400, 'active');
+  await subscription('evt_recovered_canceled', base + 2_592_000, 'canceled', { cancellation_details: { reason: 'cancellation_requested' }, ended_at: base + 2_592_000 });
+  const row = await entitlement();
+  assert.equal(row.state, 'grace');
+  assert.equal(new Date(row.expires_at).toISOString(), new Date((base + 2_592_000 + 7 * 86_400) * 1000).toISOString());
 });
 
 test('reconciliation repairs a missed lifecycle once and reports aggregate attention safely', async (t) => {
