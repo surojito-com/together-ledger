@@ -21,7 +21,7 @@ const MIGRATIONS = [
   '017_keep-one-removed-photo-per-moment', '018_allow-ninety-nine-paid-journey-places', '019_let-moments-carry-their-own-atmosphere',
   '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history', '022_agree-together-before-adding-someone',
   '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account', '025_revoke-sign-in-with-apple-when-an-account-is-deleted',
-  '026_remember-a-refused-apple-deletion', '031_let-a-lost-renewal-reply-be-asked-again',
+  '026_remember-a-refused-apple-deletion', '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days',
 ];
 
 async function database() {

@@ -240,6 +240,14 @@ export function createAccountClient({ base, fetch, tokens }: {
     async withdrawProposal(journeyId: string, proposalId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/invite-proposals/${encodeURIComponent(proposalId)}`, { method: 'DELETE', body: {}, signedIn: true });
     },
+    /** Whoever asked, or the owner, withdraws a sent invitation, and its place is free at once (#347). */
+    async withdrawInvitation(journeyId: string, invitationId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/invitations/${encodeURIComponent(invitationId)}`, { method: 'DELETE', body: {}, signedIn: true });
+    },
+    /** Whoever asked sends one that ran out again, within the agreement's 30 days, asking nobody again (#347). */
+    async sendInvitationAgain(journeyId: string, invitationId: string) {
+      return request<{ invitationSent?: boolean }>(`/journeys/${encodeURIComponent(journeyId)}/invitations/${encodeURIComponent(invitationId)}/send-again`, { method: 'POST', body: {}, signedIn: true });
+    },
     async removeMember(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE', body: {}, signedIn: true });
     },

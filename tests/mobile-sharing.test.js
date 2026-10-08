@@ -332,3 +332,83 @@ test('a full journey says where room comes from on the phone, with no price and 
   assert.doesNotMatch(view.ROOM_IS_THE_JOURNEYS, /\$|\d|month|price|pay|buy|purchase|upgrade|unlock|web|site|browser|seat|slot|licen[cs]e/i);
   assert.ok(web.includes("'There is no open place right now.'"), 'the web\'s own words are unchanged');
 });
+
+// #350 and #347: once everyone has agreed and the invitation is out, the place is reserved for the
+// person, named only as the server masks them, with the time left, and both surfaces say it in the
+// same words. The web's functions are read out of its own source and compared with the phone's.
+test('a place held for someone invited reads as reserved, the same on the phone as on the web', () => {
+  const invitedPerson = webFunction('invitedPerson');
+  const reservedInvitations = webFunction('reservedInvitations');
+  const sharingCopy = webFunction('sharingCopy', ['invitedPerson', invitedPerson]);
+  const reservedPlaceTitle = webFunction('reservedPlaceTitle', ['invitedPerson', invitedPerson]);
+  const splitProposals = webFunction('splitProposals');
+  const dateTimeLabel = webFunction('dateTimeLabel');
+  const sendAgainNote = webFunction('sendAgainNote', ['dateTimeLabel', dateTimeLabel]);
+  const waiting = { id: 'i1', email: 's••d@gmail.com', status: 'pending', invitedByDisplayName: 'Alex', sentAt: '2026-10-08T10:00:00Z', expiresAt: '2026-10-22T10:00:00Z' };
+  const another = { ...waiting, id: 'i2', email: 'a••@gmail.com' };
+  const joined = { ...waiting, id: 'i3', status: 'accepted', joinedDisplayName: 'Sam' };
+  const ranOut = { ...waiting, id: 'i4', status: 'expired', viewerMaySendAgain: true, sendAgainUntil: '2026-11-07T10:00:00Z' };
+  const cases = [
+    [2, true, { held: false, invitations: [] }],
+    [2, false, { held: false, invitations: [] }],
+    [1, false, { held: true, invitations: [waiting] }],
+    [1, false, { held: true, invitations: [waiting, another] }],
+    [2, false, { held: false, invitations: [waiting] }],
+    [3, false, undefined],
+  ];
+  for (const [count, canInvite, reserved] of cases) assert.equal(view.sharingCopy(count, canInvite, reserved), sharingCopy(count, canInvite, reserved));
+  // The owner's words (#350), and "no open place" only where nothing is held for anyone.
+  assert.equal(view.sharingCopy(1, false, { held: true, invitations: [waiting] }), '1 person is here. 1 place is reserved for s••d@gmail.com, waiting for them to accept the invitation. Each person signs in separately.');
+  assert.equal(view.sharingCopy(1, false, { held: true, invitations: [waiting, another] }), '1 person is here. 2 places are reserved, waiting for the people invited to accept. Each person signs in separately.');
+  assert.equal(view.sharingCopy(2, false, { held: false, invitations: [] }), '2 people are here. There is no open place right now. Each person signs in separately.');
+  assert.equal(view.reservedPlaceTitle(waiting), '1 place reserved — waiting for s••d@gmail.com to accept the invitation');
+  assert.equal(view.reservedPlaceTitle(waiting), reservedPlaceTitle(waiting));
+  assert.deepEqual(view.reservedInvitations([waiting, joined, ranOut]), reservedInvitations([waiting, joined, ranOut]));
+  assert.deepEqual(view.reservedInvitations([waiting, joined, ranOut]).map((entry) => entry.id), ['i1']);
+  // Once they've joined, their name; until then, only the mask the server sent.
+  assert.equal(view.invitedPerson(joined), 'Sam');
+  assert.equal(view.invitedPerson(waiting), invitedPerson(waiting));
+  assert.equal(view.sendAgainNote(ranOut), sendAgainNote(ranOut));
+  // "Being decided on" is only for people the journey hasn't finished agreeing on.
+  const proposals = ['open', 'agreed', 'declined', 'withdrawn', 'lapsed'].map((status) => ({ id: status, status }));
+  assert.deepEqual(view.splitProposals(proposals), splitProposals(proposals));
+  assert.deepEqual(view.splitProposals(proposals).deciding.map((entry) => entry.id), ['open']);
+  assert.match(html, /<h4>Places reserved<\/h4>/);
+  assert.match(screens.sharing, /<Section title="Places reserved">/);
+  assert.match(html, /<h4>Proposals already settled<\/h4>/);
+  assert.match(screens.sharing, /<Section title="Proposals already settled">/);
+  assert.match(screens.sharing, /deciding\.map\(\(proposal\) =>/);
+  // Withdraw and send again, in the web's words, on both.
+  const withdraw = view.CONSEQUENCES.withdrawInvitation(waiting.email);
+  assert.ok(web.includes('Withdraw the invitation to ${invitation.email}?'));
+  assert.ok(web.includes(withdraw.consequence));
+  assert.ok(web.includes(`confirmLabel: '${withdraw.confirmLabel}'`));
+  assert.equal(withdraw.destructive, undefined, 'withdrawing is not a failure, and the person can be proposed again');
+  for (const toast of [view.INVITATION_WITHDRAWN, view.INVITATION_SENT_AGAIN]) assert.ok(web.includes(toast), toast);
+  assert.ok(web.includes('>Withdraw the invitation</button>') && screens.sharing.includes('label="Withdraw the invitation"'));
+  assert.ok(web.includes('>Send it again</button>') && screens.sharing.includes('label="Send it again"'));
+  assert.match(screens.sharing, /invitation\.viewerMayWithdraw \?/);
+  assert.match(screens.sharing, /invitation\.viewerMaySendAgain \?/);
+});
+
+// #282: the countdowns said "left" twice ("Time left to join: 29m left").
+test('each countdown says "left" once, and the special values still read naturally, on both', () => {
+  assert.deepEqual({ ...view.COUNTDOWN }, { join: 'Time to join', answer: 'Time to answer' });
+  for (const prefix of Object.values(view.COUNTDOWN)) {
+    assert.ok(web.includes(`'${prefix}'`), `the web's prefix is ${prefix}`);
+    assert.doesNotMatch(prefix, /left/);
+  }
+  assert.doesNotMatch(web, /Time left to (join|answer)/);
+  assert.doesNotMatch(screens.sharing, /Time left to (join|answer)/);
+  const now = Date.parse('2026-10-08T10:00:00Z');
+  assert.equal(view.countdown(view.COUNTDOWN.join, '2026-10-22T09:30:00Z', now), 'Time to join: 13d 23h 30m left');
+  assert.equal(view.countdown(view.COUNTDOWN.answer, '2026-10-08T10:29:00Z', now), 'Time to answer: 29m left');
+  assert.equal(view.countdown(view.COUNTDOWN.join, '2026-10-08T10:00:30Z', now), 'Time to join: Less than a minute left');
+  assert.equal(view.countdown(view.COUNTDOWN.join, '2026-10-08T09:00:00Z', now), 'Time to join: No time left');
+  assert.equal(view.countdown(view.COUNTDOWN.answer, null, now), 'Time to answer: No end time recorded');
+  for (const label of [view.countdown(view.COUNTDOWN.join, '2026-10-22T09:30:00Z', now), view.countdown(view.COUNTDOWN.answer, '2026-10-08T10:29:00Z', now)]) {
+    assert.equal(label.match(/\bleft\b/g).length, 1, label);
+  }
+  // The web redraws in place with the same prefix and the same function.
+  assert.ok(web.includes('element.textContent = `${element.dataset.countdownPrefix}: ${remainingLabel(element.dataset.expiresAt)}`;'));
+});

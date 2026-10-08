@@ -44,6 +44,7 @@ const MIGRATIONS = [
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
   '026_remember-a-refused-apple-deletion.sql',
   '031_let-a-lost-renewal-reply-be-asked-again.sql',
+  '032_let-an-invitation-last-fourteen-days.sql',
 ];
 
 async function appAtItsOwnHome() {

@@ -48,7 +48,12 @@ test('Email-0010 invitation provides a polished HTML message and accessible text
   assert.match(message.text, /https:\/\/accounts\.example\.test\/\?invite=invite_token/);
   assert.match(message.html, /Open your invitation/);
   assert.match(message.html, /private place for people/);
-  assert.match(message.html, /short-lived link works once/);
+  // An invitation lasts 14 days (#347), so its link says so rather than calling itself short-lived.
+  assert.match(message.text, /This link works once, for 14 days\./);
+  assert.match(message.html, /This link works once, for 14 days\./);
+  assert.doesNotMatch(`${message.text}${message.html}`, /short-lived/);
+  await mailer.sendInvitation({ to: 'alex@example.test', token: 'invite_token', days: 1 });
+  assert.match(messages[1].text, /This link works once, for 1 day\./);
   assert.match(message.html, /https:\/\/accounts\.example\.test\/\?invite=invite_token/);
 });
 
