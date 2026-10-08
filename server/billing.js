@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Stripe from 'stripe';
+import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { PlatformError } from './platform.js';
 
@@ -292,8 +293,8 @@ export class StripeBillingService {
 
   // A place bought in a store (#272) counts the same as one paid for here.
   async assertLocationCapacity(userId, journeyId, momentId, locationCount) {
-    const [webEnvironment, storeEnvironment = webEnvironment] = this.config.billingEnvironments || [this.environment];
-    const slots = await this.pool.query(`SELECT m.location_billing_baseline,count(mls.id)::int AS count FROM journey_moments m LEFT JOIN moment_location_slots mls ON mls.moment_id=m.id AND mls.payer_user_id=$3 AND mls.environment IN ($4,$5) AND mls.state IN ('active','grace') WHERE m.id=$1 AND m.journey_id=$2 GROUP BY m.location_billing_baseline`, [momentId, journeyId, userId, webEnvironment, storeEnvironment]);
+    const paid = paidEnvironments(this.config, { environment: 'mls.environment', payer: 'mls.payer_user_id', from: 4 });
+    const slots = await this.pool.query(`SELECT m.location_billing_baseline,count(mls.id)::int AS count FROM journey_moments m LEFT JOIN moment_location_slots mls ON mls.moment_id=m.id AND mls.payer_user_id=$3 AND ${paid.sql} AND mls.state IN ('active','grace') WHERE m.id=$1 AND m.journey_id=$2 GROUP BY m.location_billing_baseline`, [momentId, journeyId, userId, ...paid.params]);
     const required = Math.max(0, Number(locationCount) - Number(slots.rows[0]?.location_billing_baseline || 1));
     if (!slots.rowCount || Number(slots.rows[0].count) < required) throw new PlatformError(409, 'location_payment_required', 'Another place needs an active monthly place add-on.');
   }

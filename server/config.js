@@ -65,6 +65,11 @@ const ConfigSchema = z.object({
   // Which purchases this deployment honours: 'sandbox' (App Store sandbox, Google licence testers)
   // or 'live' (real money). Only ever one, so a test purchase can never become live capacity.
   STORE_ENVIRONMENT: z.enum(['sandbox', 'live']).default('sandbox'),
+  // On a live service, the accounts whose sandbox purchases still count, comma-separated account
+  // ids: App Review's sample account (#260) and the owner's own test accounts. App Review buys in
+  // the sandbox against the production app, so without this its purchases would be refused.
+  // Recorded as sandbox, and read only for these accounts. Ignored on a sandbox service.
+  STORE_SANDBOX_ACCOUNT_IDS: z.string().default(''),
   APPLE_ROOT_CERTIFICATES: z.string().default(''),
   APPLE_BUNDLE_ID: z.string().default('com.togetherledger.ledger'),
   GOOGLE_PLAY_PACKAGE_NAME: z.string().default('com.togetherledger.ledger'),
@@ -107,6 +112,10 @@ export function loadConfig(overrides = {}) {
   const appleRootCertificates = parseRootCertificates(config.APPLE_ROOT_CERTIFICATES);
   const googlePlayServiceAccount = parseServiceAccount(config.GOOGLE_PLAY_SERVICE_ACCOUNT);
   const storeEnvironment = config.STORE_ENVIRONMENT;
+  const storeSandboxAccountIds = [...new Set(config.STORE_SANDBOX_ACCOUNT_IDS.split(',').map((id) => id.trim().toLowerCase()).filter(Boolean))];
+  if (storeSandboxAccountIds.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) {
+    throw new Error('STORE_SANDBOX_ACCOUNT_IDS must be account ids (UUIDs), comma-separated.');
+  }
   const storePurchasesConfigured = appleRootCertificates.length > 0 || Boolean(googlePlayServiceAccount);
   if (config.STRIPE_ENVIRONMENT === 'live' && storeEnvironment === 'sandbox') {
     throw new Error('A service that takes live web payments must honour live store purchases only (STORE_ENVIRONMENT=live).');
@@ -146,11 +155,13 @@ export function loadConfig(overrides = {}) {
     stripeEnvironment: config.STRIPE_ENVIRONMENT,
     storeEnvironment,
     // Every environment an entitlement or a paid slot is read from here: the web's and the stores'.
-    // 'sandbox' only ever where STORE_ENVIRONMENT says so, and never beside live web payments.
+    // 'sandbox' only where STORE_ENVIRONMENT says so, never beside live web payments, and on a live
+    // service only for the listed testers' own purchases (server/billing-environments.js).
     billingEnvironments: [...new Set([config.STRIPE_ENVIRONMENT, storeEnvironment])],
     appleRootCertificates,
     googlePlayServiceAccount,
     storePurchasesConfigured,
+    storeSandboxAccountIds,
     stripeTaxEnabled: config.STRIPE_TAX_ENABLED === 'true',
     billingGraceDays: config.BILLING_GRACE_DAYS,
     momentImageBillingEnabled: config.MOMENT_IMAGE_BILLING_ENABLED === 'true',

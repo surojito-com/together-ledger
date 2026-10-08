@@ -118,14 +118,15 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
 // a retry to trip over, so the phone sending it again on its next launch is the way back.
 test('real PostgreSQL grants a store purchase once, and a failed grant leaves nothing behind', { skip: !databaseUrl }, async (t) => {
   const chain = appleChain();
-  const config = loadConfig({
+  const settings = {
     NODE_ENV: 'development',
     JOURNEY_CAPACITY_MODE: 'billing',
     DATABASE_URL: databaseUrl,
     SESSION_SECRET: 's'.repeat(32),
     AUDIT_HMAC_KEY: 'a'.repeat(32),
     APPLE_ROOT_CERTIFICATES: chain.rootBase64,
-  });
+  };
+  const config = loadConfig(settings);
   const pool = createPool(config);
   t.after(async () => pool.end());
   await runMigrations(pool);
@@ -176,5 +177,27 @@ test('real PostgreSQL grants a store purchase once, and a failed grant leaves no
   const photo = signTransaction(chain, transactionPayload({ appAccountToken, transactionId: `photo-${suffix}`, productId: 'extra_photo', type: 'Consumable', purchaseDate: Date.now() }));
   const extra = await store.verifyApple(user.id, { signedTransaction: photo, momentId: moment.id });
   assert.equal(extra.extra.slotIds.length, 1);
+
+  // A live service with a sandbox tester reads that tester's sandbox room and slots, through the
+  // same queries, with the account ids as uuid parameters.
+  const live = loadConfig({ ...settings, STORE_ENVIRONMENT: 'live', STORE_SANDBOX_ACCOUNT_IDS: user.id });
+  const liveNobody = loadConfig({ ...settings, STORE_ENVIRONMENT: 'live', STORE_SANDBOX_ACCOUNT_IDS: '00000000-0000-4000-8000-000000000000' });
+  for (const name of ['first', 'second']) {
+    const { user: other } = await platform.register({ email: `store-${name}-${suffix}@example.test`, username: `store-${name}-${suffix}`, password: 'correct horse battery staple' });
+    await pool.query("INSERT INTO journey_members (journey_id,user_id,role,joined_at) VALUES ($1,$2,'member',now())", [journey.id, other.id]);
+  }
+  const resting = async (serviceConfig) => {
+    const client = await pool.connect();
+    try {
+      return (await new PlatformService({ pool, config: serviceConfig, mailer }).capacityFor(client, journey.id)).restingMemberIds.length;
+    } finally {
+      client.release();
+    }
+  };
+  assert.equal(await resting(live), 0, 'the tester\u2019s sandbox room counts on a live service');
+  assert.equal(await resting(liveNobody), 1, 'and on a live service nobody else\u2019s does');
+  assert.equal((await new PlatformService({ pool, config: live, mailer }).imageSlots(user.id, journey.id, moment.id)).length, 1);
+  assert.equal((await new PlatformService({ pool, config: liveNobody, mailer }).imageSlots(user.id, journey.id, moment.id)).length, 0, 'and nobody else\u2019s does');
+  await pool.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id<>$2', [journey.id, user.id]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
 });

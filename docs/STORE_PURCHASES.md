@@ -145,9 +145,29 @@ by that unique row; the Postgres test proves it.
 
 `STORE_ENVIRONMENT` is `live` or `sandbox`, and a server honours only that one's purchases. A sandbox purchase on a
 live server is refused ("test purchases don't add anything, and aren't charged"), and a real one on a test server
-is refused too. Nothing written from a sandbox purchase is ever read as live: capacity and paid slots are read only
-from this server's own environments (`config.billingEnvironments`). A server that takes live Stripe payments must
-be `STORE_ENVIRONMENT=live`, or it will not start.
+is refused too. Capacity and paid slots are read only from this server's own environments
+(`config.billingEnvironments`), with the one exception below. A server that takes live Stripe payments must be
+`STORE_ENVIRONMENT=live`, or it will not start.
+
+**The exception: sandbox testers on a live server** (decided by the owner, Oct 8, 2026). App Review buys in the
+sandbox against the production app, so a live server that refused every sandbox purchase would show the reviewer a
+refusal. `STORE_SANDBOX_ACCOUNT_IDS` lists, comma-separated, the account ids whose sandbox purchases a live server
+still honours: the App Review sample account (#260) and the owner's own test accounts.
+
+- A listed account's sandbox purchase is granted and recorded as `sandbox`, never `live`.
+- Sandbox room and slots are read on a live server only where a listed account paid for them
+  (`server/billing-environments.js`). A sandbox row paid for by anyone else is never read, whoever's journey it is in.
+- Everyone else's sandbox purchase is refused exactly as before, and logged.
+- Whose purchase it is comes from the verified account value, as for every purchase. Signing in as a listed account
+  does not make someone else's sandbox purchase count; it is refused as another account's.
+- On a sandbox server the list is ignored: every sandbox purchase counts there already.
+- An id that is not a UUID stops the server from starting.
+
+**The review account's id changes when it is rebuilt.** `server/seed-review-journey.js` deletes both sample accounts
+and makes them again on every run, so each run gives the reviewer a new account id. After rebuilding it, look the new
+id up (`SELECT id FROM users WHERE username='app-review-sam' AND deleted_at IS NULL`) and put it in
+`STORE_SANDBOX_ACCOUNT_IDS` before the next review. The old id belongs to a deleted account, which no purchase can
+use anyway.
 
 ### Google's three days
 
@@ -182,7 +202,7 @@ charged; where a purchase cannot be honoured, it says where a refund comes from.
 | `store_purchase_wrong_app` | 400 | no | Another app's bundle or package. |
 | `store_product_unknown` | 400 | no | Not one of the eight products, or not the type it should be. |
 | `store_purchase_quantity` | 400 | no | A quantity above ten, or above one for a subscription. |
-| `store_environment_mismatch` | 409 | no | A sandbox purchase on a live server, or a real one on a test server. |
+| `store_environment_mismatch` | 409 | no | A sandbox purchase on a live server from an account not in `STORE_SANDBOX_ACCOUNT_IDS`, or a real one on a test server. Logged. |
 | `store_purchase_refunded` | 409 | no | Apple has refunded or revoked it. |
 | `store_purchase_family_shared` | 409 | no | Shared through Family Sharing, which is off for every product. |
 | `store_purchase_canceled` | 409 | no | Google canceled it. |
@@ -250,6 +270,9 @@ billing **or** at least one store configured, so the phones can sell while web b
 - **Restore on a new phone** (#275).
 - **What a journey holding more than one entitlement means** (#274, #276), beyond "the most generous one counts".
 - **Reconciliation against the stores** (#277).
-- **Account deletion with a live store subscription.** Deleting the account deletes the journey and its store
-  entitlements, and keeps `billing_store_purchases`; the subscription itself carries on with Apple or Google until
-  the person cancels it there. The phone has to say so before deleting (App Store guideline 5.1.1(v)).
+- **The phone's delete-account dialog.** Deleting the account deletes the journey and its store entitlements, and
+  keeps `billing_store_purchases`, but it does not cancel a store subscription: that carries on, and keeps
+  charging, until the person cancels it with Apple or Google. **Decided by the owner, Oct 8, 2026: the phone's
+  delete-account dialog must say that a store subscription is cancelled with Apple or Google**, not by deleting the
+  account (App Store guideline 5.1.1(v) asks for this too). The phone session's prompt 4 builds that screen; nothing
+  on the server stands in for it.

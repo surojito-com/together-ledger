@@ -115,4 +115,6 @@ test('each store is off until its trust is configured, and a bad value stops the
     BILLING_ENABLED: 'true', STRIPE_ENVIRONMENT: 'live', STRIPE_SECRET_KEY: 'sk_live_fake', STRIPE_WEBHOOK_SECRET: 'whsec_fake', STRIPE_ADDITIONAL_PERSON_PRICE_ID: 'price_live',
   }), /STORE_ENVIRONMENT=live/);
   assert.deepEqual(loadConfig({ STORE_ENVIRONMENT: 'live' }).billingEnvironments, ['test', 'live']);
+  assert.deepEqual(plain.storeSandboxAccountIds, []);
+  assert.throws(() => loadConfig({ STORE_SANDBOX_ACCOUNT_IDS: 'app-review-sam' }), /must be account ids/);
 });

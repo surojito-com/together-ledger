@@ -101,7 +101,7 @@ export class StorePurchaseService {
     const product = storeProduct(payload.productId);
     if (!product || payload.type !== appleTypeFor(product)) throw refused(400, 'store_product_unknown', 'Together Ledger doesn’t sell this, so nothing was added.');
     const environment = { Production: 'live', Sandbox: 'sandbox' }[payload.environment] || 'testing';
-    this.assertEnvironment('apple', environment, refused);
+    const testerOnly = this.assertEnvironment('apple', environment, refused);
     if (payload.revocationDate) throw refused(409, 'store_purchase_refunded', 'Apple has refunded or revoked this purchase, so it adds nothing.');
     // Family Sharing is off for every product (the Book, "Settings to leave alone"): room belongs
     // to the journey of the person who paid.
@@ -117,6 +117,7 @@ export class StorePurchaseService {
     return this.grant(userId, {
       store: 'apple',
       environment,
+      testerOnly,
       transactionId: String(payload.transactionId),
       originalTransactionId: String(payload.originalTransactionId || payload.transactionId),
       productId: payload.productId,
@@ -160,8 +161,8 @@ export class StorePurchaseService {
     const purchase = product.kind === 'subscription'
       ? this.googleSubscription(record, body.productId, product, token, refused)
       : this.googleProduct(record, body.productId, product, token, refused);
-    this.assertEnvironment('google', purchase.environment, refused);
-    const result = await this.grant(userId, { ...purchase, logRef }, body);
+    const testerOnly = this.assertEnvironment('google', purchase.environment, refused);
+    const result = await this.grant(userId, { ...purchase, testerOnly, logRef }, body);
     if (result.acknowledgement === 'pending') {
       const row = await this.pool.query('SELECT * FROM billing_store_purchases WHERE id=$1', [result.purchaseId]);
       result.acknowledgement = await this.acknowledge(row.rows[0]) ? 'done' : 'pending';
@@ -224,13 +225,21 @@ export class StorePurchaseService {
     };
   }
 
-  // A deployment honours one environment's purchases, and never the other's (#272).
+  // A deployment honours one environment's purchases, and never the other's (#272). The one
+  // exception is a live service's sandbox testers (STORE_SANDBOX_ACCOUNT_IDS): App Review buys in
+  // the sandbox against the production app. Whether this purchase is one of theirs is known only
+  // once its account value resolves, so this answers "only for a tester" and grant() decides.
   assertEnvironment(store, environment, refused) {
-    if (environment === this.config.storeEnvironment) return;
+    if (environment === this.config.storeEnvironment) return false;
     if (this.config.storeEnvironment === 'live') {
-      throw refused(409, 'store_environment_mismatch', `This was a test purchase, and test purchases don’t add anything to Together Ledger. ${STORE[store]} doesn’t charge for them.`);
+      if (environment === 'sandbox' && this.config.storeSandboxAccountIds?.length) return true;
+      throw this.testPurchaseRefused(store, refused);
     }
     throw refused(409, 'store_environment_mismatch', 'This is Together Ledger’s test service, which only takes test purchases, so nothing was added here.');
+  }
+
+  testPurchaseRefused(store, refused) {
+    return refused(409, 'store_environment_mismatch', `This was a test purchase, and test purchases don’t add anything to Together Ledger. ${STORE[store]} doesn’t charge for them.`);
   }
 
   // --- Granting ------------------------------------------------------------------------------
@@ -279,6 +288,12 @@ export class StorePurchaseService {
     const momentId = body.momentId ?? null;
     return withTransaction(this.pool, async (client) => {
       const owner = await this.ownerOf(client, userId, purchase);
+      if (purchase.testerOnly && !this.config.storeSandboxAccountIds.includes(owner.userId)) {
+        throw this.testPurchaseRefused(store, (status, code, message) => {
+          this.log('warn', 'store purchase refused', { store, code, productId: purchase.productId, ...purchase.logRef });
+          return refuse(status, code, message);
+        });
+      }
       const seen = await client.query('SELECT * FROM billing_store_purchases WHERE store=$1 AND environment=$2 AND transaction_id=$3', [store, environment, purchase.transactionId]);
       if (seen.rowCount) return this.replay(client, seen.rows[0], purchase);
 

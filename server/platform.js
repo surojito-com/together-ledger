@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
 import { appleEventFrom, appleSignInFor } from './apple.js';
@@ -909,20 +910,14 @@ export class PlatformService {
     );
   }
 
-  // The environments paid capacity is read from: the web's and the stores' (server/config.js).
-  billingEnvironments() {
-    const [web, store = web] = this.config.billingEnvironments || [this.config.stripeEnvironment];
-    return [web, store];
-  }
-
   // The extra photos this person has paid for on a moment, whichever way they paid: a Stripe
   // payment or a store purchase (#272). Same shape as the web billing service has always returned.
   async imageSlots(userId, journeyId, momentId) {
-    const [webEnvironment, storeEnvironment] = this.billingEnvironments();
+    const paid = paidEnvironments(this.config, { environment: 'mis.environment', payer: 'mis.payer_user_id', from: 4 });
     const slots = await this.pool.query(
       `SELECT mis.id,mis.state FROM moment_image_slots mis JOIN journey_members jm ON jm.journey_id=mis.journey_id AND jm.user_id=$1
-       WHERE mis.journey_id=$2 AND mis.moment_id=$3 AND mis.payer_user_id=$1 AND mis.environment IN ($4,$5) ORDER BY mis.created_at,mis.id`,
-      [userId, journeyId, momentId, webEnvironment, storeEnvironment],
+       WHERE mis.journey_id=$2 AND mis.moment_id=$3 AND mis.payer_user_id=$1 AND ${paid.sql} ORDER BY mis.created_at,mis.id`,
+      [userId, journeyId, momentId, ...paid.params],
     );
     return slots.rows.map((slot) => ({ id: slot.id, state: slot.state }));
   }
@@ -950,13 +945,13 @@ export class PlatformService {
       // start when the running one ends, so only what has started counts. Until the rules for
       // holding more than one are settled (#274, #276), the journey has the most generous room it
       // holds that is fully paid, then the most generous in grace.
-      const [webEnvironment, storeEnvironment] = this.billingEnvironments();
+      const paid = paidEnvironments(this.config, { from: 3 });
       const entitlement = await client.query(
         `SELECT state,quantity FROM billing_entitlements
-         WHERE journey_id=$1 AND capability='additional-journey-capacity' AND environment IN ($2,$3)
-           AND state IN ('active','grace') AND (expires_at IS NULL OR expires_at>$4) AND (effective_at IS NULL OR effective_at<=$4)
+         WHERE journey_id=$1 AND capability='additional-journey-capacity' AND ${paid.sql}
+           AND state IN ('active','grace') AND (expires_at IS NULL OR expires_at>$2) AND (effective_at IS NULL OR effective_at<=$2)
          ORDER BY CASE WHEN state='active' THEN 0 ELSE 1 END, quantity DESC, updated_at DESC LIMIT 1`,
-        [journeyId, webEnvironment, storeEnvironment, this.now()],
+        [journeyId, this.now(), ...paid.params],
       );
       entitlementState = entitlement.rows[0]?.state || null;
       availableCapacity = Math.min(MAX_JOURNEY_CAPACITY, INCLUDED_JOURNEY_CAPACITY + Number(entitlement.rows[0]?.quantity || 0));
@@ -1452,8 +1447,8 @@ export class PlatformService {
       if (existing.rowCount && !paidSlotId) throw new PlatformError(409, 'included_image_already_used', 'This moment already holds its included image. Another image needs a one-time photo payment.');
       if (paidSlotId) {
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(paidSlotId))) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
-        const [webEnvironment, storeEnvironment] = this.billingEnvironments();
-        const slot = await client.query(`UPDATE moment_image_slots SET used_at=$1,updated_at=$1 WHERE id=$2 AND journey_id=$3 AND moment_id=$4 AND payer_user_id=$5 AND environment IN ($6,$7) AND state='active' AND used_at IS NULL RETURNING id`, [this.now(), paidSlotId, journeyId, momentId, userId, webEnvironment, storeEnvironment]);
+        const paid = paidEnvironments(this.config, { from: 6 });
+        const slot = await client.query(`UPDATE moment_image_slots SET used_at=$1,updated_at=$1 WHERE id=$2 AND journey_id=$3 AND moment_id=$4 AND payer_user_id=$5 AND ${paid.sql} AND state='active' AND used_at IS NULL RETURNING id`, [this.now(), paidSlotId, journeyId, momentId, userId, ...paid.params]);
         if (!slot.rowCount) throw new PlatformError(409, 'image_payment_required', 'Another image needs an unused verified one-time photo payment.');
       }
       const image = await client.query(`INSERT INTO moment_images (id,journey_id,moment_id,uploaded_by_user_id,content_type,content_length,bytes,paid_slot_id,original_filename) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [randomUUID(), journeyId, momentId, userId, contentType, bytes.length, bytes, paidSlotId, cleanImageFilename(originalFilename, contentType)]);

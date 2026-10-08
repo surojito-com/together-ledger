@@ -98,10 +98,14 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
   }
 
   const chain = appleChain();
-  const config = loadConfig({
+  const settings = {
     NODE_ENV: 'test', PUBLIC_ORIGIN: origin, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
     JOURNEY_CAPACITY_MODE: 'billing', STORE_ENVIRONMENT: environment, APPLE_ROOT_CERTIFICATES: chain.rootBase64,
-  });
+  };
+  const config = loadConfig(settings);
+  // Account ids exist only once people register, so a test sets the ones that depend on them
+  // afterwards, through the same parsing the server uses.
+  const configure = (overrides) => Object.assign(config, loadConfig({ ...settings, ...overrides }));
   const clock = { now };
   const mailer = new MemoryMailer();
   const platform = new PlatformService({ pool, config, mailer, now: () => clock.now });
@@ -154,7 +158,7 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
     payload,
   });
   const signed = (payload, options) => signTransaction(chain, transactionPayload(payload), options);
-  return { pool, platform, store, google, logged, clock, person, journey, identity, join, moment, capacity, entitlements, apple, googleRoute, signed, chain };
+  return { pool, platform, store, google, logged, clock, configure, person, journey, identity, join, moment, capacity, entitlements, apple, googleRoute, signed, chain };
 }
 
 async function googleRecord(name, ids, overrides = {}) {
@@ -258,6 +262,71 @@ test('a sandbox purchase never becomes live capacity, and a live one never becom
   const production = await test.apple(ana, test.signed({ appAccountToken: token, environment: 'Production' }));
   assert.equal(production.json().error.code, 'store_environment_mismatch');
   assert.equal((await test.entitlements(hers.id)).length, 0);
+});
+
+test('on a live service, a sandbox purchase counts only for an allowed tester, and only for what they paid for', async (t) => {
+  const h = await harness(t, { environment: 'live' });
+  const sam = await h.person('app-review-sam');
+  const alex = await h.person('alex-joins');
+  const lee = await h.person('lee-other');
+  h.configure({ STORE_SANDBOX_ACCOUNT_IDS: ` ${sam.id.toUpperCase()} ` });
+  assert.deepEqual(h.store.config.storeSandboxAccountIds, [sam.id]);
+  const samsJourney = await h.journey(sam);
+  await h.join(samsJourney.id, alex);
+  const samsIds = await h.identity(sam, samsJourney.id);
+  const leesJourney = await h.journey(lee);
+  await h.join(leesJourney.id, alex);
+  const leesIds = await h.identity(lee, leesJourney.id);
+
+  // The tester's sandbox pass is honoured, recorded as sandbox, and makes room.
+  const pass = await h.apple(sam, h.signed({ appAccountToken: samsIds.appAccountToken, environment: 'Sandbox' }));
+  assert.equal(pass.statusCode, 201, pass.body);
+  assert.equal(pass.json().data.environment, 'sandbox');
+  assert.equal((await h.entitlements(samsJourney.id))[0].environment, 'sandbox');
+  assert.equal((await h.capacity(samsJourney.id)).canInvite, true);
+
+  // Anyone else's sandbox purchase is refused exactly as before, and logged.
+  const refused = await h.apple(lee, h.signed({ appAccountToken: leesIds.appAccountToken, environment: 'Sandbox', transactionId: 'lee-sandbox' }));
+  assert.equal(refused.statusCode, 409);
+  assert.equal(refused.json().error.code, 'store_environment_mismatch');
+  assert.equal((await h.entitlements(leesJourney.id)).length, 0);
+  assert.ok(h.logged.some((line) => line.code === 'store_environment_mismatch' && line.transactionId === 'lee-sandbox'));
+  // Signing in as the tester changes nothing about someone else's purchase.
+  const borrowed = await h.apple(sam, h.signed({ appAccountToken: leesIds.appAccountToken, environment: 'Sandbox', transactionId: 'lee-sandbox' }));
+  assert.equal(borrowed.json().error.code, 'store_purchase_other_account');
+
+  // A sandbox row paid for by anyone not on the list is never read as room, whoever's journey it is in.
+  await h.pool.query(
+    `INSERT INTO billing_entitlements (id,payer_user_id,journey_id,capability,source,environment,source_record_id,state,quantity,effective_at,expires_at,last_verified_at,created_at,updated_at)
+     VALUES ('88888888-8888-4888-8888-888888888888',$1,$2,'additional-journey-capacity','apple','sandbox','slipped-in','active',49,$3,$4,$3,$3,$3)`,
+    [lee.id, leesJourney.id, h.clock.now, new Date(h.clock.now.getTime() + 7 * DAY)],
+  );
+  assert.equal((await h.capacity(leesJourney.id)).canInvite, false);
+
+  // A tester's sandbox extra photo can be spent; real purchases still work as ever.
+  const walk = await h.moment(sam, samsJourney.id);
+  const photo = await h.apple(sam, h.signed({ appAccountToken: samsIds.appAccountToken, environment: 'Sandbox', transactionId: 'sam-photo', productId: 'extra_photo', type: 'Consumable' }), { momentId: walk.id });
+  assert.equal(photo.statusCode, 201, photo.body);
+  const [slotId] = photo.json().data.extra.slotIds;
+  assert.deepEqual(await h.platform.imageSlots(sam.id, samsJourney.id, walk.id), [{ id: slotId, state: 'active' }]);
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  await h.platform.uploadMomentImage(sam.id, samsJourney.id, walk.id, 'image/jpeg', bytes);
+  await h.platform.uploadMomentImage(sam.id, samsJourney.id, walk.id, 'image/jpeg', bytes, slotId);
+  const real = await h.apple(lee, h.signed({ appAccountToken: leesIds.appAccountToken, environment: 'Production', transactionId: 'lee-real' }));
+  assert.equal(real.statusCode, 201, real.body);
+  assert.equal(real.json().data.environment, 'live');
+
+  // Google: a licence tester's purchase by the tester is granted and acknowledged; anyone else's is
+  // refused and never acknowledged.
+  h.google.record('tok-sam-test', await googleRecord('product-pass', samsIds));
+  h.google.record('tok-lee-test', await googleRecord('product-pass', leesIds));
+  const samsGoogle = await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-sam-test' });
+  assert.equal(samsGoogle.statusCode, 201, samsGoogle.body);
+  assert.equal(samsGoogle.json().data.environment, 'sandbox');
+  assert.equal(samsGoogle.json().data.acknowledgement, 'done');
+  const leesGoogle = await h.googleRoute(lee, { productId: 'room_101_week_pass', purchaseToken: 'tok-lee-test' });
+  assert.equal(leesGoogle.json().error.code, 'store_environment_mismatch');
+  assert.deepEqual(h.google.acknowledgements(), [['consume', 'room_101_week_pass', 'tok-sam-test']]);
 });
 
 test('a purchase that names no account of ours is refused and logged, and so is one for someone else', async (t) => {
