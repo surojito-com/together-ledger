@@ -468,8 +468,10 @@ the privacy policy (Part 4).
 | Surroundings, Body | No | — | |
 | Other Data | No | — | |
 
-**Privacy policy URL:** `https://together-ledger.com/privacy` (built from `PRIVACY.md` by
-`scripts/build-public-site.mjs:32-33`). **Verified in code.**
+**Privacy policy URL:** `https://app.together-ledger.com/privacy`, the same on both stores
+(**Decision (owner, Oct 8, 2026)**), built from `PRIVACY.md` by `scripts/build-public-site.mjs:33-34`.
+**Verified in code.** Not `https://together-ledger.com/privacy`, which is the company site's own
+privacy page, not this product's.
 
 **Account deletion (guideline 5.1.1(v)):** in the app, Settings → Delete account (2.8).
 
