@@ -63,6 +63,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/033_let-a-moment-held-offline-arrive-once.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/035_hear-reversed-refunds-and-refunded-extras.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,

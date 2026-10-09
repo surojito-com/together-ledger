@@ -89,6 +89,12 @@ const ConfigSchema = z.object({
   // the push subscription authenticates as). Either one empty, and the endpoint accepts nothing.
   GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE: z.string().default(''),
   GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL: z.string().default(''),
+  // When refunds and revocations from the stores spike (#273): this many within this many hours
+  // writes one error line, "store refunds spiking", which the error count after a release and any
+  // log alert on '"level":"error"' already catch. Proposed, not yet settled by the owner
+  // (docs/STORE_PURCHASES.md, "When refunds spike").
+  STORE_REFUND_ALERT_THRESHOLD: z.coerce.number().int().min(1).max(10_000).default(5),
+  STORE_REFUND_ALERT_WINDOW_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(24),
 });
 
 function assertStripeConfiguration(config) {
@@ -183,6 +189,7 @@ export function loadConfig(overrides = {}) {
     appleRootCertificates,
     googlePlayServiceAccount,
     googlePlayNotifications,
+    storeRefundAlert: { threshold: config.STORE_REFUND_ALERT_THRESHOLD, windowHours: config.STORE_REFUND_ALERT_WINDOW_HOURS },
     storePurchasesConfigured,
     storeSandboxAccountIds,
     stripeTaxEnabled: config.STRIPE_TAX_ENABLED === 'true',

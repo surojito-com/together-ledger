@@ -55,6 +55,7 @@ const MIGRATIONS = [
   '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days',
   '033_let-a-moment-held-offline-arrive-once',
   '034_hear-refunds-and-renewals-from-the-stores',
+  '035_hear-reversed-refunds-and-refunded-extras',
 ];
 
 async function harness(t, configOverrides) {
