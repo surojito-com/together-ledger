@@ -32,6 +32,7 @@ const MIGRATIONS = [
   '012_bill-additional-moment-images.sql',
   '013_name-moment-image-attachments.sql',
   '014_hold-places-with-shared-moments.sql',
+  '015_bill-additional-moment-places.sql',
   '016_make-extra-image-payments-one-time.sql',
   '017_keep-one-removed-photo-per-moment.sql',
   '018_allow-ninety-nine-paid-journey-places.sql',
@@ -43,14 +44,19 @@ const MIGRATIONS = [
   '024_let-google-and-apple-open-an-account.sql',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
   '026_remember-a-refused-apple-deletion.sql',
+  // 034 adds to the store purchase records, so they come first.
+  '027_tie-every-store-purchase-to-an-account.sql',
+  '028_turn-a-store-purchase-into-capacity.sql',
   '031_let-a-lost-renewal-reply-be-asked-again.sql',
   '032_let-an-invitation-last-fourteen-days.sql',
   '033_let-a-moment-held-offline-arrive-once.sql',
+  '034_hear-refunds-and-renewals-from-the-stores.sql',
 ];
 
 async function appAtItsOwnHome() {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
+  memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
   for (const migration of MIGRATIONS) {

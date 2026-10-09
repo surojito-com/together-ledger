@@ -7,7 +7,7 @@ import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
-import { appleChain, signTransaction, transactionPayload } from './support/apple-signing.js';
+import { appleChain, signNotification, signTransaction, transactionPayload } from './support/apple-signing.js';
 import { stripPhotoMetadata } from '../src/photo-metadata.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -29,7 +29,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql', '034_hear-refunds-and-renewals-from-the-stores.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -417,4 +417,47 @@ test('real PostgreSQL holds a moment once, however many sends of its key arrive 
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1 AND action='moment_added'", [journey.id])).rows[0].count, 1);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM moment_hold_keys WHERE author_user_id=$1', [user.id])).rows[0].count, 0);
+});
+
+// #273: Apple sends a notification again until it hears a 200, and two deliveries can arrive
+// together. The unique (store, notification_id) row decides: one is logged and applied, the
+// other changes nothing. The log goes with the purchase it explains.
+test('real PostgreSQL applies a store notification once, however many deliveries arrive together', { skip: !databaseUrl }, async (t) => {
+  const chain = appleChain();
+  const config = loadConfig({
+    NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'billing', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
+    APPLE_ROOT_CERTIFICATES: chain.rootBase64,
+  });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const email = `notified-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `notified-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Refunded', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const { appAccountToken } = await platform.storePurchaseIdentity(user.id, journey.id);
+  const store = new StorePurchaseService({ pool, config, history: (client, event) => platform.appendEvent(client, event), apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }), log: () => {} });
+  const pass = { appAccountToken, transactionId: `refunded-${suffix}`, originalTransactionId: `refunded-${suffix}`, purchaseDate: Date.now() };
+  await store.verifyApple(user.id, { signedTransaction: signTransaction(chain, transactionPayload(pass)) });
+
+  const refundedAt = Date.now() + 60 * 60 * 1000;
+  const refund = signNotification(chain, { notificationType: 'REFUND', notificationUUID: `refund-${suffix}`, signedDate: Date.now(), transaction: { ...pass, revocationDate: refundedAt, signedDate: Date.now() } });
+  const answers = await Promise.all(Array.from({ length: 4 }, () => store.handleAppleNotification({ signedPayload: refund })));
+  assert.deepEqual(answers.map((answer) => answer.outcome).sort(), ['already-received', 'already-received', 'already-received', 'refunded']);
+  const notes = await pool.query('SELECT outcome,purchase_id FROM billing_store_notifications WHERE notification_id=$1', [`refund-${suffix}`]);
+  assert.equal(notes.rowCount, 1);
+  assert.equal(notes.rows[0].outcome, 'refunded');
+  const room = await pool.query('SELECT expires_at,reason FROM billing_entitlements WHERE source_record_id=$1', [pass.transactionId]);
+  assert.equal(new Date(room.rows[0].expires_at).getTime(), refundedAt);
+  assert.equal(room.rows[0].reason, 'store_refunded');
+  // The revocation check migration 034 adds, as real Postgres enforces it.
+  await assert.rejects(pool.query("UPDATE billing_store_purchases SET revocation='taken' WHERE id=$1", [notes.rows[0].purchase_id]), /billing_store_purchases_revocation_check/);
+
+  // The log is kept no longer than the purchase record it explains.
+  await pool.query('DELETE FROM billing_store_purchases WHERE id=$1', [notes.rows[0].purchase_id]);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM billing_store_notifications WHERE notification_id=$1', [`refund-${suffix}`])).rows[0].count, 0);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
 });
