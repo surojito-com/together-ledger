@@ -54,33 +54,52 @@ No account, cloud database, environment variable, or API key is required for bro
 
 The web-billing candidate is documented in [docs/STRIPE.md](docs/STRIPE.md). Never paste Stripe secrets into source, commits, issue text, logs, screenshots, or chat; rotate any key that has been exposed before configuring a local test environment.
 
-## Mobile app (early scaffold)
+## Mobile app
 
-`apps/mobile` is a new Expo client against the same server — scaffolding and store-compliance
-foundations only, no product screens yet. The web client at `src/` is unaffected; nothing here
-touches its auth, storage, or styling.
+`apps/mobile` is an Expo client for iPhone and Android against the same server. It has product
+screens: registration and sign-in, journeys and their moments, History, Settings, in-app purchases
+and account deletion (`apps/mobile/app/`). The web client at `src/` is separate; nothing in
+`apps/mobile` touches its auth, storage, or styling.
+
+`apps/mobile` is an npm workspace, so install from the repository root, never inside it:
 
 ```bash
-cd apps/mobile
-npm install
-cp .env.example .env.local   # points the app at a locally running server
-npm start
+npm ci                                                  # at the repository root
+cp apps/mobile/.env.example apps/mobile/.env.local      # points the app at a locally running API
+npm start -w apps/mobile
 ```
 
-Press `i` for the iOS Simulator or `a` for an Android emulator from the Expo CLI, or scan the QR
-code with Expo Go on a physical device. `npm run typecheck` and `npm run lint` run the same checks
-CI runs on every pull request; they do not touch `npm run check` at the repo root.
+The local API is the server on port 4174 (`server/config.js`), run as the local platform test in
+[docs/OPERATIONS.md](docs/OPERATIONS.md) describes. `npm run dev` serves only the static web app,
+on 4173, and the phone can't use it (#283). `localhost` reaches your computer from the iOS
+Simulator; from an Android emulator or a phone on USB, run `adb reverse tcp:4174 tcp:4174` first.
+
+The app needs a development build, not Expo Go: it carries native code Expo Go doesn't include,
+such as `expo-iap` for in-app purchases, and `expo-dev-client` is installed for exactly this
+(`apps/mobile/package.json`). Make one on your own computer with `npx expo run:ios` (needs Xcode)
+or `npx expo run:android` (needs the Android SDK), run from `apps/mobile`, or in EAS's cloud with
+`eas build --profile development` (the `development` profile in `apps/mobile/eas.json`) and install
+it; it then loads the app from the dev server that `npm start -w apps/mobile` runs. `npm run typecheck -w apps/mobile` and `npm run lint -w apps/mobile` are the
+checks CI runs on every pull request (`.github/workflows/ci.yml`); they are not part of
+`npm run check` at the repo root.
 
 The API origin is never hardcoded — it is read from the `EXPO_PUBLIC_API_ORIGIN` environment
 variable at build time, the mobile equivalent of the web client's `together-api-origin` meta tag.
-Staging and production values are supplied by the EAS build profile or CI for that build, not
-committed. See `apps/mobile/src/config/api.ts`.
+Preview and production builds get `https://api.together-ledger.com` from their profiles in
+`apps/mobile/eas.json`; only a development build with nothing set falls back to the local API. See
+`apps/mobile/src/config/api.ts`.
 
-The app currently requests zero permissions (no camera, photos, location, contacts, or
-notifications), allows no cleartext network traffic, and has no client-side third-party SDKs — no
-analytics, no crash reporting. Each of those is added only by the story that needs it. Auth tokens,
-once #179 introduces them, go through `apps/mobile/src/auth/token-storage.ts`, which is already
-wired to the platform keychain via `expo-secure-store` rather than any plain on-device storage.
+The iPhone app asks for no permission: its `Info.plist` carries no usage description, so it can't
+ask for camera, photos, location, contacts or notifications (`apps/mobile/app.json`). On Android it
+declares `INTERNET`, `com.android.vending.BILLING` for Google Play purchases, and
+`ACCESS_NETWORK_STATE`, which Google's own billing libraries need (owner decision, Oct 8, 2026);
+none of them shows a prompt, and the storage, overlay, vibration, biometric and Wi-Fi state
+permissions libraries would add are blocked (`apps/mobile/app.json`,
+`tests/mobile-permissions.test.js`, [docs/STORE_READINESS.md](docs/STORE_READINESS.md) 2.6). There
+is no analytics or crash reporting; the only library that makes a request of its own is `expo-iap`,
+to the App Store or Google Play (STORE_READINESS 2.5). Sign-in tokens are kept in the platform
+keychain through `expo-secure-store`, never in plain on-device storage
+(`apps/mobile/src/auth/token-storage.ts`).
 
 ## Brand themes
 

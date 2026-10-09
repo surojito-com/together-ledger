@@ -35,6 +35,12 @@
   --private: #5E5952;
   --shared-now: #2F6B45;
   --share-later: #7D5510;
+  /* Sign in with Apple, drawn only as Apple allows: white with Apple's black outline on a light
+     surface, plain white on a dark one, so it carries the same weight as Google's white button
+     beside it. scripts/theme-gate.mjs checks every theme (#216). */
+  --apple-button-bg: #FFFFFF;
+  --apple-button-fg: #000000;
+  --apple-button-outline: #000000;
 }
 
 :root[data-theme="dark"] {
@@ -55,6 +61,9 @@
   --private: #9C958B;
   --shared-now: #7FC8A0;
   --share-later: #E0B458;
+  --apple-button-bg: #FFFFFF;
+  --apple-button-fg: #000000;
+  --apple-button-outline: transparent;
 }
 :root[data-theme="green"] {
   --bg: #071109;
@@ -74,6 +83,9 @@
   --private: #7E8A81;
   --shared-now: #6EE7A0;
   --share-later: #E8C35C;
+  --apple-button-bg: #FFFFFF;
+  --apple-button-fg: #000000;
+  --apple-button-outline: transparent;
 }
 :root[data-theme="flexoki"] {
   --bg: #FFFCF0;
@@ -93,6 +105,9 @@
   --private: #5E5D58;
   --shared-now: #1A6259;
   --share-later: #7A5C00;
+  --apple-button-bg: #FFFFFF;
+  --apple-button-fg: #000000;
+  --apple-button-outline: #000000;
 }
 
 :root[data-theme-base="light"] { color-scheme: light; }
@@ -441,6 +456,20 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .account-identity dd { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
 .display-name-form { display: grid; gap: 8px; margin: 14px 0 4px; }
 .display-name-form .button { justify-self: start; }
+.social-sign-in { display: grid; gap: 14px; grid-column: 1 / -1; }
+.provider-buttons { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+/* Both buttons are the same 44px pill (#216). Google's is drawn by Google Identity Services at
+   40px and cannot be asked for more, so it is scaled by 1.1 from its top-left corner; app.js
+   asks Google for a width that fills the slot once scaled. */
+.provider-button { border-radius: var(--radius-pill); height: 44px; min-width: 0; }
+.google-slot { position: relative; }
+.google-button-scale { left: 0; position: absolute; top: 0; transform: scale(1.1); transform-origin: top left; }
+.apple-button { align-items: center; background: var(--apple-button-bg); border: 1px solid var(--apple-button-outline); color: var(--apple-button-fg); display: flex; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-size: 16px; font-weight: 500; gap: 6px; justify-content: center; padding: 0 16px; white-space: nowrap; }
+.apple-button svg { fill: currentColor; flex: none; height: 17px; width: 17px; }
+.apple-button:disabled { cursor: progress; opacity: .7; }
+.link-identity { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-l); padding: 22px; }
+.provider-divider { align-items: center; color: var(--muted); display: flex; font-size: 14px; font-weight: 800; gap: 12px; margin: 0; }
+.provider-divider::before, .provider-divider::after { border-top: 1px solid var(--line); content: ""; flex: 1; }
 .account-panel hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; width: 100%; }
 .billing-panel { display: grid; gap: 13px; }
 .billing-panel > hr { margin-bottom: 4px; }
@@ -714,6 +743,7 @@ footer p { color: var(--on-accent); margin-bottom: 0; opacity: .8; }
   .settings-grid { grid-template-columns: 1fr; }
   .guidance-card { padding: 0; }
   .account-grid { grid-template-columns: 1fr; }
+  .provider-buttons { grid-template-columns: 1fr; }
   .inline-form { align-items: stretch; flex-direction: column; }
   .inline-form .button { min-width: 0; }
   .money-fields > div { grid-template-columns: 1fr; }

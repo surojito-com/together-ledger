@@ -357,6 +357,10 @@ function renderAccountState() {
   $('#account-email').textContent = signedIn ? accountUser.email : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
   $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
+  // An account opened with Google or Apple has no password, so deleting it asks only for DELETE.
+  const deleteAsksForPassword = !signedIn || accountUser.hasPassword !== false;
+  $('#delete-account-password').hidden = !deleteAsksForPassword;
+  $('#delete-account-password input').disabled = !deleteAsksForPassword;
   $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. Moment visibility is enforced by the account service; shared threads and practical context remain visible to people in this journey.' : 'Your account is ready. Create a private journey when you are ready to invite another journeyer.';
   $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to your browser-only journey.' : 'Browser-only journeys stay on this device unless you download a backup.';
   $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : accountsAvailable ? 'Browser only' : 'Accounts soon';
@@ -1592,6 +1596,7 @@ function openAccountDialog() {
   renderAccountState();
   $('#account-dialog').showModal();
   if (accountUser) refreshBillingState().catch((error) => showStatus(accountMessage(error)));
+  else offerSocialSignIn();
 }
 
 $('#account-button').addEventListener('click', openAccountDialog);
@@ -1635,6 +1640,169 @@ $('#register-form').addEventListener('submit', async (event) => {
     setButtonPending(button, false);
   }
 });
+
+// Continue with Google and Continue with Apple (#216). Neither button shows until the server says
+// both are configured and both companies' own scripts have loaded: a button that can't work is
+// worse than none. The scripts come only from Google's and Apple's own addresses, and only once a
+// signed-out person opens this dialog, so neither company hears about a visit that never asks for
+// them. The ID token goes to our server and nowhere else; the reply is a password sign-in's cookie
+// and CSRF pair, and nothing is written to localStorage.
+const PROVIDER_SCRIPTS = {
+  google: 'https://accounts.google.com/gsi/client',
+  apple: 'https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js',
+};
+// Google draws its button 40px high; styles.css scales it to the 44px the Apple button is.
+const GOOGLE_BUTTON_SCALE = 1.1;
+// Closing Apple's window, or choosing Cancel in it, puts the person back where they were.
+const APPLE_CANCELLED = new Set(['popup_closed_by_user', 'user_cancelled_authorize']);
+const providerScripts = new Map();
+let socialSignInReady = null;
+let appleState = '';
+let googleButtonWidth = 0;
+let pendingLink = null;
+
+function loadProviderScript(src) {
+  if (!providerScripts.has(src)) {
+    providerScripts.set(src, new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.addEventListener('load', resolve, { once: true });
+      script.addEventListener('error', () => {
+        providerScripts.delete(src);
+        script.remove();
+        reject(new Error(`${src} did not load.`));
+      }, { once: true });
+      document.head.append(script);
+    }));
+  }
+  return providerScripts.get(src);
+}
+
+async function prepareSocialSignIn() {
+  const { google, apple } = await api.providers() || {};
+  if (!google?.clientId || !apple?.clientId || !apple.redirectUri) return false;
+  // Apple hands its answer back to the Return URL's own address, so anywhere else its button
+  // could never finish.
+  if (new URL(apple.redirectUri).origin !== window.location.origin) return false;
+  await Promise.all([loadProviderScript(PROVIDER_SCRIPTS.google), loadProviderScript(PROVIDER_SCRIPTS.apple)]);
+  if (!window.google?.accounts?.id || !window.AppleID?.auth) return false;
+  window.google.accounts.id.initialize({
+    client_id: google.clientId,
+    callback: ({ credential }) => signInWith(() => api.socialSignIn('google', { idToken: credential }), (error) => askForLinkPassword('google', { idToken: credential }, error)),
+    ux_mode: 'popup',
+    auto_select: false,
+  });
+  appleState = crypto.randomUUID();
+  window.AppleID.auth.init({ clientId: apple.clientId, scope: 'name email', redirectURI: apple.redirectUri, state: appleState, usePopup: true });
+  new ResizeObserver(() => renderGoogleButton()).observe($('.google-slot'));
+  return true;
+}
+
+function offerSocialSignIn() {
+  if (accountUser || !api.accountsAvailable) return;
+  socialSignInReady ??= prepareSocialSignIn().catch(() => false);
+  socialSignInReady.then((ready) => {
+    // Not ready is asked again the next time the dialog opens; ready stays ready.
+    if (!ready) {
+      socialSignInReady = null;
+      return;
+    }
+    $('#social-sign-in').hidden = false;
+    renderGoogleButton();
+  });
+}
+
+// Google takes a width, not a height, so it is asked for the width that fills the slot once scaled.
+function renderGoogleButton() {
+  const slot = $('.google-slot');
+  if (!slot.clientWidth || $('#social-sign-in').hidden) return;
+  const width = Math.min(400, Math.max(200, Math.floor(slot.clientWidth / GOOGLE_BUTTON_SCALE)));
+  if (width === googleButtonWidth) return;
+  googleButtonWidth = width;
+  window.google.accounts.id.renderButton($('#google-sign-in-button'), {
+    type: 'standard', theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', logo_alignment: 'center', width,
+  });
+}
+
+async function signInWith(signIn, onRefused = () => {}) {
+  try {
+    accountUser = await signIn();
+    forgetPendingLink();
+    await refreshCloudState({ announce: true });
+    refreshBillingState().catch((error) => showStatus(accountMessage(error)));
+    showLedgerSurface({ persist: true });
+    renderAccountState();
+    $('#account-dialog').close();
+  } catch (error) {
+    onRefused(error);
+    showStatus(accountMessage(error));
+  }
+}
+
+// An email that already has a password account is never signed in or merged because the
+// addresses match (#214). The server says so in its own words, and the password is asked for
+// once, here; the sign-in it answers is held in memory only until then.
+function askForLinkPassword(provider, body, error) {
+  if (!(error instanceof ApiError) || error.code !== 'link_required') return;
+  pendingLink = { provider, ...body };
+  const form = $('#link-identity-form');
+  form.reset();
+  $('#link-identity-title').textContent = provider === 'apple' ? 'Connect Apple to your account' : 'Connect Google to your account';
+  $('#link-identity-email').textContent = error.details?.email || 'this email';
+  form.hidden = false;
+  form.elements.password.focus({ preventScroll: true });
+}
+
+function forgetPendingLink() {
+  pendingLink = null;
+  $('#link-identity-form').reset();
+  $('#link-identity-form').hidden = true;
+}
+
+$('#apple-sign-in-button').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  let answer;
+  try {
+    answer = await window.AppleID.auth.signIn();
+  } catch (error) {
+    if (!APPLE_CANCELLED.has(error?.error)) showStatus(accountMessage(error));
+    return;
+  }
+  const { authorization = {}, user } = answer || {};
+  if (authorization.state !== appleState) {
+    showStatus(accountMessage(null));
+    return;
+  }
+  // Apple sends the person's name on their first sign-in only.
+  const displayName = [user?.name?.firstName, user?.name?.lastName].filter(Boolean).join(' ');
+  const body = { idToken: authorization.id_token, authorizationCode: authorization.code };
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  await signInWith(() => api.socialSignIn('apple', displayName ? { ...body, displayName } : body), (error) => askForLinkPassword('apple', body, error));
+  button.disabled = false;
+  button.removeAttribute('aria-busy');
+});
+
+$('#link-identity-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!pendingLink) return;
+  const button = event.currentTarget.querySelector('button:not([type])');
+  const { password } = Object.fromEntries(new FormData(event.currentTarget));
+  setButtonPending(button, true, 'Connecting…');
+  await signInWith(() => api.linkIdentity({ ...pendingLink, password }), (error) => {
+    // A wrong password can be tried again. A sign-in that has run out, or that belongs to
+    // another account, has to start again from its button.
+    if (error instanceof ApiError && ['invalid_token', 'identity_in_use'].includes(error.code)) forgetPendingLink();
+  });
+  setButtonPending(button, false);
+});
+
+$('#link-identity-cancel').addEventListener('click', () => {
+  forgetPendingLink();
+  clearStatus();
+});
+$('#account-dialog').addEventListener('close', forgetPendingLink);
 
 $('#recovery-button').addEventListener('click', () => {
   $('#account-dialog').close();

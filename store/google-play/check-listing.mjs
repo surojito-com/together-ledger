@@ -32,9 +32,11 @@ const playPolicy = [
 const stems = ['seat', 'licen', 'slot', 'removed', 'emergenc', 'diagnos'];
 
 // Claims Together Ledger can't back on any surface yet
-// (store/google-play/README.md): notifications (#265), offline (#300),
-// encryption, seamless sync (#186), and anything that scores or diagnoses
-// a relationship.
+// (store/google-play/README.md): notifications (#265), encryption, seamless
+// sync (#186), and anything that scores or diagnoses a relationship. Offline
+// (#300) is refused for another reason: the phone has said when it is offline
+// and held a new moment until the connection returns since #361 and #366, but
+// whether the listing says so is the owner's call, not yet made.
 const offVoice = [
   'notification', 'notifications', 'offline', 'end-to-end', 'encrypted',
   'sync', 'couples', 'relationship score', 'healthy relationship',
