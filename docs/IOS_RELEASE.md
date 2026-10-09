@@ -338,26 +338,33 @@ iOS code, read for the same APIs: `expo-secure-store` (the Keychain), `expo-cryp
 `expo-linking`, `expo-modules-core`, `@react-native-community/netinfo`,
 `@react-native-community/datetimepicker`, `react-native-screens`,
 `react-native-safe-area-context`, and since #217 `expo-apple-authentication` 57.0.2 and
-`@react-native-google-signin/google-signin` 16.1.5's own Objective-C. None of them uses one.
+`expo-web-browser` 57.0.3 (`expo-auth-session` 57.0.12 has no native code). None of them uses
+one, and none brings a manifest of its own. `expo-dev-client`'s launcher and menu do use user
+defaults, but they are linked only into development builds (`:configurations => :debug`,
+`expo-dev-client.podspec`).
 
-**Google's sign-in SDK brings a manifest of its own, and it declares collected data (#217).**
-`@react-native-google-signin/google-signin` depends on Google's `GoogleSignIn` pod (`~> 9.0`), which
-pulls in `AppAuth`, `GTMAppAuth`, `GTMSessionFetcher` and `AppCheckCore`. `GoogleSignIn` 9.0.0's
-`PrivacyInfo.xcprivacy` (read Oct 9, 2026, at
-[google/GoogleSignIn-iOS, `GoogleSignIn/Sources/Resources/PrivacyInfo.xcprivacy`](https://github.com/google/GoogleSignIn-iOS/blob/9.0.0/GoogleSignIn/Sources/Resources/PrivacyInfo.xcprivacy))
-declares User defaults (CA92.1, already in the list below) and, as data the SDK collects: Name,
-Email Address, Phone Number, Other Data Types, Coarse Location and User ID for App Functionality,
-and Other Data Types, User ID, Device ID and Other Usage Data for **Analytics**. None for tracking.
-That is Google's description of its own SDK, not of anything our code does, and the app's own
-manifest above is unchanged. **Not confirmed, and the owner's call:** whether App Store Connect's
-App Privacy answers (`docs/STORE_READINESS.md` 3.2) have to grow to cover it, since Apple holds an
-app's answers to include what its third-party code collects. The pods it pulls in were not read
-for their own manifests; the `.ipa` check below shows every manifest that ends up in the app. `expo-dev-client`'s launcher and menu do
-use user defaults, but they are linked only into development builds
-(`:configurations => :debug`, `expo-dev-client.podspec`).
+**No Google SDK ships in the iPhone app (owner, Oct 9, 2026, #217).** Google's own iOS SDK,
+`GoogleSignIn` 9.0, ships a privacy manifest that declares data it collects, some of it for
+Analytics ([google/GoogleSignIn-iOS, `PrivacyInfo.xcprivacy`](https://github.com/google/GoogleSignIn-iOS/blob/9.0.0/GoogleSignIn/Sources/Resources/PrivacyInfo.xcprivacy)).
+So on the iPhone, Continue with Google is the browser-based sign-in instead: `expo-auth-session`
+opens Google's own page in the system's sign-in sheet (`ASWebAuthenticationSession`, through
+`expo-web-browser`) for the iOS OAuth client, with PKCE, and Google returns to the client's own
+scheme, `com.googleusercontent.apps.<id>:/oauthredirect` (`apps/mobile/src/auth/google-sheet.ts`).
+The phone exchanges the code at `https://oauth2.googleapis.com/token` with the PKCE verifier and no
+secret, and sends only the ID token to our API. Android keeps Google's native library
+(`google-sheet.android.ts`), which is installed in the workspace, so it is kept out of iOS
+autolinking (`expo.autolinking.ios.exclude` in `apps/mobile/package.json`). That closes both ways
+it would reach the iOS build: as an Expo module (`ExpoAdapterGoogleSignIn`) and as a React Native
+module (`RNGoogleSignin.podspec`, which depends on `GoogleSignIn`, `AppAuth`, `GTMAppAuth`,
+`GTMSessionFetcher` and `AppCheckCore`). `tests/mobile-ios-release.test.js` runs the two
+autolinking commands the Podfile itself runs at `pod install` and checks that no Google pod is in
+either. With no Google pod there is no `GoogleSignIn` privacy manifest to ship, and the App
+Privacy answers (`docs/STORE_READINESS.md` 3.2) are unchanged. The `.ipa` check below should find
+no `GoogleSignIn` bundle and no Google `PrivacyInfo.xcprivacy`.
 
-**Tracking:** `NSPrivacyTracking` false, `NSPrivacyTrackingDomains` empty. The app makes requests
-only to our API (`docs/STORE_READINESS.md`, 2.5).
+**Tracking:** `NSPrivacyTracking` false, `NSPrivacyTrackingDomains` empty. The app's own code makes
+requests only to our API, and, once per Continue with Google on the iPhone, to Google's token
+endpoint to exchange the sign-in's code (#217) (`docs/STORE_READINESS.md`, 2.5).
 
 **Collected data:** the seven types `docs/STORE_READINESS.md` 3.2 answers **Yes**: Name, Email
 Address, Other Financial Info, Precise Location, Other User Content, User ID, Purchase History.
@@ -380,7 +387,9 @@ Metro on the local network. A build phase added by the same plugin deletes both 
 that isn't Debug ("[Expo Dev Launcher] Strip Local Network Keys for Release",
 `expo-dev-launcher/plugin/build/withDevLauncher.js`). So the production build asks for no
 permission at all. **Not confirmed** in a built app. The same `.ipa` check shows it:
-`Payload/TogetherLedger.app/Info.plist` should have no `NSLocalNetworkUsageDescription`.
+`Payload/TogetherLedger.app/Info.plist` should have no `NSLocalNetworkUsageDescription`. The same
+`.ipa` should hold no `GoogleSignIn*.bundle` and no Google `PrivacyInfo.xcprivacy` anywhere under
+`Payload/TogetherLedger.app/` (#217).
 
 ---
 
@@ -394,6 +403,7 @@ Checked at this pull request's head. `tests/mobile-ios-release.test.js` fails if
 | iPhone only (`supportsTablet: false`, which a prebuild turns into `TARGETED_DEVICE_FAMILY = "1"`) | `apps/mobile/app.json:12`. **Owner to confirm for v1** |
 | `ITSAppUsesNonExemptEncryption` false | `apps/mobile/app.json:15` |
 | No usage description in `Info.plist`: no camera, photos, location, contacts, microphone or notifications | `apps/mobile/app.json` (`infoPlist` holds only the encryption flag); no notifications dependency (`apps/mobile/package.json`). A prebuild adds `CFBundleAllowMixedLocalizations` (expo-apple-authentication, so Apple's button follows the phone's language) and, when the build has an iOS Google client, that client's URL scheme (`apps/mobile/app.config.js`); neither is a permission |
+| No Google SDK in the iPhone app (owner, Oct 9, 2026, #217) | `expo.autolinking.ios.exclude` in `apps/mobile/package.json` keeps `@react-native-google-signin/google-signin`, and with it the `GoogleSignIn` pod and its privacy manifest, out of the iOS build; Google on the iPhone is the browser-based sign-in (`expo-auth-session`, `apps/mobile/src/auth/google-sheet.ts`). The Podfile's own autolinking commands, run by the test, link no Google pod |
 | One entitlement: Sign in with Apple (#217) | `usesAppleSignIn: true` and the `expo-apple-authentication` plugin in `apps/mobile/app.json`; the prebuilt entitlements file holds only `com.apple.developer.applesignin` = `Default`. Until #217 it was empty (#370) |
 | The 1024 × 1024 icon has no alpha channel | `apps/mobile/assets/icon.png`: PNG colour type 2 (RGB), no `tRNS` chunk |
 | The StoreKit product IDs match the server's | `apps/mobile/src/billing/store-products.ts:29-38` and `server/store-products.js:19-28`, the same eight IDs; held by `tests/mobile-store-purchase.test.js:116-122` |

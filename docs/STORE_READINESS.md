@@ -126,19 +126,24 @@ is, so they are honest today and say which answer changes if a fix lands.
   gets the same token pair a password sign-in gets (`apps/mobile/src/api/client.ts`,
   `signInWithGoogle`, `signInWithApple`, `linkIdentity`). The iPhone signs in with Apple through
   Apple's own sheet (`expo-apple-authentication`) and sends its one-time `authorizationCode` with
-  the ID token (TL-S-05); Google signs in through Google's own SDK on both phones
+  the ID token (TL-S-05). Google on the iPhone is the browser-based sign-in: Google's own page in
+  the system's sign-in sheet (`expo-auth-session`, with PKCE, for the iOS client), whose code the
+  phone exchanges with Google for the ID token. Google on Android is Google's own SDK
   (`@react-native-google-signin/google-signin`). Buttons show only once
   `GET /api/v1/auth/providers?platform=…` says they work on that phone: on an iPhone both or
-  neither (guideline 4.8), on Android Google alone. **Apple is not offered on Android yet**:
-  Android has no Apple sheet, and Apple's web flow can't finish there with the web's Return URL
-  (owner to decide on a Return URL for the phone, #217).
-- **Not verified, and the owner's call (#217).** Google's iOS SDK, `GoogleSignIn` 9.0, ships its
-  own privacy manifest declaring data it collects, some of it for Analytics (`docs/IOS_RELEASE.md`,
-  The privacy manifest). Google publishes no Data safety entry for its Android library,
+  neither (guideline 4.8), on Android Google alone. **Apple is not offered on Android in v1**
+  (decision, owner, Oct 9, 2026): Android has no Apple sheet, and Apple's web flow can't finish
+  there with the web's Return URL.
+- **Decision (owner, Oct 9, 2026, #217): no Google SDK in the iPhone app.** Google's iOS SDK,
+  `GoogleSignIn` 9.0, ships its own privacy manifest declaring data it collects, some of it for
+  Analytics. So the iPhone uses the browser-based sign-in above, and Google's library is kept out
+  of the iOS build (`expo.autolinking.ios.exclude`, `apps/mobile/package.json`; checked by
+  `tests/mobile-ios-release.test.js` and described in `docs/IOS_RELEASE.md`, The privacy
+  manifest). The App Privacy answers (3.2) don't change. **Verified in code.**
+- **Not verified (#217).** Google publishes no Data safety entry for its Android library,
   `play-services-auth` 21.4.0; the Play services libraries it depends on "don't collect any
   end-user data" ([Google: Prepare for Google Play's data disclosure requirements](https://developers.google.com/android/guides/play-data-disclosure)).
-  Whether either changes the answers in 3.1 and 3.2 is not decided here. The phone's own code
-  sends the ID token to our server and nowhere else.
+  The phone's own code sends the ID token to our server and nowhere else.
 - **Verified in code (#216).** The web offers both together, or neither. It shows "Continue with
   Google" and "Continue with Apple" only when `GET /api/v1/auth/providers` says both are
   configured (`server/app.js:194-197`, `server/platform.js:644-651`), and it loads Google's and
@@ -237,7 +242,7 @@ password, `server/platform.js:821-840`), the theme, and any moment still waiting
 | Email sender (Resend) | Destination address, message content (verification, recovery, invitation and proposal emails) | Sending account and journey emails | The code sends through any SMTP server (`server/mailer.js:41-43`, `server/config.js:23`); that it is Resend is **not verified** in code (`PRIVACY.md:46`) |
 | Stripe | Email, internal account/journey/moment references (`server/billing.js:185-186`, `:223-240`, `:272`, `:288`) | Web payments | Verified in code. **The phone never reaches Stripe** (`tests/mobile-no-stripe.test.js`) |
 | Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: on the web, once configured, the person's browser signs in with Apple directly; on the iPhone, Apple's own sheet does (#217), and the phone sends what it returns to our server only (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
-| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: on the web, once configured, the person's browser signs in with Google directly; on the phone, Google's own SDK does (#217), and the phone sends the ID token to our server only (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
+| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: on the web, once configured, the person's browser signs in with Google directly; on the iPhone, Google's own page in the system's sign-in sheet does, and the phone exchanges its code for the ID token at Google's token endpoint (`https://oauth2.googleapis.com/token`); on Android, Google's own SDK does (#217). Either way the phone sends the ID token to our server only (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
 | Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision (owner, Oct 8, 2026)**: it stays *not verified*; Google Play's own guidance is checked before the Data safety form is filled in, and that decides whether it counts as our collection or Google's |
 | Expo (EAS) | Builds and submits the phone app. The app itself makes no call to Expo: there is no `expo-updates`, `expo-insights` or notifications dependency (`apps/mobile/package.json:13-30`) | Building | Not verified by captured traffic (TL-C-03, #261) |
 
@@ -267,7 +272,9 @@ row for one that is gone.
 | `@react-native-community/netinfo` | No | Says whether the phone is connected, for the offline notice (#300). Its own check that the internet can be reached would ask `clients3.google.com` on iOS; it is switched off (`apps/mobile/src/shell/use-connection.ts`), so the library makes no request. On Android it declares `ACCESS_NETWORK_STATE`, already granted (2.4), and `ACCESS_WIFI_STATE`, which is blocked (`apps/mobile/app.json`): only connected or not is read, never the Wi-Fi network's name |
 | `expo` | No (not verified by traffic) | Core runtime. No update, analytics or notification module is installed |
 | `expo-apple-authentication` | Yes, to Apple, as the system | Sign in with Apple on the iPhone (#217): Apple's own sheet, run by iOS. The ID token and one-time code it returns go to our API only (`apps/mobile/src/components/social-sign-in.tsx`). Nothing on Android |
-| `@react-native-google-signin/google-signin` | Yes, to Google | Continue with Google on both phones (#217), through Google's own SDK: `GoogleSignIn` 9.x on iOS, `play-services-auth` 21.4.0 on Android, which declares no Android permission. The ID token goes to our API only. Google's iOS SDK declares data it collects in its own privacy manifest (1.5) |
+| `@react-native-google-signin/google-signin` | Yes, to Google | Continue with Google on Android only (#217), through Google's own SDK, `play-services-auth` 21.4.0, which declares no Android permission. The ID token goes to our API only. Not in the iPhone app (`expo.autolinking.ios.exclude`, 1.5) |
+| `expo-auth-session` | Yes, to Google | Continue with Google on the iPhone (#217): opens Google's own page for the iOS client with PKCE, then exchanges the code at Google's token endpoint for the ID token, which goes to our API only (`apps/mobile/src/auth/google-sheet.ts`). The access token Google also returns is neither kept nor used. JavaScript only; not in the Android bundle |
+| `expo-web-browser` | Yes, as the system | The system's sign-in sheet (`ASWebAuthenticationSession`) that `expo-auth-session` opens Google's page in, on the iPhone. Not linked on Android (`expo.autolinking.android.exclude`) |
 | `expo-application` | No | Reads the installed app's version and build number, shown at the foot of Settings and sent in the `x-together-build` header to our API only (#359, `apps/mobile/src/config/build.ts`) |
 | `expo-constants` | No | Reads build constants |
 | `expo-crypto` | No | Only `randomUUID()`, for the key each moment held on the phone carries so a resend is never a second moment (#352, `apps/mobile/src/journey/use-waiting-moments.ts`) |
@@ -507,14 +514,12 @@ changes with it. The required-reason APIs it declares, and why, are in `docs/IOS
 
 **Continue with Google and Apple on the iPhone (#217) adds no type of our own.** The provider's
 identifier is kept as a User ID and the name and email it gives as Name and Email Address, all
-three already answered **Yes**, so the rows above and the manifest stay as they are. **Not
-decided, and the owner's call:** Google's own sign-in SDK, which the iPhone now carries, declares
-in its own privacy manifest that it collects Name, Email Address, Phone Number, Other Data Types,
-Coarse Location and User ID for App Functionality, and Other Data Types, User ID, Device ID and
-Other Usage Data for Analytics (`docs/IOS_RELEASE.md`, The privacy manifest). Whether those count
-as this app's answers (Apple asks for what "third-party partners" whose code is in the app collect)
-or Google's own, and so whether Phone Number, Coarse Location, Device ID, Other Usage Data and an
-Analytics purpose belong in the table above, is not settled here.
+three already answered **Yes**, so the rows above and the manifest stay as they are. **Decision
+(owner, Oct 9, 2026):** no Google SDK ships in the iPhone app, so the privacy manifest of Google's
+`GoogleSignIn` SDK, which declares Phone Number, Coarse Location, Device ID, Other Usage Data and
+Analytics purposes of its own, never ships either. Google on the iPhone is Google's page in the
+system's sign-in sheet (1.5). These answers stay as they are. **Verified in code**
+(`tests/mobile-ios-release.test.js`).
 
 **Privacy policy URL:** `https://app.together-ledger.com/privacy`, the same on both stores
 (**Decision (owner, Oct 8, 2026)**), built from `PRIVACY.md` by `scripts/build-public-site.mjs:33-34`.

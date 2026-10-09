@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 // Continue with Google and Apple on the phone (TL-S-04, #217): what the phone sends, what it keeps
@@ -153,6 +154,16 @@ test('closing Apple\'s or Google\'s sheet is recognised as a cancel, and nothing
   assert.equal(social.appleCancelled({ code: 'ERR_REQUEST_CANCELED' }), true);
   assert.equal(social.appleCancelled({ code: 'ERR_REQUEST_FAILED' }), false);
   assert.equal(social.appleCancelled(null), false);
+  // Google on an iPhone: the browser sheet's answers (expo-auth-session).
+  assert.equal(social.googleBrowserOutcome({ type: 'cancel' }), 'cancelled', 'the sheet closed');
+  assert.equal(social.googleBrowserOutcome({ type: 'dismiss' }), 'cancelled');
+  assert.equal(social.googleBrowserOutcome({ type: 'locked' }), 'cancelled', 'a second tap while one is open');
+  assert.equal(social.googleBrowserOutcome({ type: 'error', params: { error: 'access_denied' } }), 'cancelled', 'Cancel on Google\'s own page');
+  assert.equal(social.googleBrowserOutcome({ type: 'error', params: { error: 'invalid_request' } }), 'failed');
+  assert.equal(social.googleBrowserOutcome({ type: 'error', params: {}, error: { message: 'Cross-Site request verification failed. Cached state and returned state do not match.' } }), 'failed', 'a state that doesn\'t match is never a sign-in');
+  assert.equal(social.googleBrowserOutcome({ type: 'success', params: {} }), 'failed');
+  assert.deepEqual(social.googleBrowserOutcome({ type: 'success', params: { code: '4/0Ab-code', state: 's' } }), { code: '4/0Ab-code' });
+  // Google on Android: the native library's answers.
   const quiet = ['SIGN_IN_CANCELLED', 'IN_PROGRESS'];
   assert.equal(social.googleCancelled({ type: 'cancelled', data: null }, quiet), true);
   assert.equal(social.googleCancelled({ code: 'SIGN_IN_CANCELLED' }, quiet), true);
@@ -166,10 +177,16 @@ test('closing Apple\'s or Google\'s sheet is recognised as a cancel, and nothing
 
 test('a cancel says nothing and sends nothing; a failure in the sheet is said in the account\'s fallback words', async () => {
   const component = await read('src/components/social-sign-in.tsx');
-  // Google: a cancelled answer returns before anything is sent; a cancel that throws is not said.
-  assert.match(component, /const outcome = await GoogleSignin\.signIn\(\);\s*if \(googleCancelled\(outcome, GOOGLE_QUIET\)\) return;/);
-  assert.match(component, /if \(!googleCancelled\(error, GOOGLE_QUIET\)\) setNotice\(accountMessage\(null\)\);/);
-  assert.match(component, /const GOOGLE_QUIET = \[statusCodes\.SIGN_IN_CANCELLED, statusCodes\.IN_PROGRESS\];/);
+  // Google, either phone: a sheet the person closed answers null, which returns before anything is
+  // sent; anything Google's side throws is said in the account's fallback words.
+  assert.match(component, /const idToken = await googleIdTokenFromSheet\(googleClientId\);\s*if \(!idToken\) return;/);
+  assert.match(component, /\} catch \{\s*\/\/[^\n]*\n[^\n]*\n\s*setNotice\(accountMessage\(null\)\);/);
+  const ios = await read('src/auth/google-sheet.ts');
+  assert.match(ios, /const outcome = googleBrowserOutcome\(await request\.promptAsync\(GOOGLE_AUTHORIZATION\)\);\s*if \(outcome === 'cancelled'\) return null;/);
+  const android = await read('src/auth/google-sheet.android.ts');
+  assert.match(android, /const QUIET = \[statusCodes\.SIGN_IN_CANCELLED, statusCodes\.IN_PROGRESS\];/);
+  assert.match(android, /if \(googleCancelled\(error, QUIET\)\) return null;/);
+  assert.match(android, /if \(googleCancelled\(outcome, QUIET\)\) return null;/);
   // Apple: the sheet's cancel lands in the catch, and is not said.
   assert.match(component, /if \(!appleCancelled\(error\)\) setNotice\(accountMessage\(null\)\);/);
 });
@@ -209,6 +226,8 @@ test('the Google client comes from the build\'s public config, never the source'
   for (const file of ['src/config/google.ts', 'src/components/social-sign-in.tsx', 'src/auth/social-sign-in.ts', 'app.json']) {
     assert.doesNotMatch(await read(file), /\d+-[a-z0-9]+\.apps\.googleusercontent\.com/, `${file} holds a real Google client ID`);
   }
+  assert.equal(social.googleRedirectUri('123-abc.apps.googleusercontent.com'), 'com.googleusercontent.apps.123-abc:/oauthredirect');
+  assert.equal(social.googleRedirectUri(null), null);
   const { googleUrlScheme } = require('../apps/mobile/app.config.js');
   assert.equal(googleUrlScheme({ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: '123-abc.apps.googleusercontent.com' }), 'com.googleusercontent.apps.123-abc');
   assert.equal(googleUrlScheme({}), null);
@@ -224,6 +243,53 @@ test('the buttons sit on the same screens as email sign-in, equal in size and ov
   const size = /const PROVIDER_BUTTON = \{ width: '100%', maxWidth: 400, height: (\d+), alignSelf: 'center' \} as const;/.exec(component);
   assert.ok(size && Number(size[1]) >= 44);
   assert.equal(component.match(/style=\{(?:\[)?PROVIDER_BUTTON/g)?.length, 2, 'both buttons take the same size');
+  assert.match(component, /const PILL = PROVIDER_BUTTON\.height \/ 2;/);
+  assert.match(component, /cornerRadius=\{PILL\}/);
+  // The iPhone's Google button is drawn to Google's guidelines with Google's own "G" (20pt, @2x, @3x).
+  const button = await read('src/components/google-button.tsx');
+  assert.match(button, /borderRadius: 24/, 'the same pill as Apple\'s');
+  assert.match(button, /light: \{ fill: '#FFFFFF', stroke: '#747775', text: '#1F1F1F' \}/);
+  assert.match(button, /dark: \{ fill: '#131314', stroke: '#8E918F', text: '#E3E3E3' \}/);
+  assert.match(button, />Sign in with Google<\/Text>/);
+  for (const [name, size] of [['google-g.png', 20], ['google-g@2x.png', 40], ['google-g@3x.png', 60]]) {
+    const png = await readFile(new URL(`assets/${name}`, mobile));
+    assert.equal(png.subarray(1, 4).toString('latin1'), 'PNG');
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [size, size], name);
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Google on an iPhone is the browser-based sign-in; on Android, the native library
+
+test('the iPhone asks Google with PKCE for the iOS client, returns to its reversed ID, and exchanges the code without a secret', async () => {
+  const ios = await read('src/auth/google-sheet.ts');
+  assert.match(ios, /from 'expo-auth-session'/);
+  assert.match(ios, /const redirectUri = googleRedirectUri\(clientId\);/);
+  assert.match(ios, /new AuthRequest\(\{\s*clientId,\s*redirectUri,\s*scopes: \[\.\.\.GOOGLE_SCOPES\],\s*responseType: ResponseType\.Code,\s*usePKCE: true,/);
+  assert.match(ios, /exchangeCodeAsync\(\{ clientId, code: outcome\.code, redirectUri, extraParams: \{ code_verifier: request\.codeVerifier \} \}, GOOGLE_AUTHORIZATION\)/);
+  assert.doesNotMatch(ios, /clientSecret|client_secret/);
+  assert.deepEqual({ ...social.GOOGLE_AUTHORIZATION }, { authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth', tokenEndpoint: 'https://oauth2.googleapis.com/token' });
+  assert.deepEqual([...social.GOOGLE_SCOPES], ['openid', 'email', 'profile']);
+});
+
+test('Google\'s native library is reached only from Android files, and expo-auth-session only from the iPhone\'s', async () => {
+  const files = [];
+  for (const directory of ['app', 'src']) {
+    for (const entry of await readdir(new URL(directory, mobile), { recursive: true, withFileTypes: true })) {
+      if (entry.isFile() && /\.tsx?$/.test(entry.name)) files.push(`${entry.parentPath ?? entry.path}/${entry.name}`.slice(fileURLToPath(mobile).length));
+    }
+  }
+  const importing = async (name) => {
+    const found = [];
+    for (const file of files) if ((await read(file)).includes(`from '${name}'`)) found.push(file);
+    return found.sort();
+  };
+  assert.deepEqual(await importing('@react-native-google-signin/google-signin'), ['src/auth/google-sheet.android.ts', 'src/components/google-button.android.tsx']);
+  assert.deepEqual(await importing('expo-auth-session'), ['src/auth/google-sheet.ts']);
+  // Each has its Android twin, which Metro takes instead on Android, so neither base file is in the Android bundle.
+  for (const base of ['src/auth/google-sheet.ts', 'src/components/google-button.tsx']) assert.ok(files.includes(base.replace(/\.tsx?$/, (ext) => `.android${ext}`)), `${base} has an Android twin`);
+  assert.match(await read('src/components/social-sign-in.tsx'), /import \{ googleIdTokenFromSheet \} from '\.\.\/auth\/google-sheet';/);
+  assert.match(await read('src/components/social-sign-in.tsx'), /import \{ GoogleButton \} from '\.\/google-button';/);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -238,6 +304,21 @@ test('an Apple account with no email shows plain words, on the phone and the web
   const platform = await readFile(new URL('../server/platform.js', import.meta.url), 'utf8');
   assert.ok(platform.includes('`${provider}-${userId}@no-email.invalid`'), 'the placeholder the server gives is the one recognised');
   assert.match(await read('app/account.tsx'), /\{accountEmailLabel\(user\.email\)\}/);
+});
+
+test('an Apple account with no email is offered no verification email, and told where to write, on the phone and the web', async () => {
+  assert.equal(social.appleSharedNoEmail('apple-0f9e8d7c@no-email.invalid'), true);
+  assert.equal(social.appleSharedNoEmail('asha@example.test'), false);
+  assert.equal(social.NO_EMAIL_SUPPORT, 'For help with this account, write to ledger-support@together-ledger.com.');
+  const account = await read('app/account.tsx');
+  assert.match(account, /\{appleSharedNoEmail\(user\.email\) \? <Body selectable>\{NO_EMAIL_SUPPORT\}<\/Body> : null\}/);
+  assert.match(account, /\{!user\.emailVerified && !appleSharedNoEmail\(user\.email\) \? \(\s*<>\s*<Button kind="quiet" label="Resend verification email"/);
+  const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.ok(web.includes(`const NO_EMAIL_SUPPORT = '${social.NO_EMAIL_SUPPORT}';`), 'the same sentence on the web');
+  assert.match(web, /\$\('#resend-verification-button'\)\.hidden = !signedIn \|\| accountUser\.emailVerified \|\| noEmail;/);
+  // The address is the one SUPPORT.md and Settings give.
+  assert.ok((await readFile(new URL('../SUPPORT.md', import.meta.url), 'utf8')).includes('ledger-support@together-ledger.com'));
+  assert.ok((await read('app/settings.tsx')).includes('ledger-support@together-ledger.com'));
 });
 
 test('deleting an account opened with Apple or Google asks for no password, and stays three taps', async () => {

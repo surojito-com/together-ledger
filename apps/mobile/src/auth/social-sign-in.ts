@@ -2,8 +2,9 @@ import type { AppleSignInBody, SignInProviders } from '../api/client';
 
 /**
  * Continue with Google and Apple on the phone (TL-S-04, #217): the rules, kept free of runtime
- * imports so they can be tested as they are (tests/mobile-social-sign-in.test.js). The buttons and
- * the native sheets are src/components/social-sign-in.tsx.
+ * imports so they can be tested as they are (tests/mobile-social-sign-in.test.js). The buttons are
+ * src/components/social-sign-in.tsx; Google's sign-in itself is src/auth/google-sheet.ts on an
+ * iPhone and src/auth/google-sheet.android.ts on Android.
  */
 export type PhonePlatform = 'ios' | 'android';
 
@@ -35,13 +36,46 @@ export function offeredSignIns(platform: PhonePlatform, answer: SignInProviders 
   return answer.apple && appleSheet ? { google: true, apple: true } : NOTHING_OFFERED;
 }
 
+/**
+ * Google on an iPhone is the browser-based sign-in (owner, Oct 9, 2026): no Google SDK ships in the
+ * iOS app, so its privacy manifest never does either. expo-auth-session opens Google's own page in
+ * the system's sign-in sheet (ASWebAuthenticationSession) for the iOS client, with PKCE, and Google
+ * returns to the iOS client's own scheme, the client ID reversed. The code is then exchanged with
+ * Google for an ID token, by the phone, with the PKCE verifier and no secret, as an iOS client does.
+ */
+export const GOOGLE_AUTHORIZATION = Object.freeze({
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+});
+export const GOOGLE_SCOPES: readonly string[] = Object.freeze(['openid', 'email', 'profile']);
+
+/** Where Google returns to: `com.googleusercontent.apps.<id>:/oauthredirect`, or null for no client. */
+export function googleRedirectUri(clientId: string | null): string | null {
+  const match = /^([\w-]+)\.apps\.googleusercontent\.com$/.exec(clientId?.trim() ?? '');
+  return match ? `com.googleusercontent.apps.${match[1]}:/oauthredirect` : null;
+}
+
+/**
+ * What the browser sheet's answer means. Closing the sheet (`cancel`, `dismiss`), a second sheet
+ * while one is open (`locked`), and declining on Google's page (`access_denied`) are all the
+ * person changing their mind, and silent. A code is a sign-in to finish; anything else failed,
+ * including a reply whose `state` didn't match, which expo-auth-session answers as an error.
+ */
+export function googleBrowserOutcome(result: unknown): { code: string } | 'cancelled' | 'failed' {
+  const answer = result as { type?: unknown; params?: Record<string, unknown> } | null;
+  if (answer?.type === 'cancel' || answer?.type === 'dismiss' || answer?.type === 'locked') return 'cancelled';
+  if (answer?.type === 'error' && answer.params?.error === 'access_denied') return 'cancelled';
+  const code = answer?.type === 'success' ? answer.params?.code : null;
+  return typeof code === 'string' && code ? { code } : 'failed';
+}
+
 /** Closing Apple's sheet, or choosing Cancel in it, is silent (expo-apple-authentication). */
 export function appleCancelled(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === 'ERR_REQUEST_CANCELED';
 }
 
 /**
- * Closing Google's sheet is silent too. The library answers a cancel as `{ type: 'cancelled' }`,
+ * On Android, closing Google's sheet is silent too. The native library answers a cancel as `{ type: 'cancelled' }`,
  * and on some paths throws one of its status codes instead; a second tap while the first sheet is
  * still open (`IN_PROGRESS`) is nothing to tell anyone either.
  */
@@ -106,7 +140,17 @@ export async function appleSignInBody(credential: AppleCredential, kept: KeptApp
 /** What an account opened with Apple shows instead of the placeholder it was given for no email. */
 export const APPLE_SHARED_NO_EMAIL = 'Apple didn’t share an email address.';
 
+/**
+ * Such an account can't be sent anything, so it isn't offered a verification email (owner, Oct 9,
+ * 2026). It is told where to write instead.
+ */
+export const NO_EMAIL_SUPPORT = 'For help with this account, write to ledger-support@together-ledger.com.';
+
 // server/platform.js gives an account with no usable email `<provider>-<account id>@no-email.invalid`.
+export function appleSharedNoEmail(email: string): boolean {
+  return /^apple-[^@\s]+@no-email\.invalid$/i.test(email);
+}
+
 export function accountEmailLabel(email: string): string {
-  return /^apple-[^@\s]+@no-email\.invalid$/i.test(email) ? APPLE_SHARED_NO_EMAIL : email;
+  return appleSharedNoEmail(email) ? APPLE_SHARED_NO_EMAIL : email;
 }

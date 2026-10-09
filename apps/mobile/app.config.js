@@ -12,11 +12,11 @@ function shortCommit(env) {
   return 'dev';
 }
 
-// Google's sheet on an iPhone returns to the app through a URL scheme made from the iOS client ID
-// (#217): the ID reversed, `com.googleusercontent.apps.<id>`. The ID is public and comes from the
-// build profile (eas.json, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID), never from the source. Without it the
-// phone offers no Google, and Google's plugin is left out, since it refuses to run without a scheme.
-// The plugin adds only that scheme to Info.plist; on Android it adds nothing.
+// Google's sign-in page on an iPhone returns to the app through a URL scheme made from the iOS
+// client ID (#217): the ID reversed, `com.googleusercontent.apps.<id>`. The ID is public and comes
+// from the build profile (eas.json, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID), never from the source.
+// Without it the phone offers no Google and the scheme is left out. The plugin adds only that
+// scheme to Info.plist; on Android it adds nothing.
 function googleUrlScheme(env) {
   const id = typeof env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID === 'string' ? env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID.trim() : '';
   const match = /^([\w-]+)\.apps\.googleusercontent\.com$/.exec(id);
@@ -27,7 +27,7 @@ module.exports = ({ config }) => {
   const scheme = googleUrlScheme(process.env);
   return {
     ...config,
-    plugins: scheme ? [...config.plugins, ['@react-native-google-signin/google-signin', { iosUrlScheme: scheme }]] : config.plugins,
+    plugins: scheme ? [...config.plugins, ['./plugins/with-google-url-scheme', { scheme }]] : config.plugins,
     extra: { ...config.extra, buildCommit: shortCommit(process.env) },
   };
 };

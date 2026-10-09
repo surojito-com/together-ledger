@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 // The iPhone build that EAS makes in the cloud and sends to TestFlight (docs/IOS_RELEASE.md). These
 // are the facts about it that must not drift, because each one is either something App Store
@@ -60,8 +62,10 @@ test('the iPhone asks for no permission, and its one capability is Sign in with 
 test('Sign in with Apple comes with Google on the iPhone, so App Store guideline 4.8 is met', async () => {
   const pkg = JSON.parse(await readFile(new URL('package.json', mobile), 'utf8'));
   assert.equal(pkg.dependencies['expo-apple-authentication'], '57.0.2');
+  // Google on the iPhone is the browser-based sign-in (owner, Oct 9, 2026); the native library is Android's.
+  assert.equal(pkg.dependencies['expo-auth-session'], '57.0.12');
+  assert.equal(pkg.dependencies['expo-web-browser'], '57.0.3');
   assert.equal(pkg.dependencies['@react-native-google-signin/google-signin'], '16.1.5');
-  assert.equal(pkg.dependencies['expo-auth-session'], undefined, 'one Google library, the native one');
   const files = [];
   for (const directory of ['app', 'src']) {
     for (const entry of await readdir(new URL(directory, mobile), { recursive: true, withFileTypes: true })) {
@@ -75,6 +79,42 @@ test('Sign in with Apple comes with Google on the iPhone, so App Store guideline
   // And Google shows on an iPhone only with Apple beside it (src/auth/social-sign-in.ts).
   const rules = await readFile(new URL('src/auth/social-sign-in.ts', mobile), 'utf8');
   assert.match(rules, /return answer\.apple && appleSheet \? \{ google: true, apple: true \} : NOTHING_OFFERED;/);
+});
+
+// The owner's decision (Oct 9, 2026, #217): no Google SDK in the iOS app, so the privacy manifest of
+// Google's GoogleSignIn pod, which declares data it collects, some for Analytics, never ships.
+// Google's library is installed for Android, and reaches iOS two ways, both closed here: as an Expo
+// module (its ExpoAdapterGoogleSignIn pod) and as a React Native module (RNGoogleSignin.podspec,
+// which depends on GoogleSignIn). These are the two commands the Podfile itself runs at
+// `pod install` (`use_expo_modules!`, and `use_native_modules!` with expo-modules-autolinking's
+// react-native-config), so what they leave out is not in the build.
+function autolinking(...args) {
+  const run = spawnSync(process.execPath, ['--no-warnings', '--eval', "require('expo/bin/autolinking')", 'expo-modules-autolinking', ...args, '--json'], { cwd: fileURLToPath(mobile), encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  return JSON.parse(run.stdout);
+}
+
+test('the iOS build carries no Google SDK, so GoogleSignIn and its privacy manifest never ship', async () => {
+  const pkg = JSON.parse(await readFile(new URL('package.json', mobile), 'utf8'));
+  assert.deepEqual(pkg.expo.autolinking.ios, { exclude: ['@react-native-google-signin/google-signin'] });
+  for (const platform of ['ios', 'apple']) {
+    const pods = autolinking('resolve', '--platform', platform).modules.flatMap((module) => module.pods.map((pod) => pod.podName));
+    assert.ok(pods.includes('ExpoAppleAuthentication') && pods.includes('ExpoWebBrowser'), `${platform}: Apple's sheet and the browser sheet are linked`);
+    assert.equal(pods.some((pod) => /google/i.test(pod)), false, `${platform}: no Google pod among the Expo modules`);
+  }
+  const native = autolinking('react-native-config', '--platform', 'ios').dependencies;
+  assert.equal(native['@react-native-google-signin/google-signin'], undefined, 'RNGoogleSignin.podspec, and GoogleSignIn with it, is not linked');
+  assert.ok(native['react-native-screens'], 'the React Native modules are still read');
+  // Android still links the native library, and the browser sheet is left out there.
+  assert.ok(autolinking('react-native-config', '--platform', 'android').dependencies['@react-native-google-signin/google-signin']);
+  assert.equal(autolinking('resolve', '--platform', 'android').modules.some((module) => module.packageName === 'expo-web-browser'), false);
+  // The Podfile would use the React Native CLI instead only with this set, which no build profile does.
+  assert.doesNotMatch(JSON.stringify(eas), /EXPO_USE_COMMUNITY_AUTOLINKING/);
+  // No Google pod is the only source of that manifest: neither library added for the iPhone brings one.
+  for (const name of ['expo-auth-session', 'expo-web-browser', 'expo-apple-authentication']) {
+    const files = await readdir(installed(`${name}/`), { recursive: true });
+    assert.equal(files.some((file) => file.endsWith('.xcprivacy')), false, `${name} now brings a privacy manifest: read it`);
+  }
 });
 
 test('the 1024px icon has no alpha channel, which App Store Connect refuses', async () => {

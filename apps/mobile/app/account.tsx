@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { accountMessage, ACCOUNT_NOTICES } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { ACCOUNT_WHILE_OFFLINE } from '../src/auth/session-state';
-import { accountEmailLabel } from '../src/auth/social-sign-in';
+import { accountEmailLabel, appleSharedNoEmail, NO_EMAIL_SUPPORT } from '../src/auth/social-sign-in';
 import { useJourney } from '../src/journey/use-journey';
 import { useWaitingMoments } from '../src/journey/use-waiting-moments';
 import { signOutConsequence } from '../src/journey/waiting-moments';
@@ -76,7 +76,9 @@ export default function AccountScreen() {
           await journey.reload();
           return 'Name saved. Your journeyers see it now.';
         })} />
-        {!user.emailVerified ? (
+        {/* An Apple account with no email can't be sent one; it is told where to write (#217). */}
+        {appleSharedNoEmail(user.email) ? <Body selectable>{NO_EMAIL_SUPPORT}</Body> : null}
+        {!user.emailVerified && !appleSharedNoEmail(user.email) ? (
           <>
             <Button kind="quiet" label="Resend verification email" pending={pending === 'resend'} pendingLabel="Sending…" onPress={() => run('resend', async () => (
               await session.client.resendVerification() ? ACCOUNT_NOTICES.verificationResent : ACCOUNT_NOTICES.verificationDelayed

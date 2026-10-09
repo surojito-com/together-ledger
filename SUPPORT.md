@@ -14,7 +14,7 @@ A refund for a purchase made in the App Store or Google Play comes from Apple or
 
 ## Deleting your account
 
-In the phone app, open Settings, then Delete account. On the website, open Account settings, then Delete account. You confirm with your password, or, for an account opened with Apple or Google, just by typing DELETE.
+In the phone app, open Settings, then Delete account. On the website, open Account settings, then Delete account. You confirm by typing DELETE, and with your password if your account has one.
 
 Deleting your account does not cancel a subscription bought in the App Store or Google Play. Cancel it in your Apple account's subscriptions, or in Google Play's Payments and subscriptions, or it keeps renewing.
 

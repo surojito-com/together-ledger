@@ -319,8 +319,9 @@ test('an email held by an account without a password is refused in the server\'s
 });
 
 // An Apple account that shared no usable email holds a placeholder made from its own id. Account
-// settings says so in words, not with an address that is nobody's (#217). A real address shows as is.
-test('an Apple account with no email says so in Account settings, instead of its placeholder', async ({ page, baseURL }) => {
+// settings says so in words, not with an address that is nobody's (#217). It is offered no
+// verification email it could never receive, and is told where to write instead (owner, Oct 9).
+test('an Apple account with no email says so in Account settings, offers no verification email, and says where to write', async ({ page, baseURL }) => {
   await signedOutPage(page, baseURL);
   const placeholder = 'apple-0f9e8d7c-1234-4abc-9def-001122334455@no-email.invalid';
   await page.route(`${API}/auth/apple`, (route) => json(route, { data: { user: { ...USER, email: placeholder, emailVerified: false }, csrfToken: 'csrf-apple' } }));
@@ -334,4 +335,23 @@ test('an Apple account with no email says so in Account settings, instead of its
   await page.locator('#account-button').click();
   await expect(page.locator('#account-email')).toHaveText('Apple didn’t share an email address.');
   await expect(page.locator('#account-dialog')).not.toContainText('no-email.invalid');
+  await expect(page.locator('#resend-verification-button')).toBeHidden();
+  await expect(page.locator('#no-email-support')).toBeVisible();
+  await expect(page.locator('#no-email-support')).toHaveText('For help with this account, write to ledger-support@together-ledger.com.');
+});
+
+test('an unverified account with a real email is still offered a verification email, and no support line', async ({ page, baseURL }) => {
+  await signedOutPage(page, baseURL);
+  await page.route(`${API}/auth/apple`, (route) => json(route, { data: { user: { ...USER, emailVerified: false }, csrfToken: 'csrf-apple' } }));
+  await page.goto('/');
+  await openSignIn(page);
+  await page.evaluate(() => {
+    window.__appleAnswer = (config) => Promise.resolve({ authorization: { state: config.state, code: 'apple-code', id_token: 'apple-id-token' } });
+  });
+  await appleButton(page).click();
+  await expect(page.locator('#account-dialog')).toBeHidden();
+  await page.locator('#account-button').click();
+  await expect(page.locator('#account-email')).toHaveText(USER.email);
+  await expect(page.locator('#resend-verification-button')).toBeVisible();
+  await expect(page.locator('#no-email-support')).toBeHidden();
 });

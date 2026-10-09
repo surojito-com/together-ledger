@@ -72,17 +72,17 @@ test('no config plugin arrives unexamined, since a plugin can add permissions of
   // expo-apple-authentication (#217) adds the Sign in with Apple entitlement and
   // CFBundleAllowMixedLocalizations on iOS, and nothing on Android.
   assert.deepEqual(app.plugins, ['expo-router', './plugins/with-scene-life-cycle', './plugins/with-tokens-out-of-backup', '@react-native-community/datetimepicker', 'expo-apple-authentication'], 'Check the generated manifest and Info.plist for what a new plugin adds, then update this list.');
-  // Google's (#217) is added by app.config.js, only when the build has an iOS client ID: it adds
-  // that client's URL scheme to Info.plist and nothing on Android. Its Android library,
-  // play-services-auth 21.4.0, and the Play services libraries it depends on declare no
-  // permission (read Oct 9, 2026), so the granted list above is unchanged.
+  // The Google URL scheme (#217) is added by app.config.js through ./plugins/with-google-url-scheme,
+  // only when the build has an iOS client ID: that scheme in Info.plist, and nothing on Android.
+  // Google's Android library, play-services-auth 21.4.0, and the Play services libraries it
+  // depends on declare no permission (read Oct 9, 2026), so the granted list above is unchanged.
   const withConfig = require('../apps/mobile/app.config.js');
   const saved = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
   try {
     delete process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
     assert.deepEqual(withConfig({ config: app }).plugins, app.plugins);
     process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = '123-abc.apps.googleusercontent.com';
-    assert.deepEqual(withConfig({ config: app }).plugins, [...app.plugins, ['@react-native-google-signin/google-signin', { iosUrlScheme: 'com.googleusercontent.apps.123-abc' }]]);
+    assert.deepEqual(withConfig({ config: app }).plugins, [...app.plugins, ['./plugins/with-google-url-scheme', { scheme: 'com.googleusercontent.apps.123-abc' }]]);
   } finally {
     if (saved === undefined) delete process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
     else process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = saved;
@@ -93,6 +93,10 @@ test('no config plugin arrives unexamined, since a plugin can add permissions of
   assert.doesNotMatch(manifest, /uses-permission/);
   const gradle = google('android/build.gradle');
   assert.match(gradle, /play-services-auth:\$\{safeExtGet\('googlePlayServicesAuthVersion', '21\.4\.0'\)\}/, 'a new play-services-auth was not read for the permissions it declares');
+  // The iPhone's browser sheet, expo-web-browser, would add a Custom Tabs <queries> entry and an
+  // activity on Android; nothing there uses it, so it is not linked there at all.
+  const pkg = JSON.parse(readFileSync(new URL('package.json', mobile), 'utf8'));
+  assert.deepEqual(pkg.expo.autolinking.android, { exclude: ['expo-web-browser'] });
 });
 
 test('sign-in tokens are kept out of Android cloud backup and device transfer, and nothing else is', async () => {

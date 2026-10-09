@@ -1,29 +1,31 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { AccountUser, AppleSignInBody, GoogleSignInBody } from '../api/client';
 import { accountMessage } from '../auth/account-messages';
 import { keptAppleName } from '../auth/kept-apple-name';
 import { useSession } from '../auth/session';
-import { appleCancelled, appleSignInBody, googleCancelled, googleIdToken, NOTHING_OFFERED, offeredSignIns, type Offer } from '../auth/social-sign-in';
+import { googleIdTokenFromSheet } from '../auth/google-sheet';
+import { appleCancelled, appleSignInBody, NOTHING_OFFERED, offeredSignIns, type Offer } from '../auth/social-sign-in';
 import { googleClientId, phonePlatform } from '../config/google';
 import { useTheme } from '../theme';
+import { GoogleButton } from './google-button';
 import { Button, Field, Notice } from './ui';
 
-// The library's own words for a sheet that was closed, or is still open from a first tap.
-const GOOGLE_QUIET = [statusCodes.SIGN_IN_CANCELLED, statusCodes.IN_PROGRESS];
 // Both buttons are this tall, and as wide as each other: over the 44-point minimum (#178), and the
-// height Google draws its own button at.
+// height Google draws its own button at on Android. On an iPhone both are pills, as the app's own
+// buttons are.
 const PROVIDER_BUTTON = { width: '100%', maxWidth: 400, height: 48, alignSelf: 'center' } as const;
+const PILL = PROVIDER_BUTTON.height / 2;
 
 type Provider = 'google' | 'apple';
 type PendingLink = { provider: Provider; body: GoogleSignInBody | AppleSignInBody; email: string };
 
 /**
  * Continue with Google and Apple (TL-S-04, #217), on the screens that sign in with an email. Nothing
- * shows until the server says what is ready for this phone (src/auth/social-sign-in.ts). The ID
- * token goes to our server and nowhere else, and comes back as the same token pair a password
+ * shows until the server says what is ready for this phone (src/auth/social-sign-in.ts). Google
+ * is the browser-based sign-in on an iPhone and the native one on Android (src/auth/google-sheet*.ts).
+ * The ID token goes to our server and nowhere else, and comes back as the same token pair a password
  * sign-in gets, kept in the keychain (#180). Closing either sheet is silent. An email that already
  * has a password account asks for that password once, in the web's words (src/app.js).
  */
@@ -43,9 +45,6 @@ export function SocialSignIn({ onSignedIn }: { onSignedIn?: (user: AccountUser) 
       const appleSheet = phonePlatform === 'ios' && await AppleAuthentication.isAvailableAsync().catch(() => false);
       const answer = await client.providers(phonePlatform, googleClientId);
       const offered = offeredSignIns(phonePlatform, answer, { appleSheet });
-      if (offered.google && googleClientId) {
-        GoogleSignin.configure(phonePlatform === 'ios' ? { iosClientId: googleClientId } : { webClientId: googleClientId });
-      }
       if (current) setOffer(offered);
     })().catch(() => {
       // Not ready, or not reachable: email sign-in is still here, and that is all that shows.
@@ -72,25 +71,19 @@ export function SocialSignIn({ onSignedIn }: { onSignedIn?: (user: AccountUser) 
   }
 
   async function continueWithGoogle() {
+    if (!googleClientId) return;
     setPending('google');
     setNotice(null);
     try {
-      if (phonePlatform === 'android') await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-      const outcome = await GoogleSignin.signIn();
-      if (googleCancelled(outcome, GOOGLE_QUIET)) return;
-      const idToken = googleIdToken(outcome);
-      // The phone keeps no Google session of its own: the next time, Google asks which account.
-      await GoogleSignin.signOut().catch(() => {});
-      if (!idToken) {
-        setNotice(accountMessage(null));
-        return;
-      }
+      // Null is the person changing their mind, which is silent.
+      const idToken = await googleIdTokenFromSheet(googleClientId);
+      if (!idToken) return;
       const body = { idToken };
       await finish('google', () => client.signInWithGoogle(body), body);
-    } catch (error) {
-      // Only Google's own library throws here (our server's answers are handled in finish), and
-      // its words are not ours: the account's fallback is said, as the web does for Apple's.
-      if (!googleCancelled(error, GOOGLE_QUIET)) setNotice(accountMessage(null));
+    } catch {
+      // Only Google's side throws here (our server's answers are handled in finish), and its
+      // words are not ours: the account's fallback is said, as the web does for Apple's.
+      setNotice(accountMessage(null));
     } finally {
       setPending(null);
     }
@@ -146,19 +139,13 @@ export function SocialSignIn({ onSignedIn }: { onSignedIn?: (user: AccountUser) 
         <AppleAuthentication.AppleAuthenticationButton
           buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
           buttonStyle={dark ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-          cornerRadius={theme.radius.s}
+          cornerRadius={PILL}
           style={[PROVIDER_BUTTON, busy ? styles.waiting : null]}
           onPress={() => { if (!busy) continueWithApple(); }}
         />
       ) : null}
       {offer.google ? (
-        <GoogleSigninButton
-          size={GoogleSigninButton.Size.Wide}
-          color={dark ? 'dark' : 'light'}
-          disabled={busy}
-          style={PROVIDER_BUTTON}
-          onPress={continueWithGoogle}
-        />
+        <GoogleButton dark={dark} disabled={busy} style={PROVIDER_BUTTON} onPress={continueWithGoogle} />
       ) : null}
       <Notice message={notice} tone="problem" />
       <Text style={[styles.or, { color: theme.colors.muted }]}>or</Text>
