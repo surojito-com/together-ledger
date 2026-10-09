@@ -76,9 +76,10 @@ Simulator; from an Android emulator or a phone on USB, run `adb reverse tcp:4174
 
 The app needs a development build, not Expo Go: it carries native code Expo Go doesn't include,
 such as `expo-iap` for in-app purchases, and `expo-dev-client` is installed for exactly this
-(`apps/mobile/package.json`). Make one with `eas build --profile development` (the `development`
-profile in `apps/mobile/eas.json`) and install it; it then loads the app from the dev server that
-`npm start -w apps/mobile` runs. `npm run typecheck -w apps/mobile` and `npm run lint -w apps/mobile` are the
+(`apps/mobile/package.json`). Make one on your own computer with `npx expo run:ios` (needs Xcode)
+or `npx expo run:android` (needs the Android SDK), run from `apps/mobile`, or in EAS's cloud with
+`eas build --profile development` (the `development` profile in `apps/mobile/eas.json`) and install
+it; it then loads the app from the dev server that `npm start -w apps/mobile` runs. `npm run typecheck -w apps/mobile` and `npm run lint -w apps/mobile` are the
 checks CI runs on every pull request (`.github/workflows/ci.yml`); they are not part of
 `npm run check` at the repo root.
 
