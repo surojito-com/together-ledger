@@ -8,6 +8,8 @@ import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
 import { appleChain, signNotification, signTransaction, transactionPayload } from './support/apple-signing.js';
+import { PUSH_AUDIENCE, PUSH_EMAIL, googleKeys, pushBody, pushToken } from './support/google-push.js';
+import { GooglePushVerifier } from '../server/store-google.js';
 import { stripPhotoMetadata } from '../src/photo-metadata.js';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -459,5 +461,68 @@ test('real PostgreSQL applies a store notification once, however many deliveries
   // The log is kept no longer than the purchase record it explains.
   await pool.query('DELETE FROM billing_store_purchases WHERE id=$1', [notes.rows[0].purchase_id]);
   assert.equal((await pool.query('SELECT count(*)::int AS count FROM billing_store_notifications WHERE notification_id=$1', [`refund-${suffix}`])).rows[0].count, 0);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+test('real PostgreSQL applies a Google notification once, however many deliveries arrive together', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({
+    NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'billing', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
+    APPLE_ROOT_CERTIFICATES: appleChain().rootBase64,
+    GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE: PUSH_AUDIENCE, GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL: PUSH_EMAIL,
+  });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const email = `voided-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `voided-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Voided', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const ids = await platform.storePurchaseIdentity(user.id, journey.id);
+  const token = `voided-${suffix}`;
+  const voidedAt = Date.now() + 60 * 60 * 1000;
+  // Google, answering with synthetic records (tests/fixtures/google-play).
+  const google = {
+    calls: 0,
+    productPurchase: async () => ({ purchaseState: 0, consumptionState: 1, acknowledgementState: 1, purchaseType: 0, quantity: 1, purchaseTimeMillis: String(Date.now()), obfuscatedExternalAccountId: ids.obfuscatedAccountId, obfuscatedExternalProfileId: ids.obfuscatedProfileId }),
+    voidedPurchases: async () => { google.calls += 1; return [{ purchaseToken: token, orderId: 'GPA.3300-0000-0000-00002', voidedTimeMillis: String(voidedAt) }]; },
+  };
+  const keys = googleKeys();
+  const store = new StorePurchaseService({
+    pool, config, google, history: (client, event) => platform.appendEvent(client, event), log: () => {},
+    googlePush: new GooglePushVerifier({ ...config.googlePlayNotifications, fetch: keys.fetch }),
+  });
+  await store.verifyGoogle(user.id, { productId: 'room_51_week_pass', purchaseToken: token });
+
+  const push = (notification, messageId) => store.handleGoogleNotification({
+    authorization: `Bearer ${pushToken(keys.current())}`,
+    body: pushBody({ version: '1.0', packageName: 'com.togetherledger.ledger', eventTimeMillis: String(Date.now()), ...notification }, { messageId }),
+  });
+  const messageId = `${Date.now()}1`;
+  const voided = { voidedPurchaseNotification: { purchaseToken: token, orderId: 'GPA.3300-0000-0000-00002', productType: 2, refundType: 1 } };
+  const sentAt = Date.now();
+  const answers = await Promise.all(Array.from({ length: 4 }, () => push(voided, messageId)));
+  const answeredAt = Date.now();
+  assert.equal(answers.filter((answer) => answer.outcome === 'refunded').length, 1);
+  assert.equal(answers.filter((answer) => answer.outcome === 'already-received').length, 3);
+  const notes = await pool.query("SELECT outcome,environment,transaction_ref FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [messageId]);
+  assert.equal(notes.rowCount, 1);
+  assert.equal(notes.rows[0].outcome, 'refunded');
+  assert.equal(notes.rows[0].environment, 'sandbox');
+  assert.notEqual(notes.rows[0].transaction_ref, token, 'a hash, never the token');
+  const room = await pool.query('SELECT expires_at,reason FROM billing_entitlements WHERE source_record_id=$1', [token]);
+  // Google's voidedTimeMillis is an hour ahead of this server's clock, so the room ends now, never later.
+  const ended = new Date(room.rows[0].expires_at).getTime();
+  assert.ok(ended >= sentAt && ended <= answeredAt, 'a void time ahead of us is taken as now');
+  assert.equal(room.rows[0].reason, 'store_refunded');
+
+  // Google's test notification names no purchase and no environment, and migration 034 as written takes it.
+  const testId = `${Date.now()}2`;
+  assert.equal((await push({ testNotification: { version: '1.0' } }, testId)).outcome, 'test');
+  const test = await pool.query("SELECT outcome,environment FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [testId]);
+  assert.deepEqual(test.rows, [{ outcome: 'test', environment: null }]);
+  await pool.query("DELETE FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [testId]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
 });
