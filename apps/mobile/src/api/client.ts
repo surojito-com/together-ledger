@@ -25,7 +25,19 @@ export type AccountUser = {
   displayName: string;
   emailVerified: boolean;
   createdAt: string;
+  /** False for an account opened with Apple or Google, which deletes without a password (#217). */
+  hasPassword?: boolean;
 };
+
+/** What `GET /auth/providers` says this phone can offer (#217): public client identifiers only. */
+export type SignInProviders = {
+  google: { clientId: string } | null;
+  apple: { clientId: string } | null;
+};
+
+/** What Google or Apple handed the phone, as the server's sign-in and link routes take it. */
+export type GoogleSignInBody = { idToken: string };
+export type AppleSignInBody = { idToken: string; authorizationCode: string; displayName?: string };
 
 export type Tokens = {
   token: string;
@@ -157,6 +169,33 @@ export function createAccountClient({ base, fetch, tokens, build }: {
     },
     async login(input: { identifier: string; password: string }) {
       return (await keep(await request<{ user: AccountUser } & Tokens>('/auth/login', { method: 'POST', body: input }))).user;
+    },
+    /**
+     * Which of Google and Apple the server is ready for on this phone (#217). The phone names its
+     * platform and the Google client its tokens are issued to, and the server answers for it.
+     */
+    async providers(platform: 'ios' | 'android', googleClientId: string | null): Promise<SignInProviders> {
+      const query = `platform=${platform}${googleClientId ? `&googleClientId=${encodeURIComponent(googleClientId)}` : ''}`;
+      const answer = await request<Partial<SignInProviders> | null>(`/auth/providers?${query}`);
+      return { google: answer?.google?.clientId ? { clientId: answer.google.clientId } : null, apple: answer?.apple?.clientId ? { clientId: answer.apple.clientId } : null };
+    },
+    /**
+     * Google's or Apple's ID token, for the same token pair a password sign-in gets (#217). For
+     * Apple, its one-time authorizationCode goes with it, so the server can revoke the grant when
+     * the account is deleted (TL-S-05, #218), and the name Apple gives only the first time.
+     */
+    async signInWithGoogle(body: GoogleSignInBody) {
+      return (await keep(await request<{ user: AccountUser } & Tokens>('/auth/google', { method: 'POST', body }))).user;
+    },
+    async signInWithApple(body: AppleSignInBody) {
+      return (await keep(await request<{ user: AccountUser } & Tokens>('/auth/apple', { method: 'POST', body }))).user;
+    },
+    /** The answer to `link_required`: the same sign-in, with the password of the account that has its email. */
+    async linkIdentity(provider: 'google' | 'apple', body: GoogleSignInBody | AppleSignInBody, password: string) {
+      const { idToken } = body;
+      const authorizationCode = 'authorizationCode' in body ? body.authorizationCode : undefined;
+      const sent = authorizationCode ? { provider, idToken, authorizationCode, password } : { provider, idToken, password };
+      return (await keep(await request<{ user: AccountUser } & Tokens>('/auth/link', { method: 'POST', body: sent }))).user;
     },
     async session() {
       if (!await tokens.read()) return null;
@@ -303,8 +342,9 @@ export function createAccountClient({ base, fetch, tokens, build }: {
     async deleteConcern(journeyId: string, concernId: string, version: number) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/concerns/${encodeURIComponent(concernId)}`, { method: 'DELETE', body: { version }, signedIn: true });
     },
-    async deleteAccount(password: string) {
-      await request('/account', { method: 'DELETE', body: { password, confirmation: 'DELETE' }, signedIn: true });
+    /** An account opened with Apple or Google has no password, and is deleted by typing DELETE alone (#217). */
+    async deleteAccount(password: string | null) {
+      await request('/account', { method: 'DELETE', body: password ? { password, confirmation: 'DELETE' } : { confirmation: 'DELETE' }, signedIn: true });
       await tokens.clear();
     },
   };

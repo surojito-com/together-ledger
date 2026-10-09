@@ -97,13 +97,33 @@ test('the web\'s client, which does open Stripe, is never part of the phone', ()
   assert.equal(names.includes('src/app.js'), false);
 });
 
-test('the phone depends on no payment SDK and no in-app browser', async () => {
+test('the phone depends on no payment SDK and no in-app browser of its own', async () => {
   const pkg = JSON.parse(await readFile(join(mobile, 'package.json'), 'utf8'));
   const app = await readFile(join(mobile, 'app.json'), 'utf8');
   for (const name of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })) {
+    // One exception (#217): Continue with Google on the iPhone is Google's own page in the
+    // system's sign-in sheet, which expo-auth-session opens through expo-web-browser (owner, Oct 9,
+    // 2026). It is there for that alone: the app's own code never imports it or opens a page
+    // (the walk above refuses expo-web-browser, openBrowserAsync and openAuthSessionAsync in every
+    // file the bundle reaches), and the one page expo-auth-session is given is Google's sign-in.
+    if (name === 'expo-web-browser' && pkg.dependencies['expo-auth-session']) continue;
     assert.doesNotMatch(name, /stripe|web-browser|inappbrowser|webview/i, name);
   }
   assert.doesNotMatch(app, /stripe|merchantIdentifier/i);
+});
+
+test('the only page the phone opens is Google\'s sign-in, and only from the iPhone\'s Google sign-in', async () => {
+  const files = await walk(mobile);
+  const importing = [];
+  for (const file of files) {
+    if (/from 'expo-auth-session'/.test(await readFile(file, 'utf8'))) importing.push(relative(mobile, file));
+  }
+  assert.deepEqual(importing, ['src/auth/google-sheet.ts']);
+  const sheet = await readFile(join(mobile, 'src/auth/google-sheet.ts'), 'utf8');
+  assert.match(sheet, /request\.promptAsync\(GOOGLE_AUTHORIZATION\)/);
+  assert.match(sheet, /exchangeCodeAsync\([^)]*GOOGLE_AUTHORIZATION\)/);
+  const rules = await readFile(join(mobile, 'src/auth/social-sign-in.ts'), 'utf8');
+  assert.match(rules, /authorizationEndpoint: 'https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth',\s*tokenEndpoint: 'https:\/\/oauth2\.googleapis\.com\/token',/);
 });
 
 test('the phone\'s client has no method that starts a checkout or opens the portal', async () => {

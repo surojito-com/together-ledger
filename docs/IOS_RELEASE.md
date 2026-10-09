@@ -49,6 +49,16 @@ change in App Store Connect, the Apple Developer account or EAS. The owner runs 
    "A unique identifier automatically generated for your app"). It is not a secret, so commit it in
    its own pull request. EAS accepts only digits there: "It should consist only of digits"
    (`@expo/eas-json` 24.9.0, `build/submit/schema.js`). Android submissions are not affected.
+6. **The iOS Google client ID, in `apps/mobile/eas.json`, for Continue with Google and Sign in with
+   Apple (#217).** Without it the build still works and offers email sign-in only. In Google Cloud
+   Console → APIs & Services → Credentials, in the project that holds the web's client
+   (`GOOGLE_WEB_CLIENT_ID`), create an OAuth client of type **iOS** with bundle ID
+   `com.togetherledger.ledger`. Put its client ID (`<number>-<letters>.apps.googleusercontent.com`)
+   in `build.production.env` as `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, and in `build.preview.env`
+   for a preview build, in its own pull request; it is public, not a secret. Add the same ID to the
+   server's `GOOGLE_CLIENT_IDS`, or the server refuses its tokens and the iPhone shows neither
+   button. Apple needs nothing new: the server already accepts the bundle ID
+   (`APPLE_CLIENT_IDS`), and the key that exchanges Apple's code is the web's.
 
 ---
 
@@ -156,6 +166,13 @@ eas build --platform ios --profile production
 
   The cost: if the app ever does need a capability (push, for example, #265), turn it on in the
   Apple Developer portal by hand, because EAS no longer will.
+
+  **Since #217 the app declares one capability, Sign in with Apple** (`usesAppleSignIn`, and
+  `expo-apple-authentication`'s plugin, in `apps/mobile/app.json`). That doesn't make the variable
+  unnecessary: the app still has no push entitlement, so without it EAS would still try to switch
+  **Push Notifications** off on the App ID, which the web's Apple setup shares. Keep setting it.
+  Sign in with Apple is already on for `com.togetherledger.ledger`, and has to stay on: the
+  iPhone's own sign-in now needs it as well as the web's.
 - **The build number.** `eas.json` keeps the version and build number on EAS's servers
   (`"appVersionSource": "remote"`) and adds one to the build number on every production build
   (`"autoIncrement": true`). The first build is 1 unless EAS already holds one
@@ -319,13 +336,35 @@ The reason codes and API lists are Apple's
 Nothing else is declared, because nothing else was found. The rest of the libraries with native
 iOS code, read for the same APIs: `expo-secure-store` (the Keychain), `expo-crypto`, `expo-font`,
 `expo-linking`, `expo-modules-core`, `@react-native-community/netinfo`,
-`@react-native-community/datetimepicker`, `react-native-screens` and
-`react-native-safe-area-context`. None of them uses one. `expo-dev-client`'s launcher and menu do
-use user defaults, but they are linked only into development builds
-(`:configurations => :debug`, `expo-dev-client.podspec`).
+`@react-native-community/datetimepicker`, `react-native-screens`,
+`react-native-safe-area-context`, and since #217 `expo-apple-authentication` 57.0.2 and
+`expo-web-browser` 57.0.3 (`expo-auth-session` 57.0.12 has no native code). None of them uses
+one, and none brings a manifest of its own. `expo-dev-client`'s launcher and menu do use user
+defaults, but they are linked only into development builds (`:configurations => :debug`,
+`expo-dev-client.podspec`).
 
-**Tracking:** `NSPrivacyTracking` false, `NSPrivacyTrackingDomains` empty. The app makes requests
-only to our API (`docs/STORE_READINESS.md`, 2.5).
+**No Google SDK ships in the iPhone app (owner, Oct 9, 2026, #217).** Google's own iOS SDK,
+`GoogleSignIn` 9.0, ships a privacy manifest that declares data it collects, some of it for
+Analytics ([google/GoogleSignIn-iOS, `PrivacyInfo.xcprivacy`](https://github.com/google/GoogleSignIn-iOS/blob/9.0.0/GoogleSignIn/Sources/Resources/PrivacyInfo.xcprivacy)).
+So on the iPhone, Continue with Google is the browser-based sign-in instead: `expo-auth-session`
+opens Google's own page in the system's sign-in sheet (`ASWebAuthenticationSession`, through
+`expo-web-browser`) for the iOS OAuth client, with PKCE, and Google returns to the client's own
+scheme, `com.googleusercontent.apps.<id>:/oauthredirect` (`apps/mobile/src/auth/google-sheet.ts`).
+The phone exchanges the code at `https://oauth2.googleapis.com/token` with the PKCE verifier and no
+secret, and sends only the ID token to our API. Android keeps Google's native library
+(`google-sheet.android.ts`), which is installed in the workspace, so it is kept out of iOS
+autolinking (`expo.autolinking.ios.exclude` in `apps/mobile/package.json`). That closes both ways
+it would reach the iOS build: as an Expo module (`ExpoAdapterGoogleSignIn`) and as a React Native
+module (`RNGoogleSignin.podspec`, which depends on `GoogleSignIn`, `AppAuth`, `GTMAppAuth`,
+`GTMSessionFetcher` and `AppCheckCore`). `tests/mobile-ios-release.test.js` runs the two
+autolinking commands the Podfile itself runs at `pod install` and checks that no Google pod is in
+either. With no Google pod there is no `GoogleSignIn` privacy manifest to ship, and the App
+Privacy answers (`docs/STORE_READINESS.md` 3.2) are unchanged. The `.ipa` check below should find
+no `GoogleSignIn` bundle and no Google `PrivacyInfo.xcprivacy`.
+
+**Tracking:** `NSPrivacyTracking` false, `NSPrivacyTrackingDomains` empty. The app's own code makes
+requests only to our API, and, once per Continue with Google on the iPhone, to Google's token
+endpoint to exchange the sign-in's code (#217) (`docs/STORE_READINESS.md`, 2.5).
 
 **Collected data:** the seven types `docs/STORE_READINESS.md` 3.2 answers **Yes**: Name, Email
 Address, Other Financial Info, Precise Location, Other User Content, User ID, Purchase History.
@@ -348,7 +387,9 @@ Metro on the local network. A build phase added by the same plugin deletes both 
 that isn't Debug ("[Expo Dev Launcher] Strip Local Network Keys for Release",
 `expo-dev-launcher/plugin/build/withDevLauncher.js`). So the production build asks for no
 permission at all. **Not confirmed** in a built app. The same `.ipa` check shows it:
-`Payload/TogetherLedger.app/Info.plist` should have no `NSLocalNetworkUsageDescription`.
+`Payload/TogetherLedger.app/Info.plist` should have no `NSLocalNetworkUsageDescription`. The same
+`.ipa` should hold no `GoogleSignIn*.bundle` and no Google `PrivacyInfo.xcprivacy` anywhere under
+`Payload/TogetherLedger.app/` (#217).
 
 ---
 
@@ -361,9 +402,12 @@ Checked at this pull request's head. `tests/mobile-ios-release.test.js` fails if
 | Bundle ID `com.togetherledger.ledger` | `apps/mobile/app.json:13` |
 | iPhone only (`supportsTablet: false`, which a prebuild turns into `TARGETED_DEVICE_FAMILY = "1"`) | `apps/mobile/app.json:12`. **Owner to confirm for v1** |
 | `ITSAppUsesNonExemptEncryption` false | `apps/mobile/app.json:15` |
-| No usage description in `Info.plist`: no camera, photos, location, contacts, microphone or notifications | `apps/mobile/app.json:14-16` (`infoPlist` holds only the encryption flag); no notifications dependency (`apps/mobile/package.json`); the prebuilt entitlements file is empty |
+| No usage description in `Info.plist`: no camera, photos, location, contacts, microphone or notifications | `apps/mobile/app.json` (`infoPlist` holds only the encryption flag); no notifications dependency (`apps/mobile/package.json`). A prebuild adds `CFBundleAllowMixedLocalizations` (expo-apple-authentication, so Apple's button follows the phone's language) and, when the build has an iOS Google client, that client's URL scheme (`apps/mobile/app.config.js`); neither is a permission |
+| No Google SDK in the iPhone app (owner, Oct 9, 2026, #217) | `expo.autolinking.ios.exclude` in `apps/mobile/package.json` keeps `@react-native-google-signin/google-signin`, and with it the `GoogleSignIn` pod and its privacy manifest, out of the iOS build; Google on the iPhone is the browser-based sign-in (`expo-auth-session`, `apps/mobile/src/auth/google-sheet.ts`). The Podfile's own autolinking commands, run by the test, link no Google pod |
+| One entitlement: Sign in with Apple (#217) | `usesAppleSignIn: true` and the `expo-apple-authentication` plugin in `apps/mobile/app.json`; the prebuilt entitlements file holds only `com.apple.developer.applesignin` = `Default`. Until #217 it was empty (#370) |
 | The 1024 × 1024 icon has no alpha channel | `apps/mobile/assets/icon.png`: PNG colour type 2 (RGB), no `tRNS` chunk |
 | The StoreKit product IDs match the server's | `apps/mobile/src/billing/store-products.ts:29-38` and `server/store-products.js:19-28`, the same eight IDs; held by `tests/mobile-store-purchase.test.js:116-122` |
-| No social login on the phone, so guideline 4.8 doesn't require Sign in with Apple | `apps/mobile/src/api/client.ts:116-179` calls only `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/refresh`, `/auth/resend-verification` and `/auth/verify-email`; no Apple or Google sign-in dependency. The server can do both (`docs/STORE_READINESS.md` 1.5). The day the phone offers Google, Sign in with Apple has to come with it |
+| Guideline 4.8: Sign in with Apple comes with Google on the iPhone (#217) | The iPhone shows Continue with Google only beside Sign in with Apple, both or neither, and only once `GET /auth/providers?platform=ios` says both work (`apps/mobile/src/auth/social-sign-in.ts`, `offeredSignIns`). Until #217 the phone had no social login at all, and this row said so (#370) |
+| The Google client ID is the build's, not the source's | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` in the build profile's `env` (`apps/mobile/eas.json`), read by `apps/mobile/src/config/google.ts` and turned into Google's URL scheme by `apps/mobile/app.config.js`. Unset, the iPhone offers neither Google nor Apple |
 | Privacy manifest present, no tracking | `apps/mobile/app.json`, `expo.ios.privacyManifests` |
 | Submit profile points at the owner's app | `apps/mobile/eas.json`, `submit.production.ios.ascAppId`, `6820375940` (App Information → Apple ID) |

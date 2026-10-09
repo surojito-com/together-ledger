@@ -190,10 +190,14 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
 
   // What the web needs to draw "Continue with Google" and "Continue with Apple" (#216): public
   // client identifiers, never anything about an account, so it asks for no session. It is read
-  // fresh each time, so the buttons appear once the server is configured and restarted.
-  app.get('/api/v1/auth/providers', async (_request, reply) => {
+  // fresh each time, so the buttons appear once the server is configured and restarted. A phone
+  // asks the same read about itself (#217), naming its platform and the Google client its tokens
+  // are issued to; without those it is the web's answer, unchanged.
+  app.get('/api/v1/auth/providers', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { data: platform.webSignInProviders() };
+    const { platform: phone, googleClientId } = request.query || {};
+    if (phone === undefined) return { data: platform.webSignInProviders() };
+    return { data: platform.phoneSignInProviders(phone, googleClientId) };
   });
 
   for (const provider of ['google', 'apple']) {
