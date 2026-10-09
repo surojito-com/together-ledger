@@ -51,3 +51,11 @@ test('dual-host app origins are parsed and deduplicated', () => {
   });
   assert.deepEqual(config.appOrigins, ['https://app.together-ledger.com', 'https://legacy.example']);
 });
+
+test('the store refund alert has a threshold and a window in config, never zero (#273)', () => {
+  assert.deepEqual(loadConfig({ NODE_ENV: 'test' }).storeRefundAlert, { threshold: 5, windowHours: 24 });
+  assert.deepEqual(loadConfig({ NODE_ENV: 'test', STORE_REFUND_ALERT_THRESHOLD: '12', STORE_REFUND_ALERT_WINDOW_HOURS: '6' }).storeRefundAlert, { threshold: 12, windowHours: 6 });
+  assert.throws(() => loadConfig({ NODE_ENV: 'test', STORE_REFUND_ALERT_THRESHOLD: '0' }));
+  assert.throws(() => loadConfig({ NODE_ENV: 'test', STORE_REFUND_ALERT_WINDOW_HOURS: '0' }));
+  assert.throws(() => loadConfig({ NODE_ENV: 'test', STORE_REFUND_ALERT_THRESHOLD: 'several' }));
+});

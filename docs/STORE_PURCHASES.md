@@ -327,7 +327,7 @@ Google's purchase token, which is itself a credential and never logged.
 
 A store purchase can change after it was made, and only the store knows: the person asks Apple for a refund, a
 subscription renews or lapses. The stores tell us on a channel we have to listen on. Apple's and Google's are both built
-here; what a refunded extra does is not yet (see "Not built here").
+here.
 
 ### Apple: App Store Server Notifications
 
@@ -349,7 +349,7 @@ is the transaction signed inside it. Both must name our `bundleId`. Without the 
 | `REFUND` | The room ends when Apple refunded it, or on its own end if that came first. Then the usual grace, then the people beyond two rest. A refund of an earlier period that has since been paid again changes nothing. A pass that had not started never starts. |
 | `REVOKE` | The same as a refund. Family Sharing is off for every product, so a shared copy never made room to take back. |
 | `EXPIRED`, `DID_FAIL_TO_RENEW`, `GRACE_PERIOD_EXPIRED` | Nothing to write: the room ends on the date already paid for, and the usual grace starts there, as for a failed web payment. A `DID_FAIL_TO_RENEW` with the `GRACE_PERIOD` subtype is the same: Apple's billing grace period never extends the room (see below). |
-| `REFUND_REVERSED` | Logged as `not_acted_on`, and nothing changes. A reversed refund should bring the room back; that is not built yet (see "Not built here"). |
+| `REFUND_REVERSED` | Brings back what the refund took (see "A reversed refund" below). |
 | `CONSUMPTION_REQUEST` | Logged as `not_acted_on`, and never answered (see below). |
 | `TEST` | Logged, and nothing changes. |
 | Any other | Logged as `not_acted_on`, and nothing changes. |
@@ -372,12 +372,46 @@ everyone else sees is what any lapse shows: the grace, and then who rests. No no
 used the app, while Apple decides a refund. PRIVACY.md doesn't say we share that, so we don't. The request is logged
 as `not_acted_on`, and the server makes no call to Apple.
 
-**An extra photo or place is only noted.** A refunded `extra_photo` or `extra_place` is logged as `extra_noted` and
-its slot is left as it is, until what a refunded extra does is decided.
+**A refunded transaction never comes back, unless the store reverses the refund.** The purchase row is marked
+(`revoked_at`, `revocation`, migration 034), and a copy of the transaction signed before the refund, sent again by a
+phone, extends nothing. A refunded renewal we had never been sent is recorded as refunded, so sending it later grants
+nothing either.
 
-**A refunded transaction never comes back.** The purchase row is marked (`revoked_at`, `revocation`, migration 034),
-and a copy of the transaction signed before the refund, sent again by a phone, extends nothing. A refunded renewal we
-had never been sent is recorded as refunded, so sending it later grants nothing either.
+**A reversed refund brings back what the refund took** (owner, Oct 9, 2026). When Apple sends `REFUND_REVERSED`, the
+room comes back through `applyStoreEvent`, the way a renewal moves it: to the end it was granted for a pass, or to the
+end of the period whose refund was reversed for a subscription. It then reads exactly as if it had never been refunded.
+If that end is still ahead, the room is running. If it has passed, the usual grace runs from it. The people who were
+resting stop resting as soon as the room covers them again. A pass whose refund came before it started starts when it
+would have. The purchase stands again: its `revoked_at` and `revocation` are cleared, and the notification is logged as
+`reinstated`. Only a refund is reversed: room a `REVOKE` ended, or a refund of an earlier period that changed nothing,
+stays as it is. A reversal received twice changes nothing the second time, and a second reversal of the same refund
+finds nothing refunded and is logged as `unchanged`. Apple doesn't promise order. A refund whose reversal, signed
+later, has already arrived changes nothing. A reversed refund writes nothing into the journey's History, the same as
+the refund.
+
+**Google sends nothing when a refund is reversed.** Its notification reference has no such kind (checked Oct 9, 2026).
+If Google later renews a subscription it refunded, `SUBSCRIPTION_RENEWED` brings the room back as any renewal does. A
+voided pass or extra stays voided.
+
+### A refunded extra photo or place
+
+**A refund never takes away a photo or place someone already added** (proposed in 16C; the owner's call is in the PR).
+What the extra was already used for stays on the moment it was used for. What it had not been used for yet is
+withdrawn, so the refund leaves nothing new to add. Apple's `REFUND` or `REVOKE` and Google's voided purchase do the
+same. The purchase is marked refunded, and the notification is logged as `refunded` or `revoked`, with how many slots
+were kept and how many withdrawn.
+
+- **An extra photo** is a slot spent once, when its photo is added. A spent slot stays, and so does its photo. Deleting
+  that photo later gives nothing back, as before. A slot not spent yet is withdrawn (`canceled`), and nothing can be
+  added with it.
+- **An extra place** is never spent. Every time the moment is saved, its places beyond the free one are counted
+  against the payer's place slots. So a refund keeps as many of its slots as the moment's places need now, counting
+  the payer's other place slots on that moment first. Only the rest are withdrawn. Withdrawing a slot the places need
+  would stop the moment being saved again without dropping a place. That is a removal by another name, and it never
+  happens.
+- Either way, the moment can hold what it held when the refund arrived, and never more.
+- The phone sending the purchase again grants nothing. If Apple reverses the refund, the withdrawn slots come back.
+- A refund of an extra writes nothing into the journey's History.
 
 **Received twice, applied once.** Apple sends again until it hears a `200`. Each notification is one row in
 `billing_store_notifications`, unique on store and Apple's `notificationUUID`, written in the same transaction as
@@ -423,24 +457,32 @@ says to read the purchase again. Each purchase it names is read again from the P
 `server/store-google.js`: `purchases.subscriptionsv2.get` for a subscription, `purchases.voidedpurchases.list` for a
 refund. Only what Google says there changes a room. A notification for any package other than
 `com.togetherledger.ledger` (`GOOGLE_PLAY_PACKAGE_NAME`) is refused before anything is read. A notification is only
-read again when it could change a room we granted; a test, an extra, a partial refund, a kind we don't act on, or a
-purchase we never granted costs no call to Google.
+read again when it could change what we granted: a room, or the refund of an extra. A test, a partial refund, a kind
+we don't act on, or a purchase we never granted costs no call to Google.
 
 | Notification | What it does to the room |
 |---|---|
 | `SUBSCRIPTION_RENEWED`, `SUBSCRIPTION_RECOVERED` | When Google says the subscription is active, the room runs to Google's new end, and the purchase records it, so the phone sending it later grants nothing more. `SUBSCRIPTION_RECOVERED` is a subscription paid again after account hold or a pause. While Google has the subscription in its grace period or account hold, nothing is extended. |
 | `SUBSCRIPTION_CANCELED`, `SUBSCRIPTION_EXPIRED`, `SUBSCRIPTION_ON_HOLD`, `SUBSCRIPTION_IN_GRACE_PERIOD` | Nothing to write: the room ends on the date already paid for, and the usual grace starts there, as for a failed web payment. |
 | `SUBSCRIPTION_REVOKED` | When Google says the subscription has expired, the room ends when Google ended it. Then the usual grace, then the people beyond two rest. |
-| A voided purchase | Once Google lists it as voided, the room ends when Google voided it, and a pass that had not started never starts. For a subscription, only a void of the latest order paid ends it: each renewal is its own order under the same purchase token, and a void of an earlier order since paid again changes nothing. A quantity-based partial refund is logged as `not_acted_on`. |
+| A voided purchase | Once Google lists it as voided, the room ends when Google voided it, and a pass that had not started never starts. For a subscription, only a void of the latest order paid ends it: each renewal is its own order under the same purchase token, and a void of an earlier order since paid again changes nothing. A voided extra keeps what was already added with it (see "A refunded extra photo or place"). Until Google lists it, Pub/Sub is asked to send it again (see below). |
+| A quantity-based partial refund | Logged as `not_acted_on`, and the pass runs on (owner, Oct 9, 2026). Google can refund some of a pass bought several at once. A refund of what is left is a full refund, and ends it. Google isn't asked anything. |
 | Google's test notification | Logged as `test`, and nothing changes. Google isn't asked anything. |
-| `extra_photo`, `extra_place` | Logged as `extra_noted`, and nothing changes (see "Not built here"). |
 | Any other | Logged as `not_acted_on`, and nothing changes. |
 
-**When Google doesn't confirm a notification, nothing changes.** A renewal Google doesn't call active, a revocation of
-a subscription Google still calls running, or a void Google doesn't list, is logged as `unchanged` with the line
-`google did not confirm a notification`. When Google can't be reached, or refuses our credentials, the answer is
-`503` and nothing is logged, so Pub/Sub sends the message again. It keeps trying for as long as the subscription
-keeps messages (seven days by default).
+**When Google doesn't confirm a notification, nothing changes.** A renewal Google doesn't call active, or a purchase
+Google doesn't know, is logged as `unchanged` with the line `google did not confirm a notification`.
+
+**A refund Google doesn't list yet is asked for again** (owner, Oct 9, 2026). A void Google's voided-purchases list
+doesn't show yet, or a revocation of a subscription Google still calls running, changes nothing. The answer is `503`
+(`store_notification_not_confirmed`), so Pub/Sub sends the message again. It keeps trying for as long as the
+subscription keeps messages, seven days. The first delivery writes the message's row as `waiting`, and logs
+`google has not listed a refund yet` once. Each retry after that reads Google again, quietly. When Google shows it,
+that same row is settled with what it did, and the answer is `200`. A row still `waiting` after seven days is a refund
+Google never confirmed; reconciliation (#277) is what will look at it.
+
+When Google can't be reached, or refuses our credentials, the answer is `503` and nothing is logged, so Pub/Sub sends
+the message again, for the same seven days.
 
 **A refund that leaves the subscription running.** Google can refund a period without ending the subscription, and
 then still calls that period active. The room ends at the refund all the same, as for Apple, and the purchase is
@@ -449,7 +491,8 @@ sending the same purchase again does not.
 
 **Received twice, applied once.** Pub/Sub delivers at least once. Each message is one row in
 `billing_store_notifications`, unique on store and Pub/Sub's `messageId`, written in the same transaction as its effect.
-A message already logged is answered `200` without asking Google again. The log keeps what it keeps for Apple, with a
+A message already logged is answered `200` without asking Google again, unless it is still `waiting` for Google to
+show a refund. The log keeps what it keeps for Apple, with a
 16-character hash of the purchase token as `transaction_ref` and Google's `eventTimeMillis` as when it was signed.
 A Google notification names no environment, so it takes the environment of the purchase it is about, and none when
 it is about no purchase we hold.
@@ -459,6 +502,7 @@ it is about no purchase we hold.
 | `store_notification_unauthenticated` | 401 | No token, or one that isn't Google's, for our audience and our push service account. Logged, never with the token. |
 | `store_notification_unverified` | 400 | The body isn't a Pub/Sub message carrying a notification. Logged. |
 | `store_notification_wrong_app` | 400 | Another package. Logged. |
+| `store_notification_not_confirmed` | 503 | A refund or revocation Google's API doesn't show yet. Logged once, on the first delivery. Pub/Sub sends it again later. |
 | `store_unavailable` | 503 | The push settings or the Play Developer API aren't configured on this server, or Google can't be reached. Pub/Sub sends it again later. |
 
 Pub/Sub treats any answer but a success as "send again", so a refused message comes back until the subscription
@@ -468,7 +512,37 @@ stops keeping it. A refusal is only ever logged; it changes nothing.
 
 `StorePurchaseService.applyStoreEvent` is the one place a store's later word changes a journey's room: `renewed`,
 `lapsed`, `refunded` or `revoked`, for a store, environment and the store's id for the room. `noteNotification` and
-`settleNotification` keep the log. Apple's and Google's notifications both call the same three.
+`settleNotification` keep the log. Apple's and Google's notifications both call the same three. A reversed refund is
+a fifth event, `reinstated`. A refunded extra never comes here: it has no room, and `withdrawExtra` handles its slots.
+
+### When refunds spike
+
+A spike in refunds or revocations more often means something is wrong on our side than that many people asked at once.
+A purchase might not be granting, or might be charging twice. So every refund or revocation notification is counted:
+Apple's `REFUND` and `REVOKE`, and Google's voided purchase and `SUBSCRIPTION_REVOKED`. Each counts whatever it then
+did here, even for a purchase we never granted. When the count within a window reaches a threshold, the server writes
+one line at level `error`:
+
+```json
+{"level":"error","message":"store refunds spiking","count":5,"apple":3,"google":2,"threshold":5,"windowHours":24,"since":"…"}
+```
+
+The existing monitoring already catches it: the error count after a release (`docs/SERVER_DEPLOY.md`, step 5), and any
+alert on `"level":"error"`. It carries counts only, never a person, a purchase or a token.
+
+- **Proposed: 5 within 24 hours** (`STORE_REFUND_ALERT_THRESHOLD=5`, `STORE_REFUND_ALERT_WINDOW_HOURS=24`). The owner
+  hasn't settled these yet.
+  - At launch, a refund is rare: one a week would be a lot.
+  - One family refunding a pass, a subscription and an extra together is three, and doesn't trip it.
+  - Five in a day is far above anything organic, and a day is short enough that a broken purchase is caught by the
+    next morning.
+  - Both numbers are config, not code. They should be revisited once there is a month of real volume.
+- Only this server's own environment counts, plus Google notifications that name no purchase we hold. Sandbox refunds
+  on the live server are App Review's and the owner's tests, and never count there.
+- A message Pub/Sub sends again is one row, so it counts once.
+- The line is written at most once a window per running server. A restart can write it once more.
+- Counting can never fail a notification. If the count itself fails, the line is
+  `store refunds could not be counted`, at level `warn`.
 
 ## Setting it up
 
@@ -485,64 +559,6 @@ Neither store is on until its trust is configured, and until then its purchases 
 
 It is public, and stays out of the repository only so that the trust the server runs on is something someone
 chose and checked, alongside the other secrets. `APPLE_BUNDLE_ID` defaults to `com.togetherledger.ledger`.
-
-### Apple: server notifications (after the release)
-
-Once a release with migration 034 is live, in **App Store Connect → the app → App Information → App Store Server
-Notifications**:
-
-1. **Production Server URL**: `https://api.together-ledger.com/api/v1/billing/store-notifications/apple`
-2. **Sandbox Server URL**: the same URL (owner, Oct 9, 2026). Sandbox testers' purchases (App Review, the owner's
-   test accounts) are recorded on the live server, so their notifications have to reach it too. Only accounts listed
-   in `STORE_SANDBOX_ACCOUNT_IDS` can make a sandbox purchase count there, and a sandbox notification only ever
-   touches sandbox rows, so it can't change anyone else's room.
-3. **Version 2** for both, then **Save**.
-4. **Leave Billing Grace Period off** (the app's Subscriptions page in App Store Connect). Our own grace is the only
-   grace, the same as for a failed web payment (owner, Oct 8, 2026).
-5. **Request a test notification** (App Store Connect, or the App Store Server API's
-   `POST /inApps/v1/notifications/test`). The server logs `store notification` with `"type":"TEST"`, and
-   `billing_store_notifications` has a row with `outcome` `test`.
-
-### Google: Real-time developer notifications (after the release)
-
-Once a release with Google's endpoint is live (it needs no migration), in the **Google Cloud console**, project
-**togetherledger-app**:
-
-1. **The topic.** **Pub/Sub → Topics → Create topic.** Topic ID `play-notifications`. Leave "Add a default
-   subscription" unticked, then **Create**. Its full name is `projects/togetherledger-app/topics/play-notifications`.
-2. **Let Google Play publish to it.** **Pub/Sub → Topics →** `play-notifications` **→ Permissions** (in the info panel)
-   **→ Add principal**: `google-play-developer-notifications@system.gserviceaccount.com`, role **Pub/Sub Publisher**,
-   then **Save**.
-3. **The account the push signs in as.** **IAM & Admin → Service accounts → Create service account.** A name such as
-   `play-notifications-push`. It needs no roles. Its email,
-   `play-notifications-push@togetherledger-app.iam.gserviceaccount.com`, is
-   `GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL`. It is not the Play service account above, and it has no key.
-4. **The push subscription, with authentication.** **Pub/Sub → Subscriptions → Create subscription:**
-   - Subscription ID `play-notifications-push`, topic `projects/togetherledger-app/topics/play-notifications`.
-   - Delivery type **Push**. Endpoint URL `https://api.together-ledger.com/api/v1/billing/store-notifications/google`.
-   - Tick **Enable authentication**, and choose the service account from step 3.
-   - **Audience**: `https://api.together-ledger.com/api/v1/billing/store-notifications/google`. This is
-     `GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE`.
-   - Leave **Enable payload unwrapping** off: the server reads the message as Pub/Sub wraps it.
-   - Retry policy: **Retry after exponential backoff delay**. Leave message retention at 7 days.
-   - **Create.**
-5. **Set the two values** on the live server, with the other secrets, and restart:
-   `GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE` and `GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL`, exactly as in step 4.
-   Until both are set, every push is answered `503` and Pub/Sub keeps it.
-
-Then in **Play Console → Together Ledger → Monetize with Play → Monetization setup → Real-time developer
-notifications**:
-
-6. Tick **Enable real-time notifications**, and set **Topic name** to
-   `projects/togetherledger-app/topics/play-notifications`.
-7. **Notification content**: **Get notifications for subscriptions and all voided purchases**. One-time purchase
-   events aren't needed: the phone sends every pass and extra.
-8. **Send test message**, then **Save changes**. The server logs `store notification` with `"type":"TEST"`, and
-   `billing_store_notifications` has a `google` row with `outcome` `test`. If Play Console says the publish failed,
-   step 2 is missing.
-
-Refunds are read through `purchases.voidedpurchases.list`, which needs the Play service account's **View financial
-data** permission. That is already granted in step 5 of "Google: the Play service account", below.
 
 ### Google: the Play service account
 
@@ -571,22 +587,87 @@ the Google side is tested end to end only once that build exists (#271).
 Paid room is read only when `JOURNEY_CAPACITY_MODE=billing`. That used to need Stripe billing on; it now needs Stripe
 billing **or** at least one store configured, so the phones can sell while web billing is still off.
 
+### After the release: the owner's steps, in order
+
+Once a release with migrations 034 and 035 is live (16A, 16B, 16C and 17A, released together). Both store trusts above
+(Apple's root certificate, the Play service account) must already be set. Nothing here is done in code; each step is
+in a console or on the live server.
+
+1. **The migrations.** 034 and 035 are applied with the release (`server/migrate.js`). Both are additive: 034 adds a
+   table and two empty columns, and 035 only widens the list of outcomes a notification can have.
+2. **The refund alert.** With nothing set, the server uses 5 refunds or revocations within 24 hours (see "When refunds
+   spike"). If the owner settles other numbers, set `STORE_REFUND_ALERT_THRESHOLD` and
+   `STORE_REFUND_ALERT_WINDOW_HOURS` on the live server with the values in step 13, before that restart.
+
+In **App Store Connect → the app → App Information → App Store Server Notifications**:
+
+3. **Production Server URL**: `https://api.together-ledger.com/api/v1/billing/store-notifications/apple`
+4. **Sandbox Server URL**: the same URL (owner, Oct 9, 2026). Sandbox testers' purchases (App Review, the owner's
+   test accounts) are recorded on the live server, so their notifications have to reach it too. Only accounts listed
+   in `STORE_SANDBOX_ACCOUNT_IDS` can make a sandbox purchase count there, and a sandbox notification only ever
+   touches sandbox rows, so it can't change anyone else's room.
+5. **Version 2** for both, then **Save**.
+6. **Leave Billing Grace Period off** (the app's Subscriptions page in App Store Connect). Our own grace is the only
+   grace, the same as for a failed web payment (owner, Oct 8, 2026).
+7. **Request a test notification** (App Store Connect, or the App Store Server API's
+   `POST /inApps/v1/notifications/test`). The server logs `store notification` with `"type":"TEST"`, and
+   `billing_store_notifications` has a row with `outcome` `test`.
+
+In the **Google Cloud console**, project **togetherledger-app**:
+
+8. **The topic.** **Pub/Sub → Topics → Create topic.** Topic ID `play-notifications`. Leave "Add a default
+   subscription" unticked, then **Create**. Its full name is `projects/togetherledger-app/topics/play-notifications`.
+9. **Let Google Play publish to it.** **Pub/Sub → Topics →** `play-notifications` **→ Permissions** (in the info panel)
+   **→ Add principal**: `google-play-developer-notifications@system.gserviceaccount.com`, role **Pub/Sub Publisher**,
+   then **Save**.
+10. **The account the push signs in as.** **IAM & Admin → Service accounts → Create service account.** A name such as
+    `play-notifications-push`. It needs no roles. Its email,
+    `play-notifications-push@togetherledger-app.iam.gserviceaccount.com`, is
+    `GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL`. It is not the Play service account, and it has no key.
+11. **The push subscription, with authentication.** **Pub/Sub → Subscriptions → Create subscription:**
+    - Subscription ID `play-notifications-push`, topic `projects/togetherledger-app/topics/play-notifications`.
+    - Delivery type **Push**. Endpoint URL `https://api.together-ledger.com/api/v1/billing/store-notifications/google`.
+    - Tick **Enable authentication**, and choose the service account from step 10.
+    - **Audience**: `https://api.together-ledger.com/api/v1/billing/store-notifications/google`. This is
+      `GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE`.
+    - Leave **Enable payload unwrapping** off: the server reads the message as Pub/Sub wraps it.
+    - Retry policy: **Retry after exponential backoff delay**. Leave message retention at **7 days**: a refund Google
+      doesn't list yet is sent again for as long as the message is kept.
+    - **Create.**
+12. **Refunds need the Play service account's financial permission.** Refunds are read through
+    `purchases.voidedpurchases.list`, which needs **View financial data**. That is granted in step 5 of "Google: the
+    Play service account", above; check it is there.
+13. **Set the two values** on the live server, with the other secrets, and restart:
+    `GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE` and `GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL`, exactly as in step 11.
+    Until both are set, every push is answered `503` and Pub/Sub keeps it.
+
+In **Play Console → Together Ledger → Monetize with Play → Monetization setup → Real-time developer notifications**:
+
+14. Tick **Enable real-time notifications**, and set **Topic name** to
+    `projects/togetherledger-app/topics/play-notifications`.
+15. **Notification content**: **Get notifications for subscriptions and all voided purchases**. One-time purchase
+    events aren't needed: the phone sends every pass and extra.
+16. **Send test message**, then **Save changes**. The server logs `store notification` with `"type":"TEST"`, and
+    `billing_store_notifications` has a `google` row with `outcome` `test`. If Play Console says the publish failed,
+    step 9 is missing.
+
+Then:
+
+17. **Move the date at the top of PRIVACY.md** once this reaches production.
+
+## Deleting an account
+
+Deleting the account deletes the journey and its store entitlements, and keeps `billing_store_purchases`, but it does
+not cancel a store subscription: that carries on, and keeps charging, until the person cancels it with Apple or Google.
+**Decided by the owner, Oct 8, 2026: the phone's delete-account dialog must say that a store subscription is cancelled
+with Apple or Google**, not by deleting the account (App Store guideline 5.1.1(v) asks for this too). The phone's
+deletion screen and its confirmation dialog say it (`STORE_SUBSCRIPTION_NOT_CANCELLED`); nothing on the server stands
+in for it.
+
 ## Not built here
 
-- **What a refunded extra photo or place does** (#273, 16C). Apple's or Google's refund of one is logged and changes
-  nothing.
-- **A partial refund of a Google pass bought several at once** (#273). Google can refund some of a multi-quantity
-  purchase. It is logged as `not_acted_on` and the pass runs on; a refund of what is left ends it.
-- **A reversed refund** (#273, 16C, with refunded extras). Apple's `REFUND_REVERSED` should bring the room back (owner, Oct 9,
-  2026). For now it is logged as `not_acted_on` and changes nothing.
-- **Alerting when refunds spike** (#273).
 - **Restore on a new phone** (#275). The phone's Restore purchases sends what the store hands back; a
   subscription bought on the other platform is not seen from this one.
 - **What a journey holding more than one entitlement means** (#274, #276), beyond "the most generous one counts".
-- **Reconciliation against the stores** (#277).
-- **The phone's delete-account dialog.** Deleting the account deletes the journey and its store entitlements, and
-  keeps `billing_store_purchases`, but it does not cancel a store subscription: that carries on, and keeps
-  charging, until the person cancels it with Apple or Google. **Decided by the owner, Oct 8, 2026: the phone's
-  delete-account dialog must say that a store subscription is cancelled with Apple or Google**, not by deleting the
-  account (App Store guideline 5.1.1(v) asks for this too). The phone's deletion screen and its confirmation
-  dialog now say it (`STORE_SUBSCRIPTION_NOT_CANCELLED`); nothing on the server stands in for it.
+- **Reconciliation against the stores** (#277). It is the second net for a refund Google never confirmed (a
+  `waiting` row older than seven days) and for anything else the notifications miss.

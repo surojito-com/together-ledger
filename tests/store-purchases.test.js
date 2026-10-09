@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted', '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
   '028_turn-a-store-purchase-into-capacity', '029_rest-read-only-and-let-the-payer-ask-for-time', '030_ask-for-six-weeks-a-year',
   '031_let-a-lost-renewal-reply-be-asked-again', '033_let-a-moment-held-offline-arrive-once', '034_hear-refunds-and-renewals-from-the-stores',
+  '035_hear-reversed-refunds-and-refunded-extras',
 ];
 const origin = 'http://127.0.0.1:4174';
 const PURCHASED = Date.parse('2026-10-08T12:00:00Z');
@@ -107,6 +108,9 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
       await pool.query('ALTER TABLE moment_image_slots DROP CONSTRAINT IF EXISTS moment_image_slots_constraint_1');
       await pool.query('ALTER TABLE moment_location_slots DROP CONSTRAINT IF EXISTS moment_location_slots_constraint_1');
     }
+    // 035 widens 034's outcome check, which Postgres names billing_store_notifications_outcome_check
+    // and pg-mem `<table>_constraint_3`. The same thing as for 028: pg-mem's name is dropped first.
+    if (name.startsWith('035_')) await pool.query('ALTER TABLE billing_store_notifications DROP CONSTRAINT IF EXISTS billing_store_notifications_constraint_3');
     // pg-mem cannot parse NOT VALID (030); tests/postgres-integration runs 030 as written.
     await pool.query((await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
     // Postgres lets a NULL through a CHECK (`environment IN (…)` is unknown, not false), and a Google
@@ -1342,22 +1346,95 @@ test('EXPIRED, DID_FAIL_TO_RENEW and GRACE_PERIOD_EXPIRED leave the room to end 
   assert.equal((await h.capacity(ours.id)).grace?.endsAt, new Date(end + 7 * DAY).toISOString());
 });
 
-test('a refunded extra photo or place is only noted; what it does is decided separately', async (t) => {
+test('a refunded extra photo never takes away a photo already added; what it had not been used for is withdrawn', async (t) => {
   const h = await harness(t);
   const sam = await h.person('sam-extra-refund');
   const ours = await h.journey(sam);
   const { appAccountToken } = await h.identity(sam, ours.id);
   const held = await h.moment(sam, ours.id);
-  const photo = { appAccountToken, transactionId: 'photo-refunded', productId: 'extra_photo', type: 'Consumable' };
-  const place = { appAccountToken, transactionId: 'place-refunded', productId: 'extra_place', type: 'Consumable' };
-  assert.equal((await h.apple(sam, h.signed(photo), { momentId: held.id })).statusCode, 201);
-  assert.equal((await h.apple(sam, h.signed(place), { momentId: held.id })).statusCode, 201);
-  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'photo-refund', transaction: { ...photo, revocationDate: refundedAt } }));
-  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'place-refund', transaction: { ...place, revocationDate: refundedAt } }));
-  assert.deepEqual((await h.notes()).map((note) => note.outcome), ['extra_noted', 'extra_noted']);
-  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE state='active'")).rows[0].count, 1);
-  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_location_slots WHERE state='active'")).rows[0].count, 1);
-  assert.equal((await h.pool.query('SELECT count(*)::int AS count FROM billing_store_purchases WHERE revoked_at IS NOT NULL')).rows[0].count, 0);
+  // Two extra photos in one purchase. One is used, one is not yet.
+  const photo = { appAccountToken, transactionId: 'photo-refunded', productId: 'extra_photo', type: 'Consumable', quantity: 2 };
+  const bought = await h.apple(sam, h.signed(photo), { momentId: held.id });
+  assert.equal(bought.statusCode, 201, bought.body);
+  const [used, unused] = bought.json().data.extra.slotIds;
+  const bytes = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes);
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes, used);
+  const photos = async () => (await h.pool.query('SELECT id,paid_slot_id FROM moment_images WHERE moment_id=$1 AND deleted_at IS NULL ORDER BY created_at,id', [held.id])).rows;
+  const before = await photos();
+  assert.equal(before.length, 2);
+
+  const answer = await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'photo-refund', transaction: { ...photo, revocationDate: refundedAt } }));
+  assert.equal(answer.statusCode, 200, answer.body);
+  const [note] = await h.notes();
+  assert.equal(note.outcome, 'refunded');
+  assert.ok(note.purchase_id);
+  assert.deepEqual(await photos(), before, 'both photos are still on the moment');
+  const slots = Object.fromEntries((await h.pool.query('SELECT id,state,used_at FROM moment_image_slots WHERE store_purchase_id=$1', [note.purchase_id])).rows.map((row) => [row.id, row]));
+  assert.equal(slots[used].state, 'active', 'the slot a photo used stays');
+  assert.ok(slots[used].used_at);
+  assert.equal(slots[unused].state, 'canceled', 'the one not used yet is withdrawn');
+  await assert.rejects(h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes, unused), (error) => error.code === 'image_payment_required', 'the refund leaves nothing new to add');
+  assert.equal((await h.pool.query('SELECT revocation FROM billing_store_purchases WHERE id=$1', [note.purchase_id])).rows[0].revocation, 'refunded');
+  assert.ok(h.logged.some((line) => line.message === 'store notification' && line.outcome === 'refunded' && line.kept === 1 && line.withdrawn === 1));
+
+  // Deleting the photo the refunded slot paid for gives nothing back.
+  const paidPhoto = before.find((row) => row.paid_slot_id === used);
+  await h.platform.deleteMomentImage(sam.id, ours.id, held.id, paidPhoto.id);
+  await assert.rejects(h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes, used), (error) => error.code === 'image_payment_required');
+
+  // The phone sending a copy signed before the refund grants nothing.
+  const again = await h.apple({ ...sam, token: (await h.platform.issueTokens(sam.id)).token }, h.signed(photo), { momentId: held.id });
+  assert.equal(again.json().data.granted, false);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE state='active' AND used_at IS NULL")).rows[0].count, 0);
+
+  // The same refund under another notification changes nothing more.
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'photo-refund-again', transaction: { ...photo, revocationDate: refundedAt } }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'photo-refund-again').outcome, 'unchanged');
+});
+
+test('a refunded extra place never takes away a place already added; only places the moment doesn’t need are withdrawn', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-place-refund');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const held = await h.moment(sam, ours.id);
+  const web = new StripeBillingService({ pool: h.pool, config: h.store.config, stripe: {} });
+  const twoPlaces = { appAccountToken, transactionId: 'places-refunded', productId: 'extra_place', type: 'Consumable', quantity: 2 };
+  const onePlace = { appAccountToken, transactionId: 'place-kept', productId: 'extra_place', type: 'Consumable' };
+  assert.equal((await h.apple(sam, h.signed(twoPlaces), { momentId: held.id })).statusCode, 201);
+  // The moment holds three places: its free one and two paid for by the first purchase.
+  const places = [{ name: 'The canal' }, { name: 'The bridge' }, { name: 'The lock' }];
+  await h.pool.query('UPDATE journey_moments SET locations=$1 WHERE id=$2', [JSON.stringify(places), held.id]);
+  await web.assertLocationCapacity(sam.id, ours.id, held.id, 3);
+
+  // Then a later place is bought, not used yet, and the first purchase is refunded. The moment
+  // needs two paid places; the later one covers one, so one of the refunded two stays.
+  assert.equal((await h.apple(sam, h.signed(onePlace), { momentId: held.id })).statusCode, 201);
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'places-refund', transaction: { ...twoPlaces, revocationDate: refundedAt } }));
+  const [note] = await h.notes();
+  assert.equal(note.outcome, 'refunded');
+  const states = (await h.pool.query('SELECT state FROM moment_location_slots WHERE store_purchase_id=$1 ORDER BY state', [note.purchase_id])).rows.map((row) => row.state);
+  assert.deepEqual(states, ['active', 'canceled']);
+  assert.deepEqual((await h.pool.query('SELECT locations FROM journey_moments WHERE id=$1', [held.id])).rows[0].locations, places, 'every place is still on the moment');
+  await web.assertLocationCapacity(sam.id, ours.id, held.id, 3);
+  await assert.rejects(web.assertLocationCapacity(sam.id, ours.id, held.id, 4), (error) => error.code === 'location_payment_required', 'and it can hold no more than it held');
+
+  // The later purchase refunded too: the kept slot is counted first, and the three places need both,
+  // so nothing more is withdrawn.
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'place-kept-refund', transaction: { ...onePlace, revocationDate: refundedAt } }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'place-kept-refund').outcome, 'refunded');
+  await web.assertLocationCapacity(sam.id, ours.id, held.id, 3);
+
+  // A refund of a place its moment doesn't need is withdrawn whole: this moment holds only its
+  // free place.
+  const quiet = await h.moment(sam, ours.id, 'A quiet morning');
+  const spare = { appAccountToken, transactionId: 'place-spare', productId: 'extra_place', type: 'Consumable' };
+  assert.equal((await h.apple(sam, h.signed(spare), { momentId: quiet.id })).statusCode, 201);
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'place-spare-refund', transaction: { ...spare, revocationDate: refundedAt } }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'place-spare-refund').outcome, 'refunded');
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_location_slots WHERE moment_id=$1 AND state='active'", [quiet.id])).rows[0].count, 0);
+  await assert.rejects(web.assertLocationCapacity(sam.id, ours.id, quiet.id, 2), (error) => error.code === 'location_payment_required');
 });
 
 test('other notifications are logged and left alone, and a service without Apple asks Apple to send again later', async (t) => {
@@ -1420,6 +1497,9 @@ test('no notification writes into the journey’s History: a refund is the payer
   const monthly = { appAccountToken, transactionId: 'sub-nh-1', originalTransactionId: 'sub-nh', productId: 'room_51_monthly', type: 'Auto-Renewable Subscription', expiresDate: Date.parse('2026-11-08T12:00:00Z') };
   assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
   assert.equal((await h.apple(sam, h.signed(monthly))).statusCode, 201);
+  const held = await h.moment(sam, ours.id);
+  const photo = { appAccountToken, transactionId: 'photo-no-history', productId: 'extra_photo', type: 'Consumable' };
+  assert.equal((await h.apple(sam, h.signed(photo), { momentId: held.id })).statusCode, 201);
   const history = async () => (await h.pool.query('SELECT id,action FROM journey_events WHERE journey_id=$1 ORDER BY id', [ours.id])).rows;
   const before = await history();
 
@@ -1429,6 +1509,8 @@ test('no notification writes into the journey’s History: a refund is the payer
     ['REFUND', null, { ...renewal, revocationDate: refundedAt }],
     ['REFUND_REVERSED', null, renewal],
     ['REVOKE', null, { ...pass, revocationDate: refundedAt }],
+    ['REFUND', 'extra', { ...photo, revocationDate: refundedAt }],
+    ['REFUND_REVERSED', 'extra', photo],
     ['EXPIRED', 'VOLUNTARY', monthly],
     ['DID_FAIL_TO_RENEW', 'GRACE_PERIOD', monthly],
     ['GRACE_PERIOD_EXPIRED', null, monthly],
@@ -1436,32 +1518,144 @@ test('no notification writes into the journey’s History: a refund is the payer
     ['TEST', null, null],
   ];
   for (const [notificationType, subtype, transaction] of sent) {
-    const answer = await h.notify(h.notification({ notificationType, subtype, notificationUUID: `no-history-${notificationType}`, transaction }));
+    const answer = await h.notify(h.notification({ notificationType, subtype: subtype === 'extra' ? null : subtype, notificationUUID: `no-history-${notificationType}-${subtype}`, transaction }));
     assert.equal(answer.statusCode, 200, answer.body);
   }
   assert.deepEqual((await h.notes()).map((note) => note.outcome).sort(),
-    ['lapsed', 'lapsed', 'lapsed', 'not_acted_on', 'not_acted_on', 'refunded', 'renewed', 'revoked', 'test']);
+    ['lapsed', 'lapsed', 'lapsed', 'not_acted_on', 'refunded', 'refunded', 'reinstated', 'reinstated', 'renewed', 'revoked', 'test']);
   assert.deepEqual(await history(), before, 'the journey’s record is exactly as it was');
 });
 
-test('a reversed refund is logged and changes nothing yet; bringing the room back comes later', async (t) => {
+test('a reversed refund brings the room back as a renewal would, and a reversal arriving twice changes nothing more (owner, Oct 9, 2026)', async (t) => {
   const h = await harness(t);
   const sam = await h.person('sam-reversed');
   const ours = await h.journey(sam);
+  await h.join(ours.id, await h.person('alex-reversed'));
+  await h.join(ours.id, await h.person('kit-reversed'));
   const { appAccountToken } = await h.identity(sam, ours.id);
-  const pass = { appAccountToken, transactionId: 'pass-reversed' };
+  // A month pass, refunded two days in.
+  const pass = { appAccountToken, transactionId: 'pass-reversed', productId: 'room_51_month_pass' };
   assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
-  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'reversed-refund', transaction: { ...pass, revocationDate: refundedAt } }));
-  const refunded = await h.entitlements(ours.id);
+  const [granted] = await h.entitlements(ours.id);
+  const refundedOn = Date.parse('2026-10-10T12:00:00Z');
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'reversed-refund', transaction: { ...pass, revocationDate: refundedOn }, signedDate: refundedOn }));
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), new Date(refundedOn).toISOString());
 
-  const answer = await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'reversed-1', transaction: pass }));
+  // Ten days later the grace is over and one of the three rests.
+  h.clock.now = new Date(refundedOn + 10 * DAY);
+  assert.equal((await h.capacity(ours.id)).restingMemberIds.length, 1);
+
+  const reversed = h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'reversed-1', transaction: pass, signedDate: refundedOn + 10 * DAY });
+  const answer = await h.notify(reversed);
   assert.equal(answer.statusCode, 200, answer.body);
   const note = (await h.notes()).find((row) => row.notification_id === 'reversed-1');
-  assert.equal(note.outcome, 'not_acted_on');
+  assert.equal(note.outcome, 'reinstated');
   assert.equal(note.notification_type, 'REFUND_REVERSED');
-  assert.ok(note.purchase_id, 'the log names the purchase it is about');
-  assert.deepEqual(await h.entitlements(ours.id), refunded);
-  assert.equal((await h.pool.query('SELECT revocation FROM billing_store_purchases WHERE transaction_id=$1', ['pass-reversed'])).rows[0].revocation, 'refunded');
+  const [room] = await h.entitlements(ours.id);
+  assert.equal(new Date(room.expires_at).toISOString(), new Date(granted.expires_at).toISOString(), 'the room runs to the end it was granted');
+  assert.equal(room.state, 'active');
+  assert.equal((await h.pool.query('SELECT reason FROM billing_entitlements WHERE journey_id=$1', [ours.id])).rows[0].reason, null);
+  const capacity = await h.capacity(ours.id);
+  assert.deepEqual(capacity.restingMemberIds, [], 'nobody rests any more');
+  assert.equal(capacity.grace, null);
+  const purchase = (await h.pool.query('SELECT revoked_at,revocation FROM billing_store_purchases WHERE transaction_id=$1', ['pass-reversed'])).rows[0];
+  assert.deepEqual(purchase, { revoked_at: null, revocation: null }, 'the purchase stands again');
+
+  // Apple sending the same reversal again changes nothing...
+  const twice = await h.notify(reversed);
+  assert.equal(twice.statusCode, 200);
+  assert.equal((await h.notes()).filter((row) => row.notification_type === 'REFUND_REVERSED').length, 1);
+  // ...and nor does a second reversal of the same refund under another notification.
+  const another = await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'reversed-2', transaction: pass, signedDate: refundedOn + 11 * DAY }));
+  assert.equal(another.statusCode, 200);
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'reversed-2').outcome, 'unchanged');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), new Date(granted.expires_at).toISOString());
+
+  // A refund after that is a new refund, and ends the room again.
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'refunded-again', transaction: { ...pass, revocationDate: refundedOn + 12 * DAY }, signedDate: refundedOn + 12 * DAY }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'refunded-again').outcome, 'refunded');
+});
+
+test('a reversed refund of a pass that had not started starts it when it would have; of a subscription, runs it to its period’s end', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-reversed-queue');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const first = { appAccountToken, transactionId: 'pass-running' };
+  const queued = { appAccountToken, transactionId: 'pass-queued' };
+  assert.equal((await h.apple(sam, h.signed(first))).statusCode, 201);
+  assert.equal((await h.apple(sam, h.signed(queued))).statusCode, 201);
+  const before = (await h.entitlements(ours.id)).find((row) => row.source_record_id === 'pass-queued');
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'queued-refund', transaction: { ...queued, revocationDate: refundedAt } }));
+  assert.equal((await h.entitlements(ours.id)).find((row) => row.source_record_id === 'pass-queued').state, 'expired');
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'queued-reversed', transaction: queued }));
+  const after = (await h.entitlements(ours.id)).find((row) => row.source_record_id === 'pass-queued');
+  assert.equal(after.state, 'active');
+  assert.equal(new Date(after.effective_at).toISOString(), new Date(before.effective_at).toISOString());
+  assert.equal(new Date(after.expires_at).toISOString(), new Date(before.expires_at).toISOString());
+
+  const monthly = { appAccountToken, transactionId: 'sub-rr-1', originalTransactionId: 'sub-rr', productId: 'room_51_monthly', type: 'Auto-Renewable Subscription', expiresDate: Date.parse('2026-11-08T12:00:00Z') };
+  const other = await h.journey(sam, 'Another');
+  const otherIdentity = await h.identity(sam, other.id);
+  const monthlyThere = { ...monthly, appAccountToken: otherIdentity.appAccountToken };
+  assert.equal((await h.apple(sam, h.signed(monthlyThere))).statusCode, 201);
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'sub-refund', transaction: { ...monthlyThere, revocationDate: refundedAt } }));
+  assert.equal(new Date((await h.entitlements(other.id))[0].expires_at).toISOString(), new Date(refundedAt).toISOString());
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'sub-reversed', transaction: monthlyThere }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'sub-reversed').outcome, 'reinstated');
+  assert.equal(new Date((await h.entitlements(other.id))[0].expires_at).toISOString(), '2026-11-08T12:00:00.000Z');
+
+  // The next month is paid. A refund of the first month then changes nothing, and nor does its reversal.
+  const renewal = { ...monthlyThere, transactionId: 'sub-rr-2', purchaseDate: Date.parse('2026-11-08T12:00:00Z'), expiresDate: Date.parse('2026-12-08T12:00:00Z'), transactionReason: 'RENEWAL' };
+  await h.notify(h.notification({ notificationType: 'DID_RENEW', notificationUUID: 'sub-renewed', transaction: renewal }));
+  const renewed = await h.entitlements(other.id);
+  assert.equal(new Date(renewed[0].expires_at).toISOString(), '2026-12-08T12:00:00.000Z');
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'sub-old-refund', transaction: { ...monthlyThere, revocationDate: refundedAt } }));
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'sub-old-reversed', transaction: monthlyThere }));
+  assert.deepEqual((await h.notes()).filter((row) => row.notification_id.startsWith('sub-old')).map((row) => row.outcome).sort(), ['unchanged', 'unchanged']);
+  assert.deepEqual(await h.entitlements(other.id), renewed);
+});
+
+test('a reversal that arrives before its refund keeps the room; a revocation is not reversed by REFUND_REVERSED', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-reversed-order');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const pass = { appAccountToken, transactionId: 'pass-out-of-order' };
+  assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
+  const before = await h.entitlements(ours.id);
+  // Apple signed the refund first and the reversal a day later, but the reversal arrives first.
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'early-reversal', transaction: pass, signedDate: refundedAt + DAY }));
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'late-refund', transaction: { ...pass, revocationDate: refundedAt }, signedDate: refundedAt }));
+  assert.deepEqual((await h.notes()).map((row) => [row.notification_id, row.outcome]).sort(), [['early-reversal', 'unchanged'], ['late-refund', 'unchanged']]);
+  assert.deepEqual(await h.entitlements(ours.id), before);
+  assert.equal((await h.pool.query('SELECT revocation FROM billing_store_purchases WHERE transaction_id=$1', ['pass-out-of-order'])).rows[0].revocation, null);
+
+  const revoked = { appAccountToken, transactionId: 'pass-revoked-not-reversed' };
+  assert.equal((await h.apple(sam, h.signed(revoked))).statusCode, 201);
+  await h.notify(h.notification({ notificationType: 'REVOKE', notificationUUID: 'revoke-1', transaction: { ...revoked, revocationDate: refundedAt } }));
+  const ended = (await h.entitlements(ours.id)).find((row) => row.source_record_id === 'pass-revoked-not-reversed');
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'revoke-reversed', transaction: revoked }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'revoke-reversed').outcome, 'unchanged');
+  assert.deepEqual((await h.entitlements(ours.id)).find((row) => row.source_record_id === 'pass-revoked-not-reversed'), ended);
+});
+
+test('a reversed refund of an extra gives back what the refund withdrew', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-extra-reversed');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const held = await h.moment(sam, ours.id);
+  const photo = { appAccountToken, transactionId: 'photo-reversed', productId: 'extra_photo', type: 'Consumable' };
+  const [slot] = (await h.apple(sam, h.signed(photo), { momentId: held.id })).json().data.extra.slotIds;
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'photo-refund-r', transaction: { ...photo, revocationDate: refundedAt } }));
+  assert.deepEqual(await h.platform.imageSlots(sam.id, ours.id, held.id), [{ id: slot, state: 'canceled' }]);
+  await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'photo-reversed-1', transaction: photo }));
+  assert.equal((await h.notes()).find((row) => row.notification_id === 'photo-reversed-1').outcome, 'reinstated');
+  assert.deepEqual(await h.platform.imageSlots(sam.id, ours.id, held.id), [{ id: slot, state: 'active' }]);
+  const bytes = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes);
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes, slot);
 });
 
 test('Apple’s CONSUMPTION_REQUEST is logged and never answered: nothing about how the app was used is sent', async (t) => {
@@ -1688,29 +1882,47 @@ test('cancelling, expiring, account hold and Google’s grace period leave the r
   assert.equal(after.peopleHere, 3);
 });
 
-test('a revoked Google subscription ends when Google ended it, once Google confirms it', async (t) => {
+test('a revoked Google subscription Google still calls running is asked for again, logged once, and ends when Google ended it once Google confirms it', async (t) => {
   const h = await harness(t);
   const { ours, ids, token } = await googleSubscriber(h, 'revoked');
   const revokedAt = '2026-10-10T12:00:00.000Z';
   h.clock.now = new Date('2026-10-10T12:05:00Z');
 
-  // Google still says it is running: the message alone changes nothing.
+  // Google still says it is running: nothing changes, and Pub/Sub is asked to send it again
+  // (owner, Oct 9, 2026, decision 78).
   h.google.record(token, await googleAnswer(ids, {}));
-  await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000001' });
-  assert.equal((await h.notes())[0].outcome, 'unchanged');
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const early = await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000001' });
+    assert.equal(early.statusCode, 503, early.body);
+    assert.equal(early.json().error.code, 'store_notification_not_confirmed');
+    assert.equal(early.json().error.details.retryable, true);
+  }
+  const [waiting] = await h.notes();
+  assert.equal((await h.notes()).length, 1, 'one row for the message, however often it comes');
+  assert.equal(waiting.outcome, 'waiting');
+  assert.ok(waiting.purchase_id);
+  assert.equal(h.logged.filter((line) => line.message === 'google has not listed a refund yet').length, 1, 'logged on the first delivery, not on every retry');
   assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2026-11-08T12:00:00.000Z');
-  assert.ok(h.logged.some((line) => line.message === 'google did not confirm a notification'));
 
+  // Google now says it has ended. The next delivery of the same message is applied.
   h.google.record(token, await googleAnswer(ids, { subscriptionState: 'SUBSCRIPTION_STATE_EXPIRED', line: { expiryTime: revokedAt } }));
-  const answer = await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000002' });
+  const answer = await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000001' });
   assert.equal(answer.statusCode, 200, answer.body);
   const [room] = await h.entitlements(ours.id);
   assert.equal(new Date(room.expires_at).toISOString(), revokedAt);
   assert.equal(room.state, 'active', 'and goes through the same grace as any lapse');
-  assert.equal((await h.notes())[1].outcome, 'revoked');
+  const notes = await h.notes();
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].outcome, 'revoked');
   const purchase = (await h.pool.query('SELECT revoked_at,revocation FROM billing_store_purchases WHERE transaction_id=$1', [token])).rows[0];
   assert.equal(purchase.revocation, 'revoked');
   assert.equal(new Date(purchase.revoked_at).toISOString(), revokedAt);
+
+  // Settled now: one more delivery is a replay, and Google isn't asked again.
+  h.google.calls.length = 0;
+  const replay = await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000001' });
+  assert.equal(replay.statusCode, 200);
+  assert.deepEqual(h.google.calls, []);
 });
 
 test('a voided Google pass ends there: the usual grace, then the people beyond two rest, and nobody is removed', async (t) => {
@@ -1727,17 +1939,20 @@ test('a voided Google pass ends there: the usual grace, then the people beyond t
   h.clock.now = new Date(voidedAt + 10 * 60 * 1000);
   h.google.calls.length = 0;
 
-  // Google's list doesn't have it (yet): nothing changes.
-  await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000001' });
-  assert.equal((await h.notes())[0].outcome, 'unchanged');
+  // Google's list doesn't have it yet: nothing changes, and Pub/Sub is asked to send it again.
+  const early = await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000001' });
+  assert.equal(early.statusCode, 503, early.body);
+  assert.equal(early.json().error.code, 'store_notification_not_confirmed');
+  assert.equal((await h.notes())[0].outcome, 'waiting');
   assert.deepEqual(await h.entitlements(ours.id), before);
 
   h.google.voided = [{ kind: 'androidpublisher#voidedPurchase', purchaseToken: 'tok-voided-pass', orderId: 'GPA.3300-0000-0000-00002', voidedTimeMillis: String(voidedAt), voidedSource: 0, voidedReason: 1 }];
-  const answer = await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000002' });
+  const answer = await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000001' });
   assert.equal(answer.statusCode, 200, answer.body);
   const [room] = await h.entitlements(ours.id);
   assert.equal(new Date(room.expires_at).toISOString(), new Date(voidedAt).toISOString(), 'the room ends when Google voided it');
-  const note = (await h.notes())[1];
+  assert.equal((await h.notes()).length, 1, 'the waiting row is the one settled');
+  const note = (await h.notes())[0];
   assert.equal(note.outcome, 'refunded');
   assert.equal(note.notification_type, 'VOIDED_PURCHASE');
   assert.equal(note.subtype, 'FULL_REFUND');
@@ -1792,40 +2007,59 @@ test('a voided Google renewal ends the subscription there; a void of a period si
   assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2027-01-08T12:00:00.000Z');
 });
 
-test('a voided Google extra is only noted, a partial refund and other kinds are left alone, and none asks Google', async (t) => {
+test('a voided Google extra keeps what was added and withdraws the rest once Google lists it; a partial refund and other kinds are left alone without asking Google', async (t) => {
   const h = await harness(t);
   const sam = await h.person('sam-google-extra');
   const ours = await h.journey(sam);
   const held = await h.moment(sam, ours.id);
   const ids = await h.identity(sam, ours.id);
-  h.google.record('tok-photo', await googleRecord('product-pass', ids, { productId: 'extra_photo', orderId: 'GPA.3300-0000-0000-00011' }));
+  h.google.record('tok-photo', await googleRecord('product-pass', ids, { productId: 'extra_photo', orderId: 'GPA.3300-0000-0000-00011', quantity: 2 }));
   h.google.record('tok-place', await googleRecord('product-pass', ids, { productId: 'extra_place', orderId: 'GPA.3300-0000-0000-00012' }));
   h.google.record('tok-pass', await googleRecord('product-pass', ids, { quantity: 3 }));
-  assert.equal((await h.googleRoute(sam, { productId: 'extra_photo', purchaseToken: 'tok-photo', momentId: held.id })).statusCode, 201);
+  const photo = await h.googleRoute(sam, { productId: 'extra_photo', purchaseToken: 'tok-photo', momentId: held.id });
+  assert.equal(photo.statusCode, 201, photo.body);
+  const [used, unused] = photo.json().data.extra.slotIds;
   assert.equal((await h.googleRoute(sam, { productId: 'extra_place', purchaseToken: 'tok-place', momentId: held.id })).statusCode, 201);
   assert.equal((await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-pass' })).statusCode, 201);
+  const bytes = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes);
+  await h.platform.uploadMomentImage(sam.id, ours.id, held.id, 'image/jpeg', bytes, used);
   const before = await h.entitlements(ours.id);
+  const voidedAt = h.clock.now.getTime();
   h.google.calls.length = 0;
 
-  await h.play(voidedNote('tok-photo'), { messageId: '9200000000000001' });
-  await h.play(voidedNote('tok-place'), { messageId: '9200000000000002' });
+  // Not listed yet: asked for again, nothing withdrawn.
+  const early = await h.play(voidedNote('tok-photo'), { messageId: '9200000000000001' });
+  assert.equal(early.statusCode, 503, early.body);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE state='active'")).rows[0].count, 2);
+
+  h.google.voided = [
+    { purchaseToken: 'tok-photo', orderId: 'GPA.3300-0000-0000-00011', voidedTimeMillis: String(voidedAt) },
+    { purchaseToken: 'tok-place', orderId: 'GPA.3300-0000-0000-00012', voidedTimeMillis: String(voidedAt) },
+  ];
+  assert.equal((await h.play(voidedNote('tok-photo'), { messageId: '9200000000000001' })).statusCode, 200);
+  assert.equal((await h.play(voidedNote('tok-place'), { messageId: '9200000000000002' })).statusCode, 200);
   await h.play(voidedNote('tok-pass', { refundType: 2 }), { messageId: '9200000000000003' });
   await h.play(subscriptionNote(PURCHASED_TYPE, 'tok-pass'), { messageId: '9200000000000004' });
   await h.play({ oneTimeProductNotification: { version: '1.0', notificationType: 1, purchaseToken: 'tok-pass', sku: 'room_101_week_pass' } }, { messageId: '9200000000000005' });
   await h.play(subscriptionNote(99, 'tok-pass'), { messageId: '9200000000000006' });
   assert.deepEqual((await h.notes()).map((note) => [note.notification_type, note.subtype, note.outcome]), [
-    ['VOIDED_PURCHASE', 'FULL_REFUND', 'extra_noted'],
-    ['VOIDED_PURCHASE', 'FULL_REFUND', 'extra_noted'],
+    ['VOIDED_PURCHASE', 'FULL_REFUND', 'refunded'],
+    ['VOIDED_PURCHASE', 'FULL_REFUND', 'refunded'],
     ['VOIDED_PURCHASE', 'QUANTITY_BASED_PARTIAL_REFUND', 'not_acted_on'],
     ['SUBSCRIPTION_PURCHASED', null, 'not_acted_on'],
     ['ONE_TIME_PRODUCT_PURCHASED', null, 'not_acted_on'],
     ['SUBSCRIPTION_99', null, 'not_acted_on'],
   ]);
-  assert.deepEqual(h.google.calls, []);
-  assert.deepEqual(await h.entitlements(ours.id), before);
-  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE state='active'")).rows[0].count, 1);
-  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_location_slots WHERE state='active'")).rows[0].count, 1);
-  assert.equal((await h.pool.query('SELECT count(*)::int AS count FROM billing_store_purchases WHERE revoked_at IS NOT NULL')).rows[0].count, 0);
+  assert.ok(h.google.calls.every(([call]) => call === 'voided'), 'only the refunds of extras were read again');
+  assert.equal(h.google.calls.length, 3);
+  assert.deepEqual(await h.entitlements(ours.id), before, 'a partial refund leaves the pass running (owner, Oct 9, 2026)');
+  const slots = Object.fromEntries((await h.pool.query('SELECT id,state FROM moment_image_slots')).rows.map((row) => [row.id, row.state]));
+  assert.deepEqual(slots, { [used]: 'active', [unused]: 'canceled' }, 'the photo added stays; the slot not used is withdrawn');
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_images WHERE moment_id=$1 AND deleted_at IS NULL", [held.id])).rows[0].count, 2);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_location_slots WHERE state='active'")).rows[0].count, 0, 'a place the moment never used is withdrawn');
+  assert.deepEqual((await h.pool.query('SELECT product_id,revocation FROM billing_store_purchases WHERE revoked_at IS NOT NULL ORDER BY product_id')).rows,
+    [{ product_id: 'extra_photo', revocation: 'refunded' }, { product_id: 'extra_place', revocation: 'refunded' }]);
 });
 
 test('when Google can’t be reached, Pub/Sub is asked to send again, and the next delivery is applied', async (t) => {
@@ -1866,4 +2100,64 @@ test('no Google notification writes into the journey’s History', async (t) => 
   await h.play({ testNotification: { version: '1.0' } }, { messageId: '9400000000000005' });
   assert.deepEqual((await h.notes()).map((note) => note.outcome), ['renewed', 'lapsed', 'refunded', 'revoked', 'test']);
   assert.deepEqual(await history(), before, 'the journey’s record is exactly as it was');
+});
+
+// --- When refunds spike (#273) -------------------------------------------------------------------
+
+test('refunds and revocations reaching the threshold within the window write one error line, from config', async (t) => {
+  const h = await harness(t);
+  h.configure({ STORE_REFUND_ALERT_THRESHOLD: '3', STORE_REFUND_ALERT_WINDOW_HOURS: '24' });
+  const alerts = () => h.logged.filter((line) => line.message === 'store refunds spiking');
+  const refund = (id, { environment = 'Sandbox', type = 'REFUND' } = {}) => h.notify(h.notification({
+    notificationType: type, notificationUUID: id, environment, transaction: { transactionId: `never-granted-${id}`, revocationDate: refundedAt },
+  }));
+
+  // Two refunds, a renewal, and a test: under the threshold, and the renewal and test don't count.
+  assert.equal((await refund('spike-1')).statusCode, 200);
+  assert.equal((await refund('spike-2', { type: 'REVOKE' })).statusCode, 200);
+  await refund('spike-renewal', { type: 'DID_RENEW' });
+  await h.notify(h.notification({ notificationType: 'TEST', notificationUUID: 'spike-test' }));
+  assert.deepEqual(alerts(), []);
+
+  // A third, from Google, reaches it: one error line, the kind the error count after a release and
+  // any alert on '"level":"error"' already catch. It names counts only.
+  assert.equal((await h.play(voidedNote('tok-never-granted'), { messageId: '9500000000000001' })).statusCode, 200);
+  assert.equal(alerts().length, 1);
+  assert.deepEqual(alerts()[0], {
+    level: 'error', message: 'store refunds spiking', count: 3, apple: 2, google: 1, threshold: 3, windowHours: 24,
+    since: new Date(h.clock.now.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+  });
+
+  // More within the window don't repeat it.
+  await refund('spike-3');
+  await refund('spike-3');
+  assert.equal(alerts().length, 1);
+
+  // A day later the window has moved on. Refunds from the other environment don't count here; two
+  // more of this one's don't reach the threshold, and a third does, once more.
+  h.clock.now = new Date(h.clock.now.getTime() + 25 * 60 * 60 * 1000);
+  await refund('later-live-1', { environment: 'Production' });
+  await refund('later-live-2', { environment: 'Production' });
+  await refund('later-1');
+  await refund('later-2');
+  assert.equal(alerts().length, 1);
+  await refund('later-3');
+  assert.equal(alerts().length, 2);
+  assert.equal(alerts()[1].count, 3);
+});
+
+test('a Google refund retried while Google doesn’t list it counts once toward the alert', async (t) => {
+  const h = await harness(t);
+  h.configure({ STORE_REFUND_ALERT_THRESHOLD: '2', STORE_REFUND_ALERT_WINDOW_HOURS: '1' });
+  const sam = await h.person('sam-spike-retry');
+  const ours = await h.journey(sam);
+  const ids = await h.identity(sam, ours.id);
+  h.google.record('tok-spike-pass', await googleRecord('product-pass', ids));
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-spike-pass' })).statusCode, 201);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    assert.equal((await h.play(voidedNote('tok-spike-pass'), { messageId: '9600000000000001' })).statusCode, 503);
+  }
+  assert.equal(h.logged.filter((line) => line.message === 'store refunds spiking').length, 0, 'four deliveries of one message are one refund');
+  await h.play(voidedNote('tok-other'), { messageId: '9600000000000002' });
+  assert.equal(h.logged.filter((line) => line.message === 'store refunds spiking').length, 1);
 });
