@@ -203,7 +203,8 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   }
 
   // The answer to `link_required`: the same ID token, with the password of the account that
-  // already uses its email. It shares login's rate limit, since it is a password check too.
+  // already uses its email. It has login's rate limit, since it is a password check too: the
+  // same numbers, counted on their own (tests/sign-in-limits.test.js).
   app.post('/api/v1/auth/link', { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
     const provider = request.body?.provider;
     if (provider !== 'google' && provider !== 'apple') throw new PlatformError(400, 'invalid_input', 'Choose Google or Apple.');
