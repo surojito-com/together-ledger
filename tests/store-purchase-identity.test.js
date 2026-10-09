@@ -12,12 +12,12 @@ import { PlatformService } from '../server/platform.js';
 const MIGRATIONS = [
   '001_platform', '003_private_usernames', '004_shared_moments', '005_make-shared-journeys-more-humane', '006_expand-shared-moment-vocabulary',
   '007_person_specific_moment_visibility', '008_stripe_web_billing', '009_reserve-group-places', '011_hold-one-image-with-each-moment',
-  '012_bill-additional-moment-images', '013_name-moment-image-attachments', '014_hold-places-with-shared-moments', '016_make-extra-image-payments-one-time',
+  '012_bill-additional-moment-images', '013_name-moment-image-attachments', '014_hold-places-with-shared-moments', '015_bill-additional-moment-places', '016_make-extra-image-payments-one-time',
   '017_keep-one-removed-photo-per-moment', '018_allow-ninety-nine-paid-journey-places', '019_let-moments-carry-their-own-atmosphere',
   '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history', '022_agree-together-before-adding-someone',
   '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account', '025_revoke-sign-in-with-apple-when-an-account-is-deleted',
-  '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account',
-  '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days', '033_let-a-moment-held-offline-arrive-once',
+  '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account', '028_turn-a-store-purchase-into-capacity',
+  '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days', '033_let-a-moment-held-offline-arrive-once', '034_hear-refunds-and-renewals-from-the-stores',
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const origin = 'http://127.0.0.1:4174';
@@ -25,6 +25,7 @@ const origin = 'http://127.0.0.1:4174';
 async function service(t) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
+  memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   const pool = new (memory.adapters.createPg().Pool)();
   for (const name of MIGRATIONS) await pool.query(await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8'));
   const config = loadConfig({ NODE_ENV: 'test', PUBLIC_ORIGIN: origin, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });

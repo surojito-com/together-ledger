@@ -29,7 +29,12 @@ import { INCLUDED_PEOPLE, ROOM_CAPABILITY, appleTypeFor, passEnd, roomFor, store
 // The worst case is that Google refunds a purchase we never managed to record, never that someone
 // pays and keeps nothing. Reconciling the stores against this table is TL-P-10 (#277).
 //
-// Not here: server notifications, refunds and revocations (#273), restoring on a new phone (#275).
+// What the stores say afterwards (#273): a renewal, a refund, a revocation, a lapse. Each is logged
+// in billing_store_notifications and applied through applyStoreEvent, the one place a store's
+// later word changes a journey's room, whichever store it came from. Apple's notifications are
+// handled here (handleAppleNotification); refunded extras and Google's are not yet.
+//
+// Not here: restoring on a new phone (#275).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PURCHASE_TOKEN = /^[A-Za-z0-9._:-]{1,2048}$/;
@@ -45,6 +50,33 @@ const MAX_QUANTITY = 10;
 const REPLACED = 'store_subscription_replaced';
 // The reason on the grace a journey is given when its subscription's room moves to another.
 const MOVED = 'store_subscription_moved';
+// The reason on room the store has refunded or revoked. It rests the usual way: grace from the
+// refund, then the people beyond two rest.
+const REFUNDED = { refunded: 'store_refunded', revoked: 'store_revoked' };
+// A notification about no purchase we hold explains nothing, and goes after this long.
+const UNLINKED_NOTIFICATION_DAYS = 30;
+// A notification carries its transaction (and Apple's renewal information) inside it, each a
+// signed JWS with its own chain, so it is longer than a transaction on its own.
+const MAX_NOTIFICATION_LENGTH = 60 * 1024;
+const NOTIFICATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+// What each App Store notification means for a journey's room. DID_FAIL_TO_RENEW, with or without
+// Apple's GRACE_PERIOD subtype, is a lapse: the room runs to the date already paid for, and our
+// own grace starts there, as for a failed web payment. Our grace is the only grace (owner, Oct 8
+// and 9, 2026), so Apple's gracePeriodExpiresDate is never read. Anything not named here is logged
+// as not_acted_on and left alone, among them:
+//   REFUND_REVERSED      should bring the room back; not built yet (#273)
+//   CONSUMPTION_REQUEST  never answered: it would send Apple how a person used the app, which the
+//                        privacy policy doesn't say we share (owner, Oct 9, 2026)
+// No notification writes a journey History entry: a refund is the payer's own matter, and the
+// others see only the grace and the rest that follow, as for any lapse (owner, Oct 9, 2026).
+const APPLE_EVENTS = Object.freeze({
+  DID_RENEW: 'renewed',
+  REFUND: 'refunded',
+  REVOKE: 'revoked',
+  EXPIRED: 'lapsed',
+  DID_FAIL_TO_RENEW: 'lapsed',
+  GRACE_PERIOD_EXPIRED: 'lapsed',
+});
 
 // Every refusal says whether trying again could change it. A phone finishes a transaction only on
 // success, so `retryable: true` is the phone's cue to keep it and send it again later.
@@ -390,8 +422,10 @@ export class StorePurchaseService {
 
   // The same transaction again. Nothing more is granted. A subscription's latest verified expiry is
   // still kept, since that is the store's word on how far it now runs, not a second grant.
+  // A transaction the store has since refunded extends nothing, even when a phone sends a copy
+  // signed before the refund.
   async replay(client, row, purchase) {
-    if (row.kind === 'subscription') await this.grantSubscription(client, row, purchase);
+    if (row.kind === 'subscription' && !row.revoked_at) await this.grantSubscription(client, row, purchase);
     const saved = await client.query('SELECT * FROM billing_store_purchases WHERE id=$1', [row.id]);
     return this.describe(client, saved.rows[0], false);
   }
@@ -619,6 +653,226 @@ export class StorePurchaseService {
       ...answer,
       room: held ? { people: Number(held.quantity) + INCLUDED_PEOPLE, state: held.state, from: iso(held.effective_at), until: iso(held.expires_at) } : null,
     };
+  }
+
+  // --- What the stores say afterwards (#273) ---------------------------------------------------
+
+  // The one way a store's later word changes a journey's room, for Apple and Google alike. It finds
+  // the room by the store's own id for it (`recordId`: Apple's originalTransactionId for a
+  // subscription or transactionId for a pass, Google's purchase token) and never invents a new
+  // path for it: room the store has ended goes through the grace and rest decided on #203, exactly
+  // like a pass that runs out. Nobody is removed. Extras never come here.
+  //
+  //   renewed   `endsAt` is the store's new end. The room only ever moves forward, and a
+  //             subscription another one replaced never comes back.
+  //   lapsed    Nothing to write: the room ends on the date already paid for, and paymentFor
+  //             reads it as grace from there.
+  //   refunded, revoked
+  //             The room ends at `at` (when the store refunded it), or at its own end if that came
+  //             first; paymentFor then reads the usual grace from that end. A pass that had not
+  //             started yet never starts. With `periodEnd` (the refunded period's end), a refund of
+  //             a period that has since been paid again changes nothing.
+  //
+  // Answers with what it did: renewed, lapsed, refunded, revoked or unchanged.
+  async applyStoreEvent(client, { store, environment, recordId, event, at = null, endsAt = null, periodEnd = null, people = null }) {
+    if (!['renewed', 'lapsed', 'refunded', 'revoked'].includes(event)) throw new Error(`Unknown store event ${event}.`);
+    const first = await this.entitlementFor(client, store, environment, recordId);
+    if (!first) return { effect: 'unchanged', journeyId: null };
+    await this.lockJourney(client, first.journey_id);
+    const held = await this.entitlementFor(client, store, environment, recordId);
+    if (!held) return { effect: 'unchanged', journeyId: null };
+    const now = this.now();
+    const end = held.expires_at ? new Date(held.expires_at) : null;
+    const unchanged = { effect: 'unchanged', journeyId: held.journey_id };
+    if (event === 'lapsed') return { effect: held.reason === REPLACED ? 'unchanged' : 'lapsed', journeyId: held.journey_id };
+    if (event === 'renewed') {
+      if (held.reason === REPLACED || !endsAt || (end && endsAt <= end)) return unchanged;
+      await client.query(
+        `UPDATE billing_entitlements SET state='active',quantity=$1,expires_at=$2,reason=NULL,last_verified_at=$3,provider_event_created_at=$4,updated_at=$3 WHERE id=$5`,
+        [people ? people - INCLUDED_PEOPLE : Number(held.quantity), endsAt, now, at || now, held.id],
+      );
+      return { effect: 'renewed', journeyId: held.journey_id };
+    }
+    // Refunded or revoked.
+    if (!['active', 'grace'].includes(held.state)) return unchanged;
+    if (periodEnd && end && end > periodEnd) return unchanged;
+    const when = at || now;
+    const startsAt = held.effective_at ? new Date(held.effective_at) : null;
+    if (startsAt && startsAt > when) {
+      await client.query(
+        `UPDATE billing_entitlements SET state='expired',expires_at=$1,reason=$2,last_verified_at=$3,updated_at=$3 WHERE id=$4`,
+        [startsAt, REFUNDED[event], now, held.id],
+      );
+      return { effect: event, journeyId: held.journey_id };
+    }
+    const ends = end && end < when ? end : when;
+    await client.query(
+      'UPDATE billing_entitlements SET expires_at=$1,reason=$2,last_verified_at=$3,updated_at=$3 WHERE id=$4',
+      [ends, REFUNDED[event], now, held.id],
+    );
+    return { effect: event, journeyId: held.journey_id };
+  }
+
+  // A notification, logged once. Answers with the new row, or null when this notification was
+  // received before: the store sending again until it hears success, which then changes nothing.
+  async noteNotification(client, { store, notificationId, environment, type, subtype, transactionRef, signedAt }) {
+    const now = this.now();
+    await client.query(
+      'DELETE FROM billing_store_notifications WHERE purchase_id IS NULL AND received_at<$1',
+      [new Date(now.getTime() - UNLINKED_NOTIFICATION_DAYS * DAY_MS)],
+    );
+    const id = randomUUID();
+    const inserted = await client.query(
+      `INSERT INTO billing_store_notifications (id,store,notification_id,environment,notification_type,subtype,transaction_ref,signed_at,received_at,outcome)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'received')
+       ON CONFLICT (store,notification_id) DO NOTHING
+       RETURNING *`,
+      [id, store, notificationId, environment, type, subtype, transactionRef, signedAt, now],
+    );
+    // Only the row this request wrote counts as new.
+    return inserted.rows[0]?.id === id ? inserted.rows[0] : null;
+  }
+
+  async settleNotification(client, id, { outcome, purchaseId = null }) {
+    await client.query('UPDATE billing_store_notifications SET outcome=$1,purchase_id=$2 WHERE id=$3', [outcome, purchaseId, id]);
+  }
+
+  // The purchase a notification names: its own transaction, or, for a subscription period we were
+  // never sent, the latest one we hold of the same subscription.
+  async purchaseNamed(client, store, environment, transactionId, originalTransactionId) {
+    const own = await client.query('SELECT * FROM billing_store_purchases WHERE store=$1 AND environment=$2 AND transaction_id=$3', [store, environment, transactionId]);
+    if (own.rowCount) return { row: own.rows[0], own: true };
+    if (!originalTransactionId) return null;
+    const same = await client.query(
+      `SELECT * FROM billing_store_purchases WHERE store=$1 AND environment=$2 AND original_transaction_id=$3 AND kind='subscription'
+       ORDER BY purchased_at DESC, created_at DESC LIMIT 1`,
+      [store, environment, originalTransactionId],
+    );
+    return same.rowCount ? { row: same.rows[0], own: false } : null;
+  }
+
+  // A subscription transaction we first hear of from the store, not the phone: a renewal, or a
+  // refunded period. It is recorded against the subscription's journey and payer, so the phone
+  // sending it later finds it and grants nothing more.
+  async recordStoreTransaction(client, base, { transactionId, productId, purchasedAt, expiresAt, revokedAt = null, revocation = null }) {
+    const now = this.now();
+    await client.query(
+      `INSERT INTO billing_store_purchases
+       (id,store,environment,transaction_id,original_transaction_id,product_id,kind,payer_user_id,journey_id,quantity,purchased_at,
+        effective_at,expires_at,entitlement_record_id,acknowledgement,revoked_at,revocation,created_at,updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'subscription',$7,$8,1,$9,$9,$10,$11,'not-needed',$12,$13,$14,$14)
+       ON CONFLICT (store,environment,transaction_id) DO NOTHING`,
+      [randomUUID(), base.store, base.environment, transactionId, base.original_transaction_id, productId, base.payer_user_id, base.journey_id,
+        purchasedAt, expiresAt, base.entitlement_record_id, revokedAt, revocation, now],
+    );
+    const saved = await client.query('SELECT * FROM billing_store_purchases WHERE store=$1 AND environment=$2 AND transaction_id=$3', [base.store, base.environment, transactionId]);
+    return saved.rows[0];
+  }
+
+  // App Store Server Notifications, version 2. Apple POSTs { signedPayload } and sends again until
+  // it hears a 200. The signed payload is the only credential, checked exactly as a purchase is
+  // (store-apple.js), and so is the transaction inside it.
+  async handleAppleNotification(body = {}) {
+    if (!this.apple) throw unavailable('apple');
+    const verify = (jws) => {
+      try {
+        return this.apple.verify(jws, { maxLength: MAX_NOTIFICATION_LENGTH });
+      } catch (error) {
+        if (!(error instanceof AppleVerificationError)) throw error;
+        this.log('warn', 'store notification refused', { store: 'apple', code: 'store_notification_unverified', reason: error.reason });
+        throw refuse(400, 'store_notification_unverified', 'This notification could not be verified with Apple, so nothing was changed.');
+      }
+    };
+    const payload = verify(body.signedPayload);
+    const data = payload.data && typeof payload.data === 'object' ? payload.data : {};
+    const type = String(payload.notificationType || '').slice(0, 64);
+    const wrongApp = () => {
+      this.log('warn', 'store notification refused', { store: 'apple', code: 'store_notification_wrong_app', type });
+      return refuse(400, 'store_notification_wrong_app', 'This notification is for a different app, so nothing was changed.');
+    };
+    if (data.bundleId !== this.config.APPLE_BUNDLE_ID) throw wrongApp();
+    const notificationId = String(payload.notificationUUID || '');
+    if (!NOTIFICATION_ID.test(notificationId) || !type) throw refuse(400, 'store_notification_unverified', 'This notification could not be verified with Apple, so nothing was changed.');
+    const transaction = typeof data.signedTransactionInfo === 'string' ? verify(data.signedTransactionInfo) : null;
+    if (transaction && transaction.bundleId !== this.config.APPLE_BUNDLE_ID) throw wrongApp();
+    const environment = { Production: 'live', Sandbox: 'sandbox' }[data.environment] || null;
+    const subtype = payload.subtype ? String(payload.subtype).slice(0, 64) : null;
+    const transactionRef = transaction?.transactionId ? String(transaction.transactionId) : null;
+
+    return withTransaction(this.pool, async (client) => {
+      const note = await this.noteNotification(client, {
+        store: 'apple', notificationId, environment, type, subtype, transactionRef, signedAt: dateFrom(payload.signedDate),
+      });
+      if (!note) {
+        this.log('info', 'store notification received again', { store: 'apple', type, notificationId });
+        return { outcome: 'already-received' };
+      }
+      const result = await this.appleNotificationEffect(client, { type, environment, transaction });
+      await this.settleNotification(client, note.id, result);
+      this.log('info', 'store notification', { store: 'apple', type, subtype, environment, outcome: result.outcome, transactionId: transactionRef });
+      return { outcome: result.outcome };
+    });
+  }
+
+  async appleNotificationEffect(client, { type, environment, transaction }) {
+    if (type === 'TEST') return { outcome: 'test' };
+    if (!transaction || !environment || !transaction.transactionId) return { outcome: Object.hasOwn(APPLE_EVENTS, type) ? 'unknown_purchase' : 'not_acted_on' };
+    const transactionId = String(transaction.transactionId);
+    const originalTransactionId = transaction.originalTransactionId ? String(transaction.originalTransactionId) : null;
+    const named = await this.purchaseNamed(client, 'apple', environment, transactionId, originalTransactionId);
+    if (!named) return { outcome: 'unknown_purchase' };
+    const purchase = named.row;
+    const event = Object.hasOwn(APPLE_EVENTS, type) ? APPLE_EVENTS[type] : null;
+    if (!event) return { outcome: 'not_acted_on', purchaseId: purchase.id };
+    // What a refunded extra photo or place does is not decided yet: noted, nothing changed.
+    if (purchase.kind === 'extra') return { outcome: 'extra_noted', purchaseId: purchase.id };
+    // Family Sharing is off for every product, so a shared copy never made room to take back.
+    if (transaction.inAppOwnershipType && transaction.inAppOwnershipType !== 'PURCHASED') return { outcome: 'unchanged', purchaseId: purchase.id };
+    const product = storeProduct(transaction.productId);
+    const subscription = purchase.kind === 'subscription';
+    const store = { store: 'apple', environment, recordId: purchase.entitlement_record_id };
+
+    if (event === 'refunded' || event === 'revoked') {
+      const at = dateFrom(transaction.revocationDate) || this.now();
+      let row = purchase;
+      if (named.own) {
+        await client.query(
+          'UPDATE billing_store_purchases SET revoked_at=COALESCE(revoked_at,$1),revocation=COALESCE(revocation,$2),updated_at=$3 WHERE id=$4',
+          [at, event, this.now(), purchase.id],
+        );
+      } else if (product?.kind === 'subscription') {
+        row = await this.recordStoreTransaction(client, purchase, {
+          transactionId, productId: transaction.productId, purchasedAt: dateFrom(transaction.purchaseDate) || at,
+          expiresAt: dateFrom(transaction.expiresDate), revokedAt: at, revocation: event,
+        });
+      }
+      const applied = await this.applyStoreEvent(client, { ...store, event, at, periodEnd: subscription ? dateFrom(transaction.expiresDate) : null });
+      return { outcome: applied.effect, purchaseId: row.id };
+    }
+
+    if (event === 'renewed') {
+      const endsAt = dateFrom(transaction.expiresDate);
+      if (!subscription || product?.kind !== 'subscription' || !endsAt || transaction.revocationDate || (named.own && purchase.revoked_at)) {
+        return { outcome: 'unchanged', purchaseId: purchase.id };
+      }
+      let row = purchase;
+      if (!named.own) {
+        // A renewal continues the subscription in the journey it already serves. One that names
+        // another journey is a move, and moves are only made when a phone sends the purchase.
+        const held = await this.entitlementFor(client, 'apple', environment, purchase.entitlement_record_id);
+        const token = String(transaction.appAccountToken || '').toLowerCase();
+        const paidFrom = UUID.test(token) ? await client.query('SELECT journey_id FROM billing_store_journeys WHERE journey_token=$1', [token]) : { rowCount: 0, rows: [] };
+        if (!held || (paidFrom.rowCount && paidFrom.rows[0].journey_id !== held.journey_id)) return { outcome: 'unchanged', purchaseId: purchase.id };
+        row = await this.recordStoreTransaction(client, { ...purchase, journey_id: held.journey_id, payer_user_id: held.payer_user_id }, {
+          transactionId, productId: transaction.productId, purchasedAt: dateFrom(transaction.purchaseDate) || this.now(), expiresAt: endsAt,
+        });
+      }
+      const applied = await this.applyStoreEvent(client, { ...store, event, endsAt, at: dateFrom(transaction.purchaseDate), people: product.people });
+      return { outcome: applied.effect, purchaseId: row.id };
+    }
+
+    const applied = await this.applyStoreEvent(client, { ...store, event });
+    return { outcome: applied.effect, purchaseId: purchase.id };
   }
 
   // --- Google acknowledgement ----------------------------------------------------------------
