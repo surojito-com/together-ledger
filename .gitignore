@@ -6,3 +6,9 @@ _site/
 .env.production
 .DS_Store
 backups/
+
+# Apple signing material: App Store Connect API keys, certificates and provisioning profiles live
+# in EAS, never in this repository (docs/IOS_RELEASE.md).
+*.p8
+*.p12
+*.mobileprovision

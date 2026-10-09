@@ -181,7 +181,12 @@ test('the choice is made by seeing the result: the preview is the moment\'s own 
 
 test('places are typed, never taken from the phone: no location permission is asked for', async () => {
   const app = JSON.parse(await read('app.json'));
-  const text = JSON.stringify(app);
+  // The iOS privacy manifest declares Precise Location as collected, because the phone re-sends the
+  // coordinates a moment made on the web already holds (docs/STORE_READINESS.md, 1.1 and 3.2). That
+  // is what we tell Apple, not a permission; everything else in app.json must still never name one.
+  const { privacyManifests, ...ios } = app.expo.ios;
+  assert.deepEqual(privacyManifests.NSPrivacyCollectedDataTypes.map((entry) => entry.NSPrivacyCollectedDataType).filter((type) => /Location/.test(type)), ['NSPrivacyCollectedDataTypePreciseLocation']);
+  const text = JSON.stringify({ ...app, expo: { ...app.expo, ios } });
   assert.doesNotMatch(text, /LOCATION|NSLocation/i);
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(Object.hasOwn(pkg.dependencies, 'expo-location'), false);

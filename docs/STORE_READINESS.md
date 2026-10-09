@@ -468,6 +468,13 @@ the privacy policy (Part 4).
 | Surroundings, Body | No | — | |
 | Other Data | No | — | |
 
+**The app's privacy manifest says the same.** `expo.ios.privacyManifests` in
+`apps/mobile/app.json` lists the seven types answered **Yes** above: linked, not used for
+tracking, collected for App Functionality. It declares no tracking and no tracking domains.
+`tests/mobile-ios-release.test.js` reads this table, so a change here fails until the manifest
+changes with it. The required-reason APIs it declares, and why, are in `docs/IOS_RELEASE.md`
+(added Oct 9, 2026, after the commit named at the top of this file). **Verified in code.**
+
 **Privacy policy URL:** `https://app.together-ledger.com/privacy`, the same on both stores
 (**Decision (owner, Oct 8, 2026)**), built from `PRIVACY.md` by `scripts/build-public-site.mjs:33-34`.
 **Verified in code.** Not `https://together-ledger.com/privacy`, which is the company site's own
