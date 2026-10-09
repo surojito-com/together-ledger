@@ -139,6 +139,23 @@ eas build --platform ios --profile production
 
   **Not confirmed:** that the team type is `COMPANY_OR_ORGANIZATION`. It should be, for an LLC's
   organisation membership. Check Membership details.
+- **Leave the App ID's capabilities alone: set `EXPO_NO_CAPABILITY_SYNC=1`.** On the first build
+  (Oct 9, `TL IOS 0.1.0+2`), `eas build` tried to switch **Push Notifications** and **Sign in with
+  Apple** off on the App ID `com.togetherledger.ledger`, and Apple refused, so the build stopped.
+  The app declares no entitlements (`apps/mobile/app.json`), and EAS turns off a capability it
+  knows when the app's entitlements don't ask for it (eas-cli 24.12.1,
+  `build/credentials/ios/appstore/bundleIdCapabilities.js`, `getCapabilitiesToDisable`). Both have
+  to stay on: Sign in with Apple is used by the web and the server. EAS's own error named the way
+  out: "Auto capability syncing can be disabled with the environment variable
+  `EXPO_NO_CAPABILITY_SYNC=1`." With it set, EAS turns no capability on or off (the same file).
+  Set it in the same terminal as the values above, for every iOS build:
+
+  ```
+  EXPO_NO_CAPABILITY_SYNC=1
+  ```
+
+  The cost: if the app ever does need a capability (push, for example, #265), turn it on in the
+  Apple Developer portal by hand, because EAS no longer will.
 - **The build number.** `eas.json` keeps the version and build number on EAS's servers
   (`"appVersionSource": "remote"`) and adds one to the build number on every production build
   (`"autoIncrement": true`). The first build is 1 unless EAS already holds one
@@ -169,6 +186,31 @@ Choose the build from step 2 when asked. EAS uploads it with the API key from st
 appears under **TestFlight** → iOS Builds once Apple has processed it. Expo's two pages give
 "10-15 minutes" and "5 to 10 minutes", Apple promises no time, and Apple sends an email when it is
 done ([Expo: TestFlight, "Wait for processing"](https://docs.expo.dev/submit/testflight/)).
+
+**If `eas submit` asks you to sign in with your Apple ID, put the key in the submit profile for
+that one run.** On the first submission (Oct 9, `TL IOS 0.1.0+2`), giving `eas submit` the API key
+when it asked for one interactively still ended in a request for an Apple ID sign-in. What worked
+was adding the key's three values to `submit.production.ios` in `apps/mobile/eas.json`, on the
+owner's Mac, next to `ascAppId`; `eas submit` then uploaded with the key alone, with no sign-in:
+
+```json
+"ios": {
+  "ascAppId": "6820375940",
+  "ascApiKeyPath": "<path to the .p8 file, outside the repository>",
+  "ascApiKeyIssuerId": "<Issuer ID>",
+  "ascApiKeyId": "<Key ID>"
+}
+```
+
+Those three are fields EAS reads in a submit profile (`@expo/eas-json` 24.9.0,
+`build/submit/schema.js`). **Never commit them.** Undo the edit afterwards:
+
+```
+git checkout -- eas.json
+```
+
+from `apps/mobile`, then check `git status` is clean. `tests/mobile-ios-release.test.js` fails if
+any of the three reaches the repository.
 
 **Watch your email after the upload.** Apple writes "within a few minutes" if the build uses a
 required-reason API that the privacy manifest doesn't explain

@@ -323,6 +323,86 @@ charged; where a purchase cannot be honoured, it says where a refund comes from.
 A refusal's log line names the store, the code, the product, and Apple's `transactionId` or a 16-character hash of
 Google's purchase token, which is itself a credential and never logged.
 
+## What the stores say afterwards (#273)
+
+A store purchase can change after it was made, and only the store knows: the person asks Apple for a refund, a
+subscription renews or lapses. The stores tell us on a channel we have to listen on. Apple's is built here; Google's
+and what a refunded extra does are not yet (see "Not built here").
+
+### Apple: App Store Server Notifications
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `/api/v1/billing/store-notifications/apple` | `{ "signedPayload": "<JWS>" }`, sent by Apple's servers (Version 2) |
+
+The URL sits beside `/billing/store-purchases/apple` and leaves room for Google's. It is not
+`/api/v1/auth/apple/notifications`, which is Sign in with Apple's (#250) and unchanged.
+
+Apple's servers send it, so there is no origin, cookie or token to check: **the signed payload is the only
+credential.** It is checked exactly as a purchase is (`AppleTransactionVerifier`, `APPLE_ROOT_CERTIFICATES`), and so
+is the transaction signed inside it. Both must name our `bundleId`. Without the root certificate the endpoint answers
+`503`, and Apple sends again later.
+
+| Notification | What it does to the room |
+|---|---|
+| `DID_RENEW` | The subscription runs to Apple's new end. A renewal the phone never sent is recorded as a purchase, so the phone sending it later grants nothing more. A renewal naming another journey changes nothing: a move is only made when the phone sends the purchase, with its checks. |
+| `REFUND` | The room ends when Apple refunded it, or on its own end if that came first. Then the usual grace, then the people beyond two rest. A refund of an earlier period that has since been paid again changes nothing. A pass that had not started never starts. |
+| `REVOKE` | The same as a refund. Family Sharing is off for every product, so a shared copy never made room to take back. |
+| `EXPIRED`, `DID_FAIL_TO_RENEW`, `GRACE_PERIOD_EXPIRED` | Nothing to write: the room ends on the date already paid for, and the usual grace starts there, as for a failed web payment. A `DID_FAIL_TO_RENEW` with the `GRACE_PERIOD` subtype is the same: Apple's billing grace period never extends the room (see below). |
+| `REFUND_REVERSED` | Logged as `not_acted_on`, and nothing changes. A reversed refund should bring the room back; that is not built yet (see "Not built here"). |
+| `CONSUMPTION_REQUEST` | Logged as `not_acted_on`, and never answered (see below). |
+| `TEST` | Logged, and nothing changes. |
+| Any other | Logged as `not_acted_on`, and nothing changes. |
+
+**Refunded room rests the usual way** (owner, Oct 8, 2026, on #203). There is no new path for a store refund: the
+room's end moves to the refund, and from there `paymentFor` (`server/platform.js`) reads it exactly like a pass that
+ran out. New invitations wait, everyone sees the grace, the payer can ask for more weeks, and when the grace is over
+the people beyond two rest. Nobody is removed.
+
+**Our grace is the only grace** (owner, Oct 8 and Oct 9, 2026). A store lapse gets the same grace as a failed web
+payment, and nothing more. Billing Grace Period stays off in App Store Connect (see "Setting it up"). If a
+`DID_FAIL_TO_RENEW` with the `GRACE_PERIOD` subtype arrives anyway, it is a lapse: the room still ends on the date
+already paid for, and Apple's `gracePeriodExpiresDate` is never read.
+
+**A refund writes nothing into the journey's History** (owner, Oct 9, 2026). A refund is the payer's own matter. What
+everyone else sees is what any lapse shows: the grace, and then who rests. No notification writes a History entry.
+
+**`CONSUMPTION_REQUEST` is never answered in v1** (owner, Oct 9, 2026). Answering it would send Apple how a person
+used the app, while Apple decides a refund. PRIVACY.md doesn't say we share that, so we don't. The request is logged
+as `not_acted_on`, and the server makes no call to Apple.
+
+**An extra photo or place is only noted.** A refunded `extra_photo` or `extra_place` is logged as `extra_noted` and
+its slot is left as it is, until what a refunded extra does is decided.
+
+**A refunded transaction never comes back.** The purchase row is marked (`revoked_at`, `revocation`, migration 034),
+and a copy of the transaction signed before the refund, sent again by a phone, extends nothing. A refunded renewal we
+had never been sent is recorded as refunded, so sending it later grants nothing either.
+
+**Received twice, applied once.** Apple sends again until it hears a `200`. Each notification is one row in
+`billing_store_notifications`, unique on store and Apple's `notificationUUID`, written in the same transaction as
+its effect, so a second delivery, or two at once, changes nothing. The Postgres test proves the second case.
+
+**The log** (`billing_store_notifications`, migration 034) holds, for every notification received, whether or not it
+changed anything: the store, its notification id, type and subtype, environment, the purchase it is about, Apple's
+`transactionId`, when Apple signed it, when it arrived, and what it did (`outcome`). It keeps nothing else from the
+payload. A row goes with the purchase it explains (`ON DELETE CASCADE`); one about no purchase we hold goes after
+30 days.
+
+| Code | Status | Meaning |
+|---|---|---|
+| `store_notification_unverified` | 400 | The signature or chain did not verify, on the notification or the transaction inside it. Logged. |
+| `store_notification_wrong_app` | 400 | Another app's bundle ID. Logged. |
+| `store_unavailable` | 503 | Apple isn't configured on this server. Apple sends it again later. |
+
+Sandbox and live notifications both come here. Each one only ever touches rows of its own environment, so a sandbox
+notification on the live server can reach only a sandbox tester's room (`STORE_SANDBOX_ACCOUNT_IDS`).
+
+### What Google will reuse
+
+`StorePurchaseService.applyStoreEvent` is the one place a store's later word changes a journey's room: `renewed`,
+`lapsed`, `refunded` or `revoked`, for a store, environment and the store's id for the room. `noteNotification` and
+`settleNotification` keep the log. Google's Real-Time Developer Notifications will call the same three.
+
 ## Setting it up
 
 Neither store is on until its trust is configured, and until then its purchases are answered `store_unavailable`
@@ -338,6 +418,23 @@ Neither store is on until its trust is configured, and until then its purchases 
 
 It is public, and stays out of the repository only so that the trust the server runs on is something someone
 chose and checked, alongside the other secrets. `APPLE_BUNDLE_ID` defaults to `com.togetherledger.ledger`.
+
+### Apple: server notifications (after the release)
+
+Once a release with migration 034 is live, in **App Store Connect → the app → App Information → App Store Server
+Notifications**:
+
+1. **Production Server URL**: `https://api.together-ledger.com/api/v1/billing/store-notifications/apple`
+2. **Sandbox Server URL**: the same URL (owner, Oct 9, 2026). Sandbox testers' purchases (App Review, the owner's
+   test accounts) are recorded on the live server, so their notifications have to reach it too. Only accounts listed
+   in `STORE_SANDBOX_ACCOUNT_IDS` can make a sandbox purchase count there, and a sandbox notification only ever
+   touches sandbox rows, so it can't change anyone else's room.
+3. **Version 2** for both, then **Save**.
+4. **Leave Billing Grace Period off** (the app's Subscriptions page in App Store Connect). Our own grace is the only
+   grace, the same as for a failed web payment (owner, Oct 8, 2026).
+5. **Request a test notification** (App Store Connect, or the App Store Server API's
+   `POST /inApps/v1/notifications/test`). The server logs `store notification` with `"type":"TEST"`, and
+   `billing_store_notifications` has a row with `outcome` `test`.
 
 ### Google: the Play service account
 
@@ -368,9 +465,13 @@ billing **or** at least one store configured, so the phones can sell while web b
 
 ## Not built here
 
-- **Server notifications, refunds and revocations** (#273). A refund through Apple or Google does not take room back
-  yet; nothing listens for it. A Google subscription's renewal is recorded when the phone sends it again, not on
-  Google's word.
+- **Google's notifications** (#273). A refund through Google Play does not take room back yet; nothing listens for
+  it. A Google subscription's renewal is recorded when the phone sends it again, not on Google's word. Apple's are
+  built (above).
+- **What a refunded extra photo or place does** (#273). Apple's refund of one is logged and changes nothing.
+- **A reversed refund** (#273, 16C, with refunded extras). Apple's `REFUND_REVERSED` should bring the room back (owner, Oct 9,
+  2026). For now it is logged as `not_acted_on` and changes nothing.
+- **Alerting when refunds spike** (#273).
 - **Restore on a new phone** (#275). The phone's Restore purchases sends what the store hands back; a
   subscription bought on the other platform is not seen from this one.
 - **What a journey holding more than one entitlement means** (#274, #276), beyond "the most generous one counts".

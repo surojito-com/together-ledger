@@ -171,6 +171,7 @@ is, so they are honest today and say which answer changes if a fix lands.
 | Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; the web, once configured, and not the phone (1.5) | Verified in code |
 | Store purchase tokens (random UUIDs per account and per journey) | Only when a purchase starts | `server/platform.js:1824-1839`; fetched by the phone before each purchase (`apps/mobile/src/api/client.ts:255`) and handed to Apple or Google (`apps/mobile/src/billing/store-purchase.ts:117`, `:121`) (#340) | Verified in code |
 | Store purchases (the Apple signed transaction, or the Google product and purchase token; the moment for an extra place) | Only when the person buys | Sent by the phone after each purchase (`apps/mobile/src/api/client.ts:264-268`, `apps/mobile/src/billing/store-purchase.ts:186`) and kept as a `billing_store_purchases` row (`docs/STORE_PURCHASES.md`) (#340) | Verified in code |
+| What Apple says about a purchase afterwards (App Store Server Notifications: type, subtype, Apple's `transactionId`, when it was signed and received, and what changed) | Only when Apple sends one, server to server; the phone is not involved | Kept as a `billing_store_notifications` row (`server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql`, `docs/STORE_PURCHASES.md`) (#273) | Verified in code |
 
 No birthdate, phone number, address, gender, photo of the person, contacts, or device identifier
 is asked for anywhere in the phone app (`apps/mobile/src/api/client.ts:135-268` is every call it
@@ -314,6 +315,7 @@ dependency (2.4).
 | Invite proposal | Lapses after 30 days if not agreed | Verified in code (`server/platform.js:56`) |
 | Removed photo | The most recently removed one per moment, until another is removed or the moment is deleted | Verified in code (`server/platform.js:1668-1669`) |
 | A moment's hold key: the phone's random key, the moment it made, and a keyed hash of what it said (#352) | As long as the journey and the person in it; the moment link is emptied when the moment is deleted | Verified in code (`server/migrations/033_let-a-moment-held-offline-arrive-once.sql`, `server/platform.js`, `holdMoment`) |
+| A store notification's log row (#273) | As long as the purchase record it explains (`ON DELETE CASCADE`); one about no purchase we hold, 30 days | Verified in code (`server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql`, `server/store-purchases.js`, `noteNotification`) |
 | A moment waiting on the phone | Until the API has it, or the person discards it after a refusal, signs out on purpose, or deletes the account (2.3) | Verified in code (`apps/mobile/src/journey/waiting-moments.ts`) |
 | Server request logs (with network address, and the phone app's build, such as `and/0.1.0+2/977f365`, #359) | Rotated: 3 files of 10 MB each, oldest overwritten | Verified in code (`compose.production.yaml:36-43`, `server/log-options.js`) |
 | Local encrypted backups | Deleted after 29 full days (`-mtime +29`) | Verified in code (`scripts/backup-postgres.sh:78-80`) |

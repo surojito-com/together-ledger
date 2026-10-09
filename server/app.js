@@ -279,6 +279,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   };
   app.post('/api/v1/billing/store-purchases/apple', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, storePurchase((service, userId, body) => service.verifyApple(userId, body)));
   app.post('/api/v1/billing/store-purchases/google', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, storePurchase((service, userId, body) => service.verifyGoogle(userId, body)));
+  // What the App Store says about a purchase afterwards (#273): App Store Server Notifications V2,
+  // set in App Store Connect as both the Production and the Sandbox URL. Apple's servers send them,
+  // so there is no origin, cookie or token to check: the signed payload is the credential, checked
+  // against APPLE_ROOT_CERTIFICATES exactly as a purchase is. Sign in with Apple's own
+  // notifications are another thing, at /api/v1/auth/apple/notifications (#250). Apple sends again
+  // until it hears a 200, and a notification received twice changes nothing the second time.
+  app.post('/api/v1/billing/store-notifications/apple', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    await storeService().handleAppleNotification(request.body || {});
+    return reply.code(200).send({ data: { received: true } });
+  });
   app.post('/api/v1/billing/webhooks/stripe', { config: { rawBody: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const result = await billing.handleWebhook(request.rawBody, request.headers['stripe-signature']);
     return reply.code(200).send(result);
