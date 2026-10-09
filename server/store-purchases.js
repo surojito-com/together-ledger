@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { withTransaction } from './db.js';
 import { PlatformError } from './platform.js';
 import { AppleTransactionVerifier, AppleVerificationError } from './store-apple.js';
-import { GooglePlayDeveloperApi, GooglePlayError } from './store-google.js';
+import { GooglePlayDeveloperApi, GooglePlayError, GooglePushError, GooglePushVerifier } from './store-google.js';
 import { INCLUDED_PEOPLE, ROOM_CAPABILITY, appleTypeFor, passEnd, roomFor, storeProduct } from './store-products.js';
 
 // Turning a store purchase into capacity (TL-P-05, #272). The phone sends what Apple or Google
@@ -31,8 +31,9 @@ import { INCLUDED_PEOPLE, ROOM_CAPABILITY, appleTypeFor, passEnd, roomFor, store
 //
 // What the stores say afterwards (#273): a renewal, a refund, a revocation, a lapse. Each is logged
 // in billing_store_notifications and applied through applyStoreEvent, the one place a store's
-// later word changes a journey's room, whichever store it came from. Apple's notifications are
-// handled here (handleAppleNotification); refunded extras and Google's are not yet.
+// later word changes a journey's room, whichever store it came from. Apple's App Store Server
+// Notifications (handleAppleNotification) and Google Play's Real-time developer notifications
+// (handleGoogleNotification) both come here. What a refunded extra does is not decided yet.
 //
 // Not here: restoring on a new phone (#275).
 
@@ -78,6 +79,38 @@ const APPLE_EVENTS = Object.freeze({
   GRACE_PERIOD_EXPIRED: 'lapsed',
 });
 
+// Google Play's subscription notifications, by notificationType, as the log names them.
+const GOOGLE_SUBSCRIPTION_TYPES = Object.freeze({
+  1: 'SUBSCRIPTION_RECOVERED', 2: 'SUBSCRIPTION_RENEWED', 3: 'SUBSCRIPTION_CANCELED', 4: 'SUBSCRIPTION_PURCHASED',
+  5: 'SUBSCRIPTION_ON_HOLD', 6: 'SUBSCRIPTION_IN_GRACE_PERIOD', 7: 'SUBSCRIPTION_RESTARTED', 8: 'SUBSCRIPTION_PRICE_CHANGE_CONFIRMED',
+  9: 'SUBSCRIPTION_DEFERRED', 10: 'SUBSCRIPTION_PAUSED', 11: 'SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED', 12: 'SUBSCRIPTION_REVOKED',
+  13: 'SUBSCRIPTION_EXPIRED', 17: 'SUBSCRIPTION_ITEMS_CHANGED', 18: 'SUBSCRIPTION_CANCELLATION_SCHEDULED',
+  19: 'SUBSCRIPTION_PRICE_CHANGE_UPDATED', 20: 'SUBSCRIPTION_PENDING_PURCHASE_CANCELED', 22: 'SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED',
+});
+const GOOGLE_ONE_TIME_TYPES = Object.freeze({ 1: 'ONE_TIME_PRODUCT_PURCHASED', 2: 'ONE_TIME_PRODUCT_CANCELED' });
+const GOOGLE_REFUND_TYPES = Object.freeze({ 1: 'FULL_REFUND', 2: 'QUANTITY_BASED_PARTIAL_REFUND' });
+// What each Google Play notification means for a journey's room, the same events as Apple's. A
+// renewal is SUBSCRIPTION_RENEWED, or SUBSCRIPTION_RECOVERED: paid again after account hold or a
+// pause, which is a new paid period like any renewal. Cancelling, expiring, account hold and
+// Google's grace period are all lapses: the room runs to the date already paid for, and our own
+// grace starts there. Our grace is the only grace (owner, Oct 8 and 9, 2026), so the end Google
+// gives a subscription in its grace period is never read. A voided purchase is a refund. Anything
+// not named here is logged as not_acted_on and left alone. No notification writes History.
+const GOOGLE_EVENTS = Object.freeze({
+  SUBSCRIPTION_RENEWED: 'renewed',
+  SUBSCRIPTION_RECOVERED: 'renewed',
+  SUBSCRIPTION_CANCELED: 'lapsed',
+  SUBSCRIPTION_EXPIRED: 'lapsed',
+  SUBSCRIPTION_ON_HOLD: 'lapsed',
+  SUBSCRIPTION_IN_GRACE_PERIOD: 'lapsed',
+  SUBSCRIPTION_REVOKED: 'revoked',
+  VOIDED_PURCHASE: 'refunded',
+});
+// Google lists voided purchases by when it voided them, looking back at most 30 days. A notification
+// is looked for from a day before Google says it happened.
+const VOIDED_LOOKBACK_MS = DAY_MS;
+const VOIDED_MAX_LOOKBACK_MS = 29 * DAY_MS;
+
 // Every refusal says whether trying again could change it. A phone finishes a transaction only on
 // success, so `retryable: true` is the phone's cue to keep it and send it again later.
 function refuse(status, code, message, retryable = false) {
@@ -111,8 +144,9 @@ function fingerprint(value) {
 export class StorePurchaseService {
   // `history` writes an event into a journey's own record (PlatformService.appendEvent): paid room
   // moving between journeys is something both journeys' people should be able to see.
-  constructor({ pool, config, apple = null, google = null, history = null, now = () => new Date(), log = null }) {
+  constructor({ pool, config, apple = null, google = null, googlePush = null, history = null, now = () => new Date(), log = null }) {
     this.pool = pool;
+    this.googlePush = googlePush;
     this.history = history;
     this.config = config;
     this.apple = apple;
@@ -240,6 +274,9 @@ export class StorePurchaseService {
       accountToken: ids.obfuscatedExternalAccountId,
       acknowledgement: record.acknowledgementState === 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED' ? 'done' : 'pending',
       replacesToken: record.linkedPurchaseToken || null,
+      // In Google's grace period, expiryTime is the end of Google's grace, not of a period paid for.
+      // Our grace is the only grace (owner, Oct 8 and 9, 2026), so it never extends the room.
+      inStoreGrace: state === 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
     };
   }
 
@@ -425,7 +462,7 @@ export class StorePurchaseService {
   // A transaction the store has since refunded extends nothing, even when a phone sends a copy
   // signed before the refund.
   async replay(client, row, purchase) {
-    if (row.kind === 'subscription' && !row.revoked_at) await this.grantSubscription(client, row, purchase);
+    if (row.kind === 'subscription' && !row.revoked_at && !purchase.inStoreGrace) await this.grantSubscription(client, row, purchase);
     const saved = await client.query('SELECT * FROM billing_store_purchases WHERE id=$1', [row.id]);
     return this.describe(client, saved.rows[0], false);
   }
@@ -713,6 +750,14 @@ export class StorePurchaseService {
     return { effect: event, journeyId: held.journey_id };
   }
 
+  // A purchase the store has since refunded or revoked. Marked once, never cleared.
+  async markRevoked(client, row, at, revocation) {
+    await client.query(
+      'UPDATE billing_store_purchases SET revoked_at=COALESCE(revoked_at,$1),revocation=COALESCE(revocation,$2),updated_at=$3 WHERE id=$4',
+      [at, revocation, this.now(), row.id],
+    );
+  }
+
   // A notification, logged once. Answers with the new row, or null when this notification was
   // received before: the store sending again until it hears success, which then changes nothing.
   async noteNotification(client, { store, notificationId, environment, type, subtype, transactionRef, signedAt }) {
@@ -836,10 +881,7 @@ export class StorePurchaseService {
       const at = dateFrom(transaction.revocationDate) || this.now();
       let row = purchase;
       if (named.own) {
-        await client.query(
-          'UPDATE billing_store_purchases SET revoked_at=COALESCE(revoked_at,$1),revocation=COALESCE(revocation,$2),updated_at=$3 WHERE id=$4',
-          [at, event, this.now(), purchase.id],
-        );
+        await this.markRevoked(client, purchase, at, event);
       } else if (product?.kind === 'subscription') {
         row = await this.recordStoreTransaction(client, purchase, {
           transactionId, productId: transaction.productId, purchasedAt: dateFrom(transaction.purchaseDate) || at,
@@ -873,6 +915,227 @@ export class StorePurchaseService {
 
     const applied = await this.applyStoreEvent(client, { ...store, event });
     return { outcome: applied.effect, purchaseId: purchase.id };
+  }
+
+  // Google Play's Real-time developer notifications, pushed by Pub/Sub, which sends again until it
+  // hears a success. Each request must carry the OIDC token Pub/Sub signs for our push subscription
+  // (store-google.js, GooglePushVerifier). The message itself says only that something changed,
+  // so nothing is believed from it: each purchase is read again from the Play Developer API, and
+  // only what Google says there changes a room.
+  async handleGoogleNotification({ authorization, body = {} } = {}) {
+    if (!this.googlePush) {
+      this.log('warn', 'store notification refused', { store: 'google', code: 'store_unavailable', reason: 'not configured' });
+      throw unavailable('google');
+    }
+    try {
+      await this.googlePush.verify(authorization);
+    } catch (error) {
+      if (!(error instanceof GooglePushError)) throw error;
+      if (error.kind === 'unavailable') {
+        this.log('warn', 'store notification refused', { store: 'google', code: 'store_unavailable', reason: error.reason });
+        throw unavailable('google');
+      }
+      this.log('warn', 'store notification refused', { store: 'google', code: 'store_notification_unauthenticated', reason: error.reason });
+      throw refuse(401, 'store_notification_unauthenticated', 'This notification didn’t come from Together Ledger’s Google Play notifications, so nothing was changed.');
+    }
+    const read = this.readGoogleMessage(body);
+    if (!read) {
+      this.log('warn', 'store notification refused', { store: 'google', code: 'store_notification_unverified', reason: 'unreadable message' });
+      throw refuse(400, 'store_notification_unverified', 'This notification couldn’t be read as one from Google Play, so nothing was changed.');
+    }
+    const { messageId, notification } = read;
+    const { type, subtype, token, orderId } = this.googleNotificationKind(notification);
+    if (notification.packageName !== this.config.GOOGLE_PLAY_PACKAGE_NAME) {
+      this.log('warn', 'store notification refused', { store: 'google', code: 'store_notification_wrong_app', type });
+      throw refuse(400, 'store_notification_wrong_app', 'This notification is for a different app, so nothing was changed.');
+    }
+
+    // Pub/Sub delivers at least once. A message already logged changes nothing, and costs no call
+    // to Google.
+    const seen = await this.pool.query("SELECT 1 FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [messageId]);
+    if (seen.rowCount) {
+      this.log('info', 'store notification received again', { store: 'google', type, notificationId: messageId });
+      return { outcome: 'already-received' };
+    }
+    const found = token ? await this.pool.query("SELECT * FROM billing_store_purchases WHERE store='google' AND transaction_id=$1 ORDER BY created_at LIMIT 1", [token]) : null;
+    const purchase = found?.rows[0] || null;
+    const event = Object.hasOwn(GOOGLE_EVENTS, type) ? GOOGLE_EVENTS[type] : null;
+    const now = this.now();
+    const told = dateFrom(notification.eventTimeMillis);
+    const eventAt = told && told < now ? told : now;
+    // Only a notification that could change a room is read again from Google: one about a room we
+    // granted. An extra is only noted (16C decides what a refunded one does), and a
+    // quantity-based partial refund is left alone.
+    const partial = subtype === 'QUANTITY_BASED_PARTIAL_REFUND';
+    const word = event && purchase && purchase.kind !== 'extra' && !partial
+      ? await this.askGoogle(purchase, { type, eventAt })
+      : null;
+
+    return withTransaction(this.pool, async (client) => {
+      const note = await this.noteNotification(client, {
+        store: 'google', notificationId: messageId, environment: purchase?.environment || null, type, subtype,
+        transactionRef: token ? fingerprint(token) : null, signedAt: told,
+      });
+      if (!note) {
+        this.log('info', 'store notification received again', { store: 'google', type, notificationId: messageId });
+        return { outcome: 'already-received' };
+      }
+      const result = await this.googleNotificationEffect(client, { type, event, partial, purchase, word, token, orderId, eventAt });
+      await this.settleNotification(client, note.id, result);
+      this.log('info', 'store notification', {
+        store: 'google', type, subtype, environment: purchase?.environment || null, outcome: result.outcome, ...(token ? { purchase: fingerprint(token) } : {}),
+      });
+      return { outcome: result.outcome };
+    });
+  }
+
+  // Pub/Sub's push body: { message: { data: <base64 DeveloperNotification>, messageId }, subscription }.
+  readGoogleMessage(body) {
+    const message = body && typeof body === 'object' ? body.message : null;
+    if (!message || typeof message !== 'object') return null;
+    const messageId = String(message.messageId || message.message_id || '');
+    if (!NOTIFICATION_ID.test(messageId) || typeof message.data !== 'string' || message.data.length > MAX_NOTIFICATION_LENGTH) return null;
+    let notification;
+    try {
+      notification = JSON.parse(Buffer.from(message.data, 'base64').toString('utf8'));
+    } catch {
+      return null;
+    }
+    if (!notification || typeof notification !== 'object' || Array.isArray(notification)) return null;
+    return { messageId, notification };
+  }
+
+  // A DeveloperNotification carries exactly one kind of notification.
+  googleNotificationKind(notification) {
+    const tokenOf = (value) => (typeof value === 'string' && PURCHASE_TOKEN.test(value) ? value : null);
+    const numbered = (names, prefix, value) => names[Number(value)] || `${prefix}_${Number.isInteger(Number(value)) ? Number(value) : 'UNKNOWN'}`;
+    if (notification.testNotification) return { type: 'TEST', subtype: null, token: null };
+    const subscription = notification.subscriptionNotification;
+    if (subscription && typeof subscription === 'object') {
+      return { type: numbered(GOOGLE_SUBSCRIPTION_TYPES, 'SUBSCRIPTION', subscription.notificationType), subtype: null, token: tokenOf(subscription.purchaseToken) };
+    }
+    const voided = notification.voidedPurchaseNotification;
+    if (voided && typeof voided === 'object') {
+      return {
+        type: 'VOIDED_PURCHASE',
+        // Older notifications carry no refundType; those were all full refunds.
+        subtype: voided.refundType === undefined ? 'FULL_REFUND' : numbered(GOOGLE_REFUND_TYPES, 'REFUND', voided.refundType),
+        token: tokenOf(voided.purchaseToken),
+        orderId: typeof voided.orderId === 'string' ? voided.orderId.slice(0, 128) : null,
+      };
+    }
+    const oneTime = notification.oneTimeProductNotification;
+    if (oneTime && typeof oneTime === 'object') {
+      return { type: numbered(GOOGLE_ONE_TIME_TYPES, 'ONE_TIME_PRODUCT', oneTime.notificationType), subtype: null, token: tokenOf(oneTime.purchaseToken) };
+    }
+    if (notification.pendingRefundReviewNotification) return { type: 'PENDING_REFUND_REVIEW', subtype: null, token: null };
+    return { type: 'UNKNOWN', subtype: null, token: null };
+  }
+
+  // What Google says about the purchase now, through the Play Developer API. Google not knowing the
+  // purchase is an answer (`missing`); Google being unreachable, or refusing our credentials, is
+  // not, and Pub/Sub is asked to send the notification again later.
+  async askGoogle(purchase, { type, eventAt }) {
+    if (!this.google) {
+      this.log('warn', 'store notification refused', { store: 'google', code: 'store_unavailable', reason: 'play developer api not configured' });
+      throw unavailable('google');
+    }
+    const token = purchase.transaction_id;
+    try {
+      const word = {};
+      if (purchase.kind === 'subscription') word.subscription = await this.google.subscriptionPurchase(token);
+      if (type === 'VOIDED_PURCHASE') {
+        const since = Math.max(eventAt.getTime() - VOIDED_LOOKBACK_MS, this.now().getTime() - VOIDED_MAX_LOOKBACK_MS);
+        word.voided = (await this.google.voidedPurchases({ since })).filter((entry) => entry?.purchaseToken === token);
+      }
+      return word;
+    } catch (error) {
+      if (!(error instanceof GooglePlayError)) throw error;
+      if (error.kind === 'not-found') return { missing: true };
+      if (error.kind === 'refused') this.log('error', 'google play refused our credentials', { status: error.status });
+      throw unavailable('google');
+    }
+  }
+
+  async googleNotificationEffect(client, { type, event, partial, purchase, word, token, orderId, eventAt }) {
+    if (type === 'TEST') return { outcome: 'test' };
+    if (!purchase) return { outcome: event && token ? 'unknown_purchase' : 'not_acted_on' };
+    const fresh = await client.query('SELECT * FROM billing_store_purchases WHERE id=$1', [purchase.id]);
+    const row = fresh.rows[0];
+    if (!row) return { outcome: 'unknown_purchase' };
+    const purchaseId = row.id;
+    if (!event || partial) return { outcome: 'not_acted_on', purchaseId };
+    // What a refunded extra photo or place does is not decided yet (16C): noted, nothing changed.
+    if (row.kind === 'extra') return { outcome: 'extra_noted', purchaseId };
+    const notConfirmed = (reason) => {
+      this.log('warn', 'google did not confirm a notification', { type, reason, purchase: fingerprint(token) });
+      return { outcome: 'unchanged', purchaseId };
+    };
+    if (!word || word.missing) return notConfirmed('google does not know the purchase');
+    if (!row.entitlement_record_id) return { outcome: 'unchanged', purchaseId };
+    const room = { store: 'google', environment: row.environment, recordId: row.entitlement_record_id };
+
+    if (event === 'refunded') {
+      const voids = (word.voided || []).filter((entry) => row.kind !== 'subscription' || !orderId || entry.orderId === orderId);
+      const voided = voids[0];
+      if (!voided) return notConfirmed('not among the voided purchases');
+      const at = dateFrom(voided.voidedTimeMillis) || eventAt;
+      const refundedAt = at < this.now() ? at : this.now();
+      if (row.kind === 'subscription') {
+        // Each renewal is its own order under the same token. A refund of an order that has since
+        // been paid again changes nothing, as for Apple.
+        const line = this.googleLine(word.subscription, row.product_id);
+        const latest = line?.latestSuccessfulOrderId || word.subscription?.latestOrderId || null;
+        if (latest && voided.orderId && latest !== voided.orderId) return { outcome: 'unchanged', purchaseId };
+      }
+      await this.markRevoked(client, row, refundedAt, 'refunded');
+      const applied = await this.applyStoreEvent(client, { ...room, event: 'refunded', at: refundedAt });
+      return { outcome: applied.effect, purchaseId };
+    }
+
+    // Everything else is about a subscription.
+    if (row.kind !== 'subscription') return { outcome: 'unchanged', purchaseId };
+    const record = word.subscription || {};
+    const line = this.googleLine(record, row.product_id);
+    if (!line) return notConfirmed('no line for the product');
+    if ((record.testPurchase ? 'sandbox' : 'live') !== row.environment) return notConfirmed('another environment');
+    const state = record.subscriptionState;
+
+    if (event === 'renewed') {
+      // Only a subscription Google says is running has a new paid period. In Google's grace or
+      // account hold, expiryTime is Google's grace, never ours to read.
+      if (!['SUBSCRIPTION_STATE_ACTIVE', 'SUBSCRIPTION_STATE_CANCELED'].includes(state)) return notConfirmed(`state ${String(state).slice(0, 64)}`);
+      const endsAt = dateFrom(line.expiryTime);
+      if (!endsAt) return notConfirmed('no expiry');
+      // Refunded or revoked: only a period after the one refunded counts.
+      if (row.revoked_at && row.expires_at && endsAt <= new Date(row.expires_at)) return { outcome: 'unchanged', purchaseId };
+      const applied = await this.applyStoreEvent(client, { ...room, event: 'renewed', endsAt, at: eventAt, people: storeProduct(row.product_id)?.people || null });
+      if (applied.effect === 'renewed') {
+        await client.query(
+          'UPDATE billing_store_purchases SET expires_at=$1,updated_at=$2 WHERE id=$3 AND (expires_at IS NULL OR expires_at<$1)',
+          [endsAt, this.now(), row.id],
+        );
+      }
+      return { outcome: applied.effect, purchaseId };
+    }
+
+    if (event === 'revoked') {
+      if (state !== 'SUBSCRIPTION_STATE_EXPIRED') return notConfirmed(`state ${String(state).slice(0, 64)}`);
+      const ended = dateFrom(line.expiryTime);
+      const at = ended && ended < eventAt ? ended : eventAt;
+      await this.markRevoked(client, row, at, 'revoked');
+      const applied = await this.applyStoreEvent(client, { ...room, event: 'revoked', at });
+      return { outcome: applied.effect, purchaseId };
+    }
+
+    // A lapse: nothing to write. The room ends on the date already paid for.
+    const applied = await this.applyStoreEvent(client, { ...room, event: 'lapsed' });
+    return { outcome: applied.effect, purchaseId };
+  }
+
+  googleLine(record, productId) {
+    const lines = Array.isArray(record?.lineItems) ? record.lineItems : [];
+    return lines.find((line) => line.productId === productId) || null;
   }
 
   // --- Google acknowledgement ----------------------------------------------------------------
@@ -963,5 +1226,7 @@ export function createStorePurchaseService({ pool, config, platform, fetch = glo
   const google = config.googlePlayServiceAccount
     ? new GooglePlayDeveloperApi({ serviceAccount: config.googlePlayServiceAccount, packageName: config.GOOGLE_PLAY_PACKAGE_NAME, fetch })
     : null;
-  return new StorePurchaseService({ pool, config, apple, google, log, history: (client, event) => platform.appendEvent(client, event) });
+  const { audience, serviceAccountEmail } = config.googlePlayNotifications || {};
+  const googlePush = audience && serviceAccountEmail ? new GooglePushVerifier({ audience, serviceAccountEmail, fetch }) : null;
+  return new StorePurchaseService({ pool, config, apple, google, googlePush, log, history: (client, event) => platform.appendEvent(client, event) });
 }

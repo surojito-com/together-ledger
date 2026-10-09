@@ -83,6 +83,12 @@ const ConfigSchema = z.object({
   APPLE_BUNDLE_ID: z.string().default('com.togetherledger.ledger'),
   GOOGLE_PLAY_PACKAGE_NAME: z.string().default('com.togetherledger.ledger'),
   GOOGLE_PLAY_SERVICE_ACCOUNT: z.string().default(''),
+  // Google Play's Real-time developer notifications (#273), pushed by Pub/Sub to
+  // /api/v1/billing/store-notifications/google with an OIDC token. The token must be for this
+  // audience (the push subscription's Audience setting) and name this service account (the one
+  // the push subscription authenticates as). Either one empty, and the endpoint accepts nothing.
+  GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE: z.string().default(''),
+  GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL: z.string().default(''),
 });
 
 function assertStripeConfiguration(config) {
@@ -126,6 +132,13 @@ export function loadConfig(overrides = {}) {
     throw new Error('STORE_SANDBOX_ACCOUNT_IDS must be account ids (UUIDs), comma-separated.');
   }
   const storePurchasesConfigured = appleRootCertificates.length > 0 || Boolean(googlePlayServiceAccount);
+  const googlePlayNotifications = {
+    audience: config.GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE.trim(),
+    serviceAccountEmail: config.GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase(),
+  };
+  if (googlePlayNotifications.serviceAccountEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(googlePlayNotifications.serviceAccountEmail)) {
+    throw new Error('GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL must be the email of the service account the push subscription authenticates as.');
+  }
   if (config.STRIPE_ENVIRONMENT === 'live' && storeEnvironment === 'sandbox') {
     throw new Error('A service that takes live web payments must honour live store purchases only (STORE_ENVIRONMENT=live).');
   }
@@ -169,6 +182,7 @@ export function loadConfig(overrides = {}) {
     billingEnvironments: [...new Set([config.STRIPE_ENVIRONMENT, storeEnvironment])],
     appleRootCertificates,
     googlePlayServiceAccount,
+    googlePlayNotifications,
     storePurchasesConfigured,
     storeSandboxAccountIds,
     stripeTaxEnabled: config.STRIPE_TAX_ENABLED === 'true',

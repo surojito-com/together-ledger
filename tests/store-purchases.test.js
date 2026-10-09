@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { newDb } from 'pg-mem';
 import { buildApp } from '../server/app.js';
@@ -8,10 +9,11 @@ import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
 import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
-import { GooglePlayError } from '../server/store-google.js';
+import { GooglePlayError, GooglePushVerifier } from '../server/store-google.js';
 import { passEnd, storeProduct } from '../server/store-products.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
 import { appleChain, signNotification, signTransaction, transactionPayload } from './support/apple-signing.js';
+import { PUSH_AUDIENCE, PUSH_EMAIL, googleKeys, pushBody, pushToken } from './support/google-push.js';
 
 // TL-P-05 (#272): a store purchase becomes capacity only once our server has verified it. Apple's
 // signed transactions are checked against a test chain made here (tests/support/apple-signing.js),
@@ -41,6 +43,9 @@ class RecordedGooglePlay {
     this.purchases = new Map();
     this.calls = [];
     this.failNext = [];
+    // What purchases.voidedpurchases.list answers, and whether Google can be reached at all.
+    this.voided = [];
+    this.unreachable = false;
   }
 
   record(token, response) {
@@ -48,6 +53,7 @@ class RecordedGooglePlay {
   }
 
   lookUp(token) {
+    if (this.unreachable) throw new GooglePlayError('unavailable', 503);
     if (!this.purchases.has(token)) throw new GooglePlayError('not-found', 404);
     return structuredClone(this.purchases.get(token));
   }
@@ -76,6 +82,12 @@ class RecordedGooglePlay {
     this.purchases.get(token).acknowledgementState = 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED';
   }
 
+  async voidedPurchases({ since }) {
+    this.calls.push(['voided', since]);
+    if (this.unreachable) throw new GooglePlayError('unavailable', 503);
+    return structuredClone(this.voided);
+  }
+
   acknowledgements() {
     return this.calls.filter(([call]) => call === 'consume' || call === 'acknowledge');
   }
@@ -97,12 +109,20 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
     }
     // pg-mem cannot parse NOT VALID (030); tests/postgres-integration runs 030 as written.
     await pool.query((await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8')).replace(') NOT VALID;', ');'));
+    // Postgres lets a NULL through a CHECK (`environment IN (…)` is unknown, not false), and a Google
+    // notification about no purchase we hold has no environment. pg-mem refuses it, so here the same
+    // check is restated in a form pg-mem reads the same way. tests/postgres-integration runs 034 as written.
+    if (name.startsWith('034_')) {
+      await pool.query('ALTER TABLE billing_store_notifications DROP CONSTRAINT IF EXISTS billing_store_notifications_constraint_2');
+      await pool.query("ALTER TABLE billing_store_notifications ADD CONSTRAINT billing_store_notifications_environment CHECK (environment IS NULL OR environment IN ('sandbox','live'))");
+    }
   }
 
   const chain = appleChain();
   const settings = {
     NODE_ENV: 'test', PUBLIC_ORIGIN: origin, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
     JOURNEY_CAPACITY_MODE: 'billing', STORE_ENVIRONMENT: environment, APPLE_ROOT_CERTIFICATES: chain.rootBase64,
+    GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE: PUSH_AUDIENCE, GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL: PUSH_EMAIL,
   };
   const config = loadConfig(settings);
   // Account ids exist only once people register, so a test sets the ones that depend on them
@@ -112,9 +132,11 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
   const mailer = new MemoryMailer();
   const platform = new PlatformService({ pool, config, mailer, now: () => clock.now });
   const google = new RecordedGooglePlay();
+  const keys = googleKeys();
   const logged = [];
   const store = new StorePurchaseService({
     pool, config, now: () => clock.now, google, history: (client, event) => platform.appendEvent(client, event),
+    googlePush: new GooglePushVerifier({ ...config.googlePlayNotifications, fetch: keys.fetch, now: () => clock.now.getTime() }),
     apple: new AppleTransactionVerifier({ rootCertificates: config.appleRootCertificates }),
     log: (level, message, fields) => logged.push({ level, message, ...fields }),
   });
@@ -164,7 +186,15 @@ async function harness(t, { environment = 'sandbox', now = new Date(PURCHASED + 
   const notify = (signedPayload) => app.inject({ method: 'POST', url: '/api/v1/billing/store-notifications/apple', payload: { signedPayload } });
   const notification = (fields, options) => signNotification(chain, fields, options);
   const notes = async () => (await pool.query('SELECT * FROM billing_store_notifications ORDER BY received_at,notification_id')).rows;
-  return { pool, platform, store, google, logged, clock, configure, person, journey, identity, join, moment, capacity, entitlements, apple, googleRoute, signed, chain, notify, notification, notes };
+  // What Pub/Sub pushes for Google Play (#273): a DeveloperNotification inside a message, with the
+  // OIDC token Pub/Sub signs for our push subscription.
+  const pushedBy = (claims = {}) => `Bearer ${pushToken(keys.current(), claims, { now: clock.now.getTime() })}`;
+  const play = (fields, { messageId, authorization = pushedBy(), packageName = 'com.togetherledger.ledger' } = {}) => app.inject({
+    method: 'POST', url: '/api/v1/billing/store-notifications/google',
+    headers: authorization === null ? {} : { authorization },
+    payload: pushBody({ version: '1.0', packageName, eventTimeMillis: String(clock.now.getTime()), ...fields }, { messageId }),
+  });
+  return { pool, platform, store, google, keys, logged, clock, configure, person, journey, identity, join, moment, capacity, entitlements, apple, googleRoute, signed, chain, notify, notification, notes, play, pushedBy };
 }
 
 async function googleRecord(name, ids, overrides = {}) {
@@ -1457,4 +1487,383 @@ test('Apple’s CONSUMPTION_REQUEST is logged and never answered: nothing about 
   assert.equal(note.outcome, 'not_acted_on');
   assert.equal(note.notification_type, 'CONSUMPTION_REQUEST');
   assert.deepEqual(await h.entitlements(ours.id), before);
+});
+
+// --- What Google says afterwards (#273) ----------------------------------------------------------
+
+const RENEWED = 2;
+const RECOVERED = 1;
+const CANCELED = 3;
+const PURCHASED_TYPE = 4;
+const ON_HOLD = 5;
+const IN_GRACE = 6;
+const REVOKED = 12;
+const EXPIRED = 13;
+const subscriptionNote = (notificationType, purchaseToken) => ({ subscriptionNotification: { version: '1.0', notificationType, purchaseToken } });
+const voidedNote = (purchaseToken, { orderId = 'GPA.3300-0000-0000-00002', productType = 2, refundType = 1 } = {}) => ({ voidedPurchaseNotification: { purchaseToken, orderId, productType, refundType } });
+const fingerprintOf = (token) => createHash('sha256').update(token).digest('hex').slice(0, 16);
+
+// A journey with a Google subscription the phone sent, and two more people in it.
+async function googleSubscriber(h, name, token = `tok-${name}`) {
+  const sam = await h.person(`sam-${name}`);
+  const ours = await h.journey(sam);
+  await h.join(ours.id, await h.person(`alex-${name}`));
+  await h.join(ours.id, await h.person(`kit-${name}`));
+  const ids = await h.identity(sam, ours.id);
+  h.google.record(token, await googleRecord('subscription-active', ids));
+  const granted = await h.googleRoute(sam, { productId: 'room_51_monthly', purchaseToken: token });
+  assert.equal(granted.statusCode, 201, granted.body);
+  return { sam, ours, ids, token };
+}
+
+const googleAnswer = async (ids, fields) => {
+  const record = await googleRecord('subscription-active', ids);
+  const { line = {}, ...rest } = fields;
+  return { ...record, acknowledgementState: 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED', lineItems: [{ ...record.lineItems[0], ...line }], ...rest };
+};
+
+test('Google’s test notification is answered and changes nothing', async (t) => {
+  const h = await harness(t);
+  const answer = await h.play({ testNotification: { version: '1.0' } }, { messageId: '2000000000000001' });
+  assert.equal(answer.statusCode, 200, answer.body);
+  assert.deepEqual(answer.json(), { data: { received: true } });
+  const [note] = await h.notes();
+  assert.equal(note.store, 'google');
+  assert.equal(note.notification_id, '2000000000000001');
+  assert.equal(note.notification_type, 'TEST');
+  assert.equal(note.outcome, 'test');
+  assert.equal(note.purchase_id, null);
+  assert.deepEqual(h.google.calls, [], 'nothing is asked of Google');
+  assert.equal((await h.pool.query('SELECT count(*)::int AS count FROM billing_entitlements')).rows[0].count, 0);
+});
+
+test('a push without our subscription’s token is refused, and nothing is read or written', async (t) => {
+  const h = await harness(t);
+  const { ours, token } = await googleSubscriber(h, 'unauthenticated');
+  h.google.calls.length = 0;
+  const before = await h.entitlements(ours.id);
+  const other = h.keys.rotate({ publish: false });
+  const attempts = {
+    'no token': null,
+    'not a token': 'Bearer nonsense',
+    'a token Google never signed': `Bearer ${pushToken({ ...other, kid: h.keys.current().kid }, {}, { now: h.clock.now.getTime() })}`,
+    'another audience': h.pushedBy({ aud: 'https://example.test/push' }),
+    'another service account': h.pushedBy({ email: 'someone@else.iam.gserviceaccount.com' }),
+    'an expired token': `Bearer ${pushToken(h.keys.current(), {}, { now: h.clock.now.getTime() - 3 * 60 * 60 * 1000 })}`,
+  };
+  let n = 0;
+  for (const [what, authorization] of Object.entries(attempts)) {
+    n += 1;
+    const answer = await h.play(subscriptionNote(REVOKED, token), { messageId: `300000000000000${n}`, authorization });
+    assert.equal(answer.statusCode, 401, what);
+    assert.equal(answer.json().error.code, 'store_notification_unauthenticated', what);
+  }
+  assert.deepEqual(await h.notes(), []);
+  assert.deepEqual(h.google.calls, []);
+  assert.deepEqual(await h.entitlements(ours.id), before);
+  assert.ok(h.logged.some((line) => line.message === 'store notification refused' && line.reason === 'wrong audience'));
+  assert.equal(JSON.stringify(h.logged).includes(h.pushedBy().slice(7, 40)), false, 'no token is ever logged');
+
+  // A service with no push settings refuses everything, even a genuine push, and Pub/Sub keeps it.
+  const unset = new StorePurchaseService({ pool: h.pool, config: h.store.config, google: h.google });
+  await assert.rejects(unset.handleGoogleNotification({ authorization: h.pushedBy(), body: pushBody({ packageName: 'com.togetherledger.ledger', testNotification: {} }) }),
+    (error) => error.code === 'store_unavailable' && error.status === 503);
+  assert.deepEqual(await h.notes(), []);
+});
+
+test('another app’s notification, or one that can’t be read, is refused, and nothing is read or written', async (t) => {
+  const h = await harness(t);
+  const { ours, token } = await googleSubscriber(h, 'other-app');
+  h.google.calls.length = 0;
+  const before = await h.entitlements(ours.id);
+  const otherApp = await h.play(subscriptionNote(REVOKED, token), { messageId: '4000000000000001', packageName: 'com.example.other' });
+  assert.equal(otherApp.statusCode, 400, otherApp.body);
+  assert.equal(otherApp.json().error.code, 'store_notification_wrong_app');
+  const unreadable = await h.store.handleGoogleNotification({ authorization: h.pushedBy(), body: { message: { data: 'not base64 json', messageId: '4000000000000002' } } }).catch((error) => error);
+  assert.equal(unreadable.code, 'store_notification_unverified');
+  assert.equal(unreadable.status, 400);
+  assert.deepEqual(await h.notes(), []);
+  assert.deepEqual(h.google.calls, []);
+  assert.deepEqual(await h.entitlements(ours.id), before);
+});
+
+test('a notification about a purchase we never granted is logged and changes nothing, without asking Google', async (t) => {
+  const h = await harness(t);
+  const answer = await h.play(subscriptionNote(RENEWED, 'tok-never-sent'), { messageId: '5000000000000001' });
+  assert.equal(answer.statusCode, 200, answer.body);
+  const [note] = await h.notes();
+  assert.equal(note.outcome, 'unknown_purchase');
+  assert.equal(note.notification_type, 'SUBSCRIPTION_RENEWED');
+  assert.equal(note.purchase_id, null);
+  assert.equal(note.transaction_ref, fingerprintOf('tok-never-sent'), 'a hash of the purchase token, never the token');
+  assert.deepEqual(h.google.calls, []);
+});
+
+test('Google’s renewal extends the subscription without the phone, and is applied once however often it arrives', async (t) => {
+  const h = await harness(t);
+  const { sam, ours, ids, token } = await googleSubscriber(h, 'renewal');
+  const renewedUntil = '2026-12-08T12:00:00.000Z';
+  h.clock.now = new Date('2026-11-08T12:30:00Z');
+  h.google.record(token, await googleAnswer(ids, { line: { expiryTime: renewedUntil, latestSuccessfulOrderId: 'GPA.3300-0000-0000-00001..0' } }));
+  h.google.calls.length = 0;
+
+  const answer = await h.play(subscriptionNote(RENEWED, token), { messageId: '6000000000000001' });
+  assert.equal(answer.statusCode, 200, answer.body);
+  const [room] = await h.entitlements(ours.id);
+  assert.equal(new Date(room.expires_at).toISOString(), renewedUntil, 'the room runs to Google’s new end');
+  assert.deepEqual(h.google.calls, [['getSubscription', token]], 'read again from Google, never taken from the message');
+  const [note] = await h.notes();
+  assert.equal(note.outcome, 'renewed');
+  const purchase = (await h.pool.query('SELECT id,expires_at FROM billing_store_purchases WHERE transaction_id=$1', [token])).rows[0];
+  assert.equal(note.purchase_id, purchase.id);
+  assert.equal(new Date(purchase.expires_at).toISOString(), renewedUntil);
+
+  // Pub/Sub delivers it again: nothing changes, and Google isn't asked twice.
+  const again = await h.play(subscriptionNote(RENEWED, token), { messageId: '6000000000000001' });
+  assert.equal(again.statusCode, 200, again.body);
+  assert.equal((await h.notes()).length, 1);
+  assert.equal(h.google.calls.length, 1);
+  assert.ok(h.logged.some((line) => line.message === 'store notification received again' && line.store === 'google'));
+
+  // The phone never sends it, and nobody rests when the first month would have ended.
+  h.clock.now = new Date('2026-11-20T12:00:00Z');
+  const capacity = await h.capacity(ours.id);
+  assert.equal(capacity.grace, null);
+  assert.deepEqual(capacity.restingMemberIds, []);
+  // When it does, it grants nothing more.
+  const sent = await h.googleRoute({ ...sam, token: (await h.platform.issueTokens(sam.id)).token }, { productId: 'room_51_monthly', purchaseToken: token });
+  assert.equal(sent.statusCode, 200, sent.body);
+  assert.equal(sent.json().data.granted, false);
+  assert.equal(sent.json().data.room.until, renewedUntil);
+
+  // Paid again after account hold or a pause is a renewal too.
+  h.google.record(token, await googleAnswer(ids, { line: { expiryTime: '2027-01-08T12:00:00.000Z' } }));
+  await h.play(subscriptionNote(RECOVERED, token), { messageId: '6000000000000002' });
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2027-01-08T12:00:00.000Z');
+  assert.equal((await h.notes()).find((row) => row.notification_id === '6000000000000002').outcome, 'renewed');
+});
+
+test('cancelling, expiring, account hold and Google’s grace period leave the room to end on its own date: our grace is the only grace', async (t) => {
+  const h = await harness(t);
+  const { sam, ours, ids, token } = await googleSubscriber(h, 'lapses');
+  const end = Date.parse('2026-11-08T12:00:00Z');
+  const before = await h.entitlements(ours.id);
+  // In Google's grace period, the expiry Google gives is the end of its grace, sixteen days on.
+  const googleGraceEnd = '2026-11-24T12:00:00.000Z';
+  h.clock.now = new Date(end + 60 * 60 * 1000);
+  const kinds = [
+    [CANCELED, 'SUBSCRIPTION_STATE_CANCELED', '2026-11-08T12:00:00.000Z'],
+    [IN_GRACE, 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD', googleGraceEnd],
+    [ON_HOLD, 'SUBSCRIPTION_STATE_ON_HOLD', '2026-11-08T12:00:00.000Z'],
+    [EXPIRED, 'SUBSCRIPTION_STATE_EXPIRED', '2026-11-08T12:00:00.000Z'],
+  ];
+  let n = 0;
+  for (const [type, subscriptionState, expiryTime] of kinds) {
+    n += 1;
+    h.google.record(token, await googleAnswer(ids, { subscriptionState, line: { expiryTime } }));
+    const answer = await h.play(subscriptionNote(type, token), { messageId: `700000000000000${n}` });
+    assert.equal(answer.statusCode, 200, answer.body);
+    assert.deepEqual(await h.entitlements(ours.id), before, `type ${type} writes nothing`);
+  }
+  assert.deepEqual((await h.notes()).map((note) => [note.notification_type, note.outcome]), [
+    ['SUBSCRIPTION_CANCELED', 'lapsed'], ['SUBSCRIPTION_IN_GRACE_PERIOD', 'lapsed'], ['SUBSCRIPTION_ON_HOLD', 'lapsed'], ['SUBSCRIPTION_EXPIRED', 'lapsed'],
+  ]);
+
+  // A renewal notification while Google says the subscription is in its grace is not a renewal,
+  // and neither is the phone sending the purchase then.
+  h.google.record(token, await googleAnswer(ids, { subscriptionState: 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD', line: { expiryTime: googleGraceEnd } }));
+  await h.play(subscriptionNote(RENEWED, token), { messageId: '7000000000000009' });
+  assert.equal((await h.notes()).find((row) => row.notification_id === '7000000000000009').outcome, 'unchanged');
+  const sent = await h.googleRoute({ ...sam, token: (await h.platform.issueTokens(sam.id)).token }, { productId: 'room_51_monthly', purchaseToken: token });
+  assert.equal(sent.statusCode, 200, sent.body);
+  assert.equal(sent.json().data.room.until, new Date(end).toISOString(), 'Google’s grace never extends the room');
+  assert.deepEqual(await h.entitlements(ours.id), before);
+
+  // Our seven days run from the paid-for end; after them the people beyond two rest. Nobody is removed.
+  h.clock.now = new Date(end + 2 * DAY);
+  assert.equal((await h.capacity(ours.id)).grace?.endsAt, new Date(end + 7 * DAY).toISOString());
+  h.clock.now = new Date(end + 8 * DAY);
+  const after = await h.capacity(ours.id);
+  assert.equal(after.restingMemberIds.length, 1);
+  assert.equal(after.peopleHere, 3);
+});
+
+test('a revoked Google subscription ends when Google ended it, once Google confirms it', async (t) => {
+  const h = await harness(t);
+  const { ours, ids, token } = await googleSubscriber(h, 'revoked');
+  const revokedAt = '2026-10-10T12:00:00.000Z';
+  h.clock.now = new Date('2026-10-10T12:05:00Z');
+
+  // Google still says it is running: the message alone changes nothing.
+  h.google.record(token, await googleAnswer(ids, {}));
+  await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000001' });
+  assert.equal((await h.notes())[0].outcome, 'unchanged');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2026-11-08T12:00:00.000Z');
+  assert.ok(h.logged.some((line) => line.message === 'google did not confirm a notification'));
+
+  h.google.record(token, await googleAnswer(ids, { subscriptionState: 'SUBSCRIPTION_STATE_EXPIRED', line: { expiryTime: revokedAt } }));
+  const answer = await h.play(subscriptionNote(REVOKED, token), { messageId: '8000000000000002' });
+  assert.equal(answer.statusCode, 200, answer.body);
+  const [room] = await h.entitlements(ours.id);
+  assert.equal(new Date(room.expires_at).toISOString(), revokedAt);
+  assert.equal(room.state, 'active', 'and goes through the same grace as any lapse');
+  assert.equal((await h.notes())[1].outcome, 'revoked');
+  const purchase = (await h.pool.query('SELECT revoked_at,revocation FROM billing_store_purchases WHERE transaction_id=$1', [token])).rows[0];
+  assert.equal(purchase.revocation, 'revoked');
+  assert.equal(new Date(purchase.revoked_at).toISOString(), revokedAt);
+});
+
+test('a voided Google pass ends there: the usual grace, then the people beyond two rest, and nobody is removed', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-voided');
+  const ours = await h.journey(sam);
+  await h.join(ours.id, await h.person('alex-voided'));
+  await h.join(ours.id, await h.person('kit-voided'));
+  const ids = await h.identity(sam, ours.id);
+  h.google.record('tok-voided-pass', await googleRecord('product-pass', ids));
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-voided-pass' })).statusCode, 201);
+  const before = await h.entitlements(ours.id);
+  const voidedAt = Date.parse('2026-10-10T12:00:00Z');
+  h.clock.now = new Date(voidedAt + 10 * 60 * 1000);
+  h.google.calls.length = 0;
+
+  // Google's list doesn't have it (yet): nothing changes.
+  await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000001' });
+  assert.equal((await h.notes())[0].outcome, 'unchanged');
+  assert.deepEqual(await h.entitlements(ours.id), before);
+
+  h.google.voided = [{ kind: 'androidpublisher#voidedPurchase', purchaseToken: 'tok-voided-pass', orderId: 'GPA.3300-0000-0000-00002', voidedTimeMillis: String(voidedAt), voidedSource: 0, voidedReason: 1 }];
+  const answer = await h.play(voidedNote('tok-voided-pass'), { messageId: '9000000000000002' });
+  assert.equal(answer.statusCode, 200, answer.body);
+  const [room] = await h.entitlements(ours.id);
+  assert.equal(new Date(room.expires_at).toISOString(), new Date(voidedAt).toISOString(), 'the room ends when Google voided it');
+  const note = (await h.notes())[1];
+  assert.equal(note.outcome, 'refunded');
+  assert.equal(note.notification_type, 'VOIDED_PURCHASE');
+  assert.equal(note.subtype, 'FULL_REFUND');
+  assert.ok(h.google.calls.every(([call, since]) => call === 'voided' && since === voidedAt + 10 * 60 * 1000 - DAY), 'listed from a day before Google said it happened');
+  assert.equal(JSON.stringify(note).includes(ids.obfuscatedProfileId), false, 'the log keeps no value of ours');
+
+  h.clock.now = new Date(voidedAt + 2 * DAY);
+  assert.equal((await h.capacity(ours.id)).grace?.endsAt, new Date(voidedAt + 7 * DAY).toISOString());
+  h.clock.now = new Date(voidedAt + 8 * DAY);
+  const after = await h.capacity(ours.id);
+  assert.equal(after.restingMemberIds.length, 1);
+  assert.equal(after.peopleHere, 3);
+
+  // The phone sending the purchase again grants nothing.
+  const sent = await h.googleRoute({ ...sam, token: (await h.platform.issueTokens(sam.id)).token }, { productId: 'room_101_week_pass', purchaseToken: 'tok-voided-pass' });
+  assert.equal(sent.json().data.granted, false);
+  assert.equal((await h.capacity(ours.id)).restingMemberIds.length, 1);
+});
+
+test('a voided Google renewal ends the subscription there; a void of a period since paid again changes nothing; a later renewal counts', async (t) => {
+  const h = await harness(t);
+  const { ours, ids, token } = await googleSubscriber(h, 'voided-sub');
+  h.clock.now = new Date('2026-11-08T12:30:00Z');
+  const renewal = await googleAnswer(ids, { line: { expiryTime: '2026-12-08T12:00:00.000Z', latestSuccessfulOrderId: 'GPA.3300-0000-0000-00001..0' } });
+  h.google.record(token, renewal);
+  await h.play(subscriptionNote(RENEWED, token), { messageId: '9100000000000001' });
+
+  // The first month is refunded, after the second was paid for: nothing changes.
+  const refundedAt = Date.parse('2026-11-10T12:00:00Z');
+  h.clock.now = new Date(refundedAt + 60 * 1000);
+  h.google.voided = [{ purchaseToken: token, orderId: 'GPA.3300-0000-0000-00001', voidedTimeMillis: String(refundedAt) }];
+  await h.play(voidedNote(token, { orderId: 'GPA.3300-0000-0000-00001', productType: 1 }), { messageId: '9100000000000002' });
+  assert.equal((await h.notes()).find((row) => row.notification_id === '9100000000000002').outcome, 'unchanged');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2026-12-08T12:00:00.000Z');
+
+  // The month being paid for is refunded: the room ends at the refund.
+  h.google.voided.push({ purchaseToken: token, orderId: 'GPA.3300-0000-0000-00001..0', voidedTimeMillis: String(refundedAt) });
+  await h.play(voidedNote(token, { orderId: 'GPA.3300-0000-0000-00001..0', productType: 1 }), { messageId: '9100000000000003' });
+  assert.equal((await h.notes()).find((row) => row.notification_id === '9100000000000003').outcome, 'refunded');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), new Date(refundedAt).toISOString());
+
+  // A refund without revocation leaves Google calling the period active. A renewal notice that only
+  // names that refunded period brings nothing back...
+  await h.play(subscriptionNote(RENEWED, token), { messageId: '9100000000000004' });
+  assert.equal((await h.notes()).find((row) => row.notification_id === '9100000000000004').outcome, 'unchanged');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), new Date(refundedAt).toISOString());
+  // ...and a period paid after it does.
+  h.clock.now = new Date('2026-12-08T12:30:00Z');
+  h.google.record(token, await googleAnswer(ids, { line: { expiryTime: '2027-01-08T12:00:00.000Z', latestSuccessfulOrderId: 'GPA.3300-0000-0000-00001..1' } }));
+  await h.play(subscriptionNote(RENEWED, token), { messageId: '9100000000000005' });
+  assert.equal((await h.notes()).find((row) => row.notification_id === '9100000000000005').outcome, 'renewed');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2027-01-08T12:00:00.000Z');
+});
+
+test('a voided Google extra is only noted, a partial refund and other kinds are left alone, and none asks Google', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-google-extra');
+  const ours = await h.journey(sam);
+  const held = await h.moment(sam, ours.id);
+  const ids = await h.identity(sam, ours.id);
+  h.google.record('tok-photo', await googleRecord('product-pass', ids, { productId: 'extra_photo', orderId: 'GPA.3300-0000-0000-00011' }));
+  h.google.record('tok-place', await googleRecord('product-pass', ids, { productId: 'extra_place', orderId: 'GPA.3300-0000-0000-00012' }));
+  h.google.record('tok-pass', await googleRecord('product-pass', ids, { quantity: 3 }));
+  assert.equal((await h.googleRoute(sam, { productId: 'extra_photo', purchaseToken: 'tok-photo', momentId: held.id })).statusCode, 201);
+  assert.equal((await h.googleRoute(sam, { productId: 'extra_place', purchaseToken: 'tok-place', momentId: held.id })).statusCode, 201);
+  assert.equal((await h.googleRoute(sam, { productId: 'room_101_week_pass', purchaseToken: 'tok-pass' })).statusCode, 201);
+  const before = await h.entitlements(ours.id);
+  h.google.calls.length = 0;
+
+  await h.play(voidedNote('tok-photo'), { messageId: '9200000000000001' });
+  await h.play(voidedNote('tok-place'), { messageId: '9200000000000002' });
+  await h.play(voidedNote('tok-pass', { refundType: 2 }), { messageId: '9200000000000003' });
+  await h.play(subscriptionNote(PURCHASED_TYPE, 'tok-pass'), { messageId: '9200000000000004' });
+  await h.play({ oneTimeProductNotification: { version: '1.0', notificationType: 1, purchaseToken: 'tok-pass', sku: 'room_101_week_pass' } }, { messageId: '9200000000000005' });
+  await h.play(subscriptionNote(99, 'tok-pass'), { messageId: '9200000000000006' });
+  assert.deepEqual((await h.notes()).map((note) => [note.notification_type, note.subtype, note.outcome]), [
+    ['VOIDED_PURCHASE', 'FULL_REFUND', 'extra_noted'],
+    ['VOIDED_PURCHASE', 'FULL_REFUND', 'extra_noted'],
+    ['VOIDED_PURCHASE', 'QUANTITY_BASED_PARTIAL_REFUND', 'not_acted_on'],
+    ['SUBSCRIPTION_PURCHASED', null, 'not_acted_on'],
+    ['ONE_TIME_PRODUCT_PURCHASED', null, 'not_acted_on'],
+    ['SUBSCRIPTION_99', null, 'not_acted_on'],
+  ]);
+  assert.deepEqual(h.google.calls, []);
+  assert.deepEqual(await h.entitlements(ours.id), before);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE state='active'")).rows[0].count, 1);
+  assert.equal((await h.pool.query("SELECT count(*)::int AS count FROM moment_location_slots WHERE state='active'")).rows[0].count, 1);
+  assert.equal((await h.pool.query('SELECT count(*)::int AS count FROM billing_store_purchases WHERE revoked_at IS NOT NULL')).rows[0].count, 0);
+});
+
+test('when Google can’t be reached, Pub/Sub is asked to send again, and the next delivery is applied', async (t) => {
+  const h = await harness(t);
+  const { ours, ids, token } = await googleSubscriber(h, 'unreachable');
+  h.google.record(token, await googleAnswer(ids, { line: { expiryTime: '2026-12-08T12:00:00.000Z' } }));
+  h.google.unreachable = true;
+  const failed = await h.play(subscriptionNote(RENEWED, token), { messageId: '9300000000000001' });
+  assert.equal(failed.statusCode, 503, failed.body);
+  assert.equal(failed.json().error.code, 'store_unavailable');
+  assert.deepEqual(await h.notes(), [], 'nothing is logged, so the next delivery is not taken for a replay');
+
+  h.google.unreachable = false;
+  const delivered = await h.play(subscriptionNote(RENEWED, token), { messageId: '9300000000000001' });
+  assert.equal(delivered.statusCode, 200, delivered.body);
+  assert.equal((await h.notes())[0].outcome, 'renewed');
+  assert.equal(new Date((await h.entitlements(ours.id))[0].expires_at).toISOString(), '2026-12-08T12:00:00.000Z');
+
+  // A service whose Play Developer API isn't configured can't read anything again, so it asks for later too.
+  const noApi = new StorePurchaseService({ pool: h.pool, config: h.store.config, googlePush: h.store.googlePush });
+  await assert.rejects(noApi.handleGoogleNotification({ authorization: h.pushedBy(), body: pushBody({ packageName: 'com.togetherledger.ledger', ...subscriptionNote(EXPIRED, token) }, { messageId: '9300000000000002' }) }),
+    (error) => error.code === 'store_unavailable');
+});
+
+test('no Google notification writes into the journey’s History', async (t) => {
+  const h = await harness(t);
+  const { ours, ids, token } = await googleSubscriber(h, 'google-no-history');
+  const history = async () => (await h.pool.query('SELECT id,action FROM journey_events WHERE journey_id=$1 ORDER BY id', [ours.id])).rows;
+  const before = await history();
+  h.clock.now = new Date('2026-11-08T12:30:00Z');
+  h.google.record(token, await googleAnswer(ids, { line: { expiryTime: '2026-12-08T12:00:00.000Z' } }));
+  await h.play(subscriptionNote(RENEWED, token), { messageId: '9400000000000001' });
+  await h.play(subscriptionNote(CANCELED, token), { messageId: '9400000000000002' });
+  h.google.voided = [{ purchaseToken: token, orderId: 'GPA.3300-0000-0000-00001', voidedTimeMillis: String(h.clock.now.getTime()) }];
+  await h.play(voidedNote(token, { orderId: 'GPA.3300-0000-0000-00001', productType: 1 }), { messageId: '9400000000000003' });
+  h.google.record(token, await googleAnswer(ids, { subscriptionState: 'SUBSCRIPTION_STATE_EXPIRED', line: { expiryTime: h.clock.now.toISOString() } }));
+  await h.play(subscriptionNote(REVOKED, token), { messageId: '9400000000000004' });
+  await h.play({ testNotification: { version: '1.0' } }, { messageId: '9400000000000005' });
+  assert.deepEqual((await h.notes()).map((note) => note.outcome), ['renewed', 'lapsed', 'refunded', 'revoked', 'test']);
+  assert.deepEqual(await history(), before, 'the journey’s record is exactly as it was');
 });

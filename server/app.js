@@ -289,6 +289,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     await storeService().handleAppleNotification(request.body || {});
     return reply.code(200).send({ data: { received: true } });
   });
+  // What Google Play says about a purchase afterwards (#273): Real-time developer notifications,
+  // pushed by a Pub/Sub push subscription. The OIDC token Pub/Sub signs is the credential: Google's
+  // signature, our configured audience and the push service account's email, all checked before
+  // the message is read. Nothing in the message is believed on its own; each purchase is read again
+  // from the Play Developer API. Pub/Sub sends again until it hears a success, and a message
+  // received twice changes nothing the second time.
+  app.post('/api/v1/billing/store-notifications/google', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (request, reply) => {
+    await storeService().handleGoogleNotification({ authorization: request.headers.authorization, body: request.body || {} });
+    return reply.code(200).send({ data: { received: true } });
+  });
   app.post('/api/v1/billing/webhooks/stripe', { config: { rawBody: true, rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const result = await billing.handleWebhook(request.rawBody, request.headers['stripe-signature']);
     return reply.code(200).send(result);
