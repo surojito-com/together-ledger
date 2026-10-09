@@ -49,6 +49,11 @@ export class IdentityVerifier {
     return Boolean(PROVIDERS[provider] && this.clientIds[provider].length);
   }
 
+  // Whether a token issued to this client ID would be accepted.
+  accepts(provider, clientId) {
+    return Boolean(PROVIDERS[provider] && clientId && this.clientIds[provider].includes(clientId));
+  }
+
   async keyFor(provider, kid) {
     const cached = this.keys[provider];
     const fresh = cached && this.now() - cached.fetchedAt < KEYS_TTL_MS;

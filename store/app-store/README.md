@@ -44,8 +44,9 @@ It runs in `npm run check` too. It checks every limit above; emoji; the
 capacity words `CLAUDE.md` rules out (seats, licences, slots, "removed");
 emergency, SOS and panic; any email address or password; any photo-privacy
 claim (#258); other platforms' names and ranking claims in the listing; what
-the iPhone can't do yet (photos, export, check-in, notifications, offline,
-encryption, sync); keywords with a wasted space, a repeat, or a word the name
+the iPhone can't do yet (photos, export, check-in, notifications,
+encryption, sync); offline, which it does but the listing doesn't claim until
+the owner decides it should; keywords with a wasted space, a repeat, or a word the name
 already gives; that the description still says a journey of two is free, the
 agreement rule, 18 and over, how a subscription renews, and the terms and
 privacy links; and that the notes still say where to sign in, where the
@@ -210,8 +211,11 @@ date. This PR leaves it alone; these notes are the written version.
   that case. Add a line to the description at the same time, if the owner
   wants one.
 - **Export and the check-in**, which only the web has.
-- **Notifications** (#265), **offline** (#300), **encryption**, and sync
-  (#186), as on Play.
+- **Notifications** (#265), **encryption**, and sync (#186), as on Play.
+- **Offline** (#300), though no longer because the iPhone can't do it: since
+  #361 and #366 it says when it is offline and holds a new moment until the
+  connection returns. Whether the listing says so is the owner's call, not yet
+  made, so the check still refuses the word, as on Play.
 - **A price.** Prices come from the App Store for each storefront.
 - **"Emergency".** Not even as a disclaimer: Together Ledger is never
   positioned as one, and nothing here needs the word.

@@ -109,6 +109,9 @@ function publicUser(row) {
     username: row.username,
     displayName: row.display_name,
     emailVerified: Boolean(row.email_verified_at),
+    // Whether deleting the account asks for a password. One opened with Google or Apple has none
+    // (#214), and the web's Delete account asks only for the typed DELETE then (#216).
+    hasPassword: row.has_password ?? Boolean(row.password_hash),
     createdAt: dateTime(row.created_at),
   };
 }
@@ -479,7 +482,7 @@ export class PlatformService {
   async tokenHolder(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
-      `SELECT t.id,t.user_id,t.family_id,t.used_at,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
+      `SELECT t.id,t.user_id,t.family_id,t.used_at,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at,(u.password_hash IS NOT NULL) AS has_password
        FROM api_tokens t JOIN users u ON u.id=t.user_id
        WHERE t.token_hash=$1 AND t.purpose='access' AND t.revoked_at IS NULL AND t.expires_at>$2 AND u.deleted_at IS NULL`,
       [sha256(rawToken), this.now()],
@@ -631,6 +634,20 @@ export class PlatformService {
     }
     if (!identity) throw new PlatformError(401, 'invalid_token', 'Sign in again to continue.');
     return identity;
+  }
+
+  // Which ways of signing in the web can offer (#216): only what is public, and nothing about any
+  // account. Google needs the web's own client ID. Apple needs its Services ID among the audiences
+  // a token may carry, a Return URL, and the key and encryption key that let a new account's code
+  // be exchanged, since without them no Apple account can open. The web shows neither button
+  // unless both are here.
+  webSignInProviders() {
+    const { GOOGLE_WEB_CLIENT_ID: googleClientId, APPLE_SERVICES_ID: appleClientId, APPLE_WEB_REDIRECT_URI: redirectUri } = this.config;
+    const appleReady = Boolean(redirectUri && this.identity.accepts('apple', appleClientId) && this.apple.configured());
+    return {
+      google: this.identity.accepts('google', googleClientId) ? { clientId: googleClientId } : null,
+      apple: appleReady ? { clientId: appleClientId, redirectUri } : null,
+    };
   }
 
   async userForIdentity(client, identity) {
@@ -880,7 +897,7 @@ export class PlatformService {
   async session(rawToken) {
     if (!rawToken) return null;
     const found = await this.pool.query(
-      `SELECT s.*,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at
+      `SELECT s.*,u.email_normalized,u.username,u.display_name,u.email_verified_at,u.created_at,u.deleted_at,(u.password_hash IS NOT NULL) AS has_password
        FROM sessions s JOIN users u ON u.id=s.user_id
        WHERE s.token_hash=$1 AND s.expires_at>$2 AND u.deleted_at IS NULL`,
       [sha256(rawToken), this.now()],

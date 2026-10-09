@@ -14,9 +14,10 @@ A request may authenticate in one of two ways. A browser sends the `tl_session` 
 | POST | `/auth/login` | Verify a private username or email plus Argon2id password, then rotate the session. |
 | POST | `/auth/google`, `/auth/apple` | Verify a Google or Apple ID token and sign in, opening an account on the first sign-in. |
 | POST | `/auth/link` | Link a Google or Apple sign-in to the password account that already uses its email, after that password is entered once. |
+| GET | `/auth/providers` | Say which of Google and Apple the web can offer, with the public identifiers it needs. No account data and no session. |
 | POST | `/auth/refresh` | Spend a refresh token and return a rotated access and refresh pair. Bearer clients only. |
 | POST | `/auth/logout` | Revoke the current session, or the presented bearer token and everything issued with it. |
-| GET | `/session` | Return the current account, and the session CSRF token on the cookie path. |
+| GET | `/session` | Return the current account, and the session CSRF token on the cookie path. The account says `hasPassword`, so a client knows whether deleting it asks for one. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |
 | POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session and bearer token. |
 | DELETE | `/account` | Reconfirm the password (an account opened with Google or Apple has none, so the typed `DELETE` is the whole confirmation) and permanently delete/pseudonymize the account. |
@@ -49,6 +50,8 @@ An account is found by the provider's stable user id (`sub`), never by email. Th
 - An Apple Hide My Email address never matches, so it always opens a new account.
 
 An account without a password can't sign in with one, and asking to recover it sends nothing, exactly as for an address with no account.
+
+`GET /auth/providers` answers `{ "google": { "clientId" } | null, "apple": { "clientId", "redirectUri" } | null }` with `Cache-Control: no-store` (#216). Google is offered once `GOOGLE_WEB_CLIENT_ID` is set: the web's own OAuth client, accepted as an audience without being repeated in `GOOGLE_CLIENT_IDS`. The phones' Google IDs never stand in for it. Apple is offered when `APPLE_SERVICES_ID` is among `APPLE_CLIENT_IDS`, `APPLE_WEB_REDIRECT_URI` is set, and both Apple secrets are set, since without them no new Apple account can open. The web shows both buttons, or neither.
 
 `POST /auth/apple` also takes Apple's one-time `authorizationCode`, and so does `POST /auth/link` for Apple (#218). The server exchanges it at `https://appleid.apple.com/auth/token` with a client secret signed ES256 by the Sign in with Apple key, and keeps the refresh token AES-256-GCM encrypted against the identity. A code from the web (`aud` = `APPLE_SERVICES_ID`) is exchanged with `APPLE_WEB_REDIRECT_URI` as well. A new Apple account opens only once its code has exchanged: `400` with no code, `401 invalid_token` for an expired or someone else's code, `503 sign_in_unavailable` while Apple can't be reached or the two Apple secrets aren't set. Deleting the account moves the token, still encrypted, into `apple_revocations` inside the deletion's transaction and revokes it straight after; if Apple can't be reached the server retries every ten minutes, with backoff, for up to a week.
 
