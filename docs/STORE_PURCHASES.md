@@ -348,14 +348,28 @@ is the transaction signed inside it. Both must name our `bundleId`. Without the 
 | `DID_RENEW` | The subscription runs to Apple's new end. A renewal the phone never sent is recorded as a purchase, so the phone sending it later grants nothing more. A renewal naming another journey changes nothing: a move is only made when the phone sends the purchase, with its checks. |
 | `REFUND` | The room ends when Apple refunded it, or on its own end if that came first. Then the usual grace, then the people beyond two rest. A refund of an earlier period that has since been paid again changes nothing. A pass that had not started never starts. |
 | `REVOKE` | The same as a refund. Family Sharing is off for every product, so a shared copy never made room to take back. |
-| `EXPIRED`, `DID_FAIL_TO_RENEW`, `GRACE_PERIOD_EXPIRED` | Nothing to write: the room ends on the date already paid for, and the usual grace starts there, as for a failed web payment. |
+| `EXPIRED`, `DID_FAIL_TO_RENEW`, `GRACE_PERIOD_EXPIRED` | Nothing to write: the room ends on the date already paid for, and the usual grace starts there, as for a failed web payment. A `DID_FAIL_TO_RENEW` with the `GRACE_PERIOD` subtype is the same: Apple's billing grace period never extends the room (see below). |
+| `REFUND_REVERSED` | Logged as `not_acted_on`, and nothing changes. A reversed refund should bring the room back; that is not built yet (see "Not built here"). |
+| `CONSUMPTION_REQUEST` | Logged as `not_acted_on`, and never answered (see below). |
 | `TEST` | Logged, and nothing changes. |
-| Any other | Logged, and nothing changes. |
+| Any other | Logged as `not_acted_on`, and nothing changes. |
 
 **Refunded room rests the usual way** (owner, Oct 8, 2026, on #203). There is no new path for a store refund: the
 room's end moves to the refund, and from there `paymentFor` (`server/platform.js`) reads it exactly like a pass that
 ran out. New invitations wait, everyone sees the grace, the payer can ask for more weeks, and when the grace is over
 the people beyond two rest. Nobody is removed.
+
+**Our grace is the only grace** (owner, Oct 8 and Oct 9, 2026). A store lapse gets the same grace as a failed web
+payment, and nothing more. Billing Grace Period stays off in App Store Connect (see "Setting it up"). If a
+`DID_FAIL_TO_RENEW` with the `GRACE_PERIOD` subtype arrives anyway, it is a lapse: the room still ends on the date
+already paid for, and Apple's `gracePeriodExpiresDate` is never read.
+
+**A refund writes nothing into the journey's History** (owner, Oct 9, 2026). A refund is the payer's own matter. What
+everyone else sees is what any lapse shows: the grace, and then who rests. No notification writes a History entry.
+
+**`CONSUMPTION_REQUEST` is never answered in v1** (owner, Oct 9, 2026). Answering it would send Apple how a person
+used the app, while Apple decides a refund. PRIVACY.md doesn't say we share that, so we don't. The request is logged
+as `not_acted_on`, and the server makes no call to Apple.
 
 **An extra photo or place is only noted.** A refunded `extra_photo` or `extra_place` is logged as `extra_noted` and
 its slot is left as it is, until what a refunded extra does is decided.
@@ -411,10 +425,14 @@ Once a release with migration 034 is live, in **App Store Connect â†’ the app â†
 Notifications**:
 
 1. **Production Server URL**: `https://api.together-ledger.com/api/v1/billing/store-notifications/apple`
-2. **Sandbox Server URL**: the same URL. Sandbox testers' purchases (App Review, `STORE_SANDBOX_ACCOUNT_IDS`) are
-   recorded on the live server, so their notifications have to reach it too.
+2. **Sandbox Server URL**: the same URL (owner, Oct 9, 2026). Sandbox testers' purchases (App Review, the owner's
+   test accounts) are recorded on the live server, so their notifications have to reach it too. Only accounts listed
+   in `STORE_SANDBOX_ACCOUNT_IDS` can make a sandbox purchase count there, and a sandbox notification only ever
+   touches sandbox rows, so it can't change anyone else's room.
 3. **Version 2** for both, then **Save**.
-4. **Request a test notification** (App Store Connect, or the App Store Server API's
+4. **Leave Billing Grace Period off** (the app's Subscriptions page in App Store Connect). Our own grace is the only
+   grace, the same as for a failed web payment (owner, Oct 8, 2026).
+5. **Request a test notification** (App Store Connect, or the App Store Server API's
    `POST /inApps/v1/notifications/test`). The server logs `store notification` with `"type":"TEST"`, and
    `billing_store_notifications` has a row with `outcome` `test`.
 
@@ -451,6 +469,8 @@ billing **or** at least one store configured, so the phones can sell while web b
   it. A Google subscription's renewal is recorded when the phone sends it again, not on Google's word. Apple's are
   built (above).
 - **What a refunded extra photo or place does** (#273). Apple's refund of one is logged and changes nothing.
+- **A reversed refund** (#273, 16C, with refunded extras). Apple's `REFUND_REVERSED` should bring the room back (owner, Oct 9,
+  2026). For now it is logged as `not_acted_on` and changes nothing.
 - **Alerting when refunds spike** (#273).
 - **Restore on a new phone** (#275). The phone's Restore purchases sends what the store hands back; a
   subscription bought on the other platform is not seen from this one.

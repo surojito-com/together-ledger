@@ -1338,11 +1338,123 @@ test('other notifications are logged and left alone, and a service without Apple
   const pass = { appAccountToken, transactionId: 'pass-other-kinds' };
   await h.apple(sam, h.signed(pass));
   const before = await h.entitlements(ours.id);
-  const answer = await h.notify(h.notification({ notificationType: 'CONSUMPTION_REQUEST', notificationUUID: 'consumption-1', transaction: pass }));
+  const answer = await h.notify(h.notification({ notificationType: 'DID_CHANGE_RENEWAL_STATUS', subtype: 'AUTO_RENEW_DISABLED', notificationUUID: 'renewal-status-1', transaction: pass }));
   assert.equal(answer.statusCode, 200);
   assert.equal((await h.notes())[0].outcome, 'not_acted_on');
   assert.deepEqual(await h.entitlements(ours.id), before);
 
   const quiet = new StorePurchaseService({ pool: h.pool, config: h.store.config });
   await assert.rejects(quiet.handleAppleNotification({ signedPayload: 'x' }), (error) => error.code === 'store_unavailable' && error.status === 503);
+});
+
+test('Apple’s billing grace period never extends the room: our grace is the only grace (owner, Oct 8 and 9, 2026)', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-billing-grace');
+  const ours = await h.journey(sam);
+  const alex = await h.person('alex-billing-grace');
+  const kit = await h.person('kit-billing-grace');
+  await h.join(ours.id, alex);
+  await h.join(ours.id, kit);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const end = Date.parse('2026-11-08T12:00:00Z');
+  const monthly = { appAccountToken, transactionId: 'sub-bg-1', originalTransactionId: 'sub-bg', productId: 'room_51_monthly', type: 'Auto-Renewable Subscription', expiresDate: end };
+  assert.equal((await h.apple(sam, h.signed(monthly))).statusCode, 201);
+  const before = await h.entitlements(ours.id);
+
+  // Billing Grace Period stays off in App Store Connect. If Apple's grace arrives anyway, with an
+  // end sixteen days after the paid one, it is a lapse like any other.
+  const answer = await h.notify(h.notification({
+    notificationType: 'DID_FAIL_TO_RENEW', subtype: 'GRACE_PERIOD', notificationUUID: 'billing-grace-1', transaction: monthly,
+    renewalInfo: { originalTransactionId: 'sub-bg', autoRenewProductId: 'room_51_monthly', productId: 'room_51_monthly', autoRenewStatus: 1, isInBillingRetryPeriod: true, gracePeriodExpiresDate: end + 16 * DAY },
+  }));
+  assert.equal(answer.statusCode, 200, answer.body);
+  assert.equal((await h.notes())[0].outcome, 'lapsed');
+  assert.deepEqual(await h.entitlements(ours.id), before, 'the room still ends on the date paid for');
+
+  // Our seven days run from that date, and when they are over the people beyond two rest.
+  h.clock.now = new Date(end + DAY);
+  assert.equal((await h.capacity(ours.id)).grace?.endsAt, new Date(end + 7 * DAY).toISOString());
+  h.clock.now = new Date(end + 8 * DAY);
+  const after = await h.capacity(ours.id);
+  assert.equal(after.grace, null);
+  assert.equal(after.restingMemberIds.length, 1);
+  assert.equal(after.peopleHere, 3, 'nobody is removed');
+});
+
+test('no notification writes into the journey’s History: a refund is the payer’s own matter (owner, Oct 9, 2026)', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-no-history');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const pass = { appAccountToken, transactionId: 'pass-no-history' };
+  const monthly = { appAccountToken, transactionId: 'sub-nh-1', originalTransactionId: 'sub-nh', productId: 'room_51_monthly', type: 'Auto-Renewable Subscription', expiresDate: Date.parse('2026-11-08T12:00:00Z') };
+  assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
+  assert.equal((await h.apple(sam, h.signed(monthly))).statusCode, 201);
+  const history = async () => (await h.pool.query('SELECT id,action FROM journey_events WHERE journey_id=$1 ORDER BY id', [ours.id])).rows;
+  const before = await history();
+
+  const renewal = { ...monthly, transactionId: 'sub-nh-2', purchaseDate: Date.parse('2026-11-08T12:00:00Z'), expiresDate: Date.parse('2026-12-08T12:00:00Z'), transactionReason: 'RENEWAL' };
+  const sent = [
+    ['DID_RENEW', null, renewal],
+    ['REFUND', null, { ...renewal, revocationDate: refundedAt }],
+    ['REFUND_REVERSED', null, renewal],
+    ['REVOKE', null, { ...pass, revocationDate: refundedAt }],
+    ['EXPIRED', 'VOLUNTARY', monthly],
+    ['DID_FAIL_TO_RENEW', 'GRACE_PERIOD', monthly],
+    ['GRACE_PERIOD_EXPIRED', null, monthly],
+    ['CONSUMPTION_REQUEST', null, pass],
+    ['TEST', null, null],
+  ];
+  for (const [notificationType, subtype, transaction] of sent) {
+    const answer = await h.notify(h.notification({ notificationType, subtype, notificationUUID: `no-history-${notificationType}`, transaction }));
+    assert.equal(answer.statusCode, 200, answer.body);
+  }
+  assert.deepEqual((await h.notes()).map((note) => note.outcome).sort(),
+    ['lapsed', 'lapsed', 'lapsed', 'not_acted_on', 'not_acted_on', 'refunded', 'renewed', 'revoked', 'test']);
+  assert.deepEqual(await history(), before, 'the journey’s record is exactly as it was');
+});
+
+test('a reversed refund is logged and changes nothing yet; bringing the room back comes later', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-reversed');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const pass = { appAccountToken, transactionId: 'pass-reversed' };
+  assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
+  await h.notify(h.notification({ notificationType: 'REFUND', notificationUUID: 'reversed-refund', transaction: { ...pass, revocationDate: refundedAt } }));
+  const refunded = await h.entitlements(ours.id);
+
+  const answer = await h.notify(h.notification({ notificationType: 'REFUND_REVERSED', notificationUUID: 'reversed-1', transaction: pass }));
+  assert.equal(answer.statusCode, 200, answer.body);
+  const note = (await h.notes()).find((row) => row.notification_id === 'reversed-1');
+  assert.equal(note.outcome, 'not_acted_on');
+  assert.equal(note.notification_type, 'REFUND_REVERSED');
+  assert.ok(note.purchase_id, 'the log names the purchase it is about');
+  assert.deepEqual(await h.entitlements(ours.id), refunded);
+  assert.equal((await h.pool.query('SELECT revocation FROM billing_store_purchases WHERE transaction_id=$1', ['pass-reversed'])).rows[0].revocation, 'refunded');
+});
+
+test('Apple’s CONSUMPTION_REQUEST is logged and never answered: nothing about how the app was used is sent', async (t) => {
+  const h = await harness(t);
+  const sam = await h.person('sam-consumption');
+  const ours = await h.journey(sam);
+  const { appAccountToken } = await h.identity(sam, ours.id);
+  const pass = { appAccountToken, transactionId: 'pass-consumption' };
+  assert.equal((await h.apple(sam, h.signed(pass))).statusCode, 201);
+  const before = await h.entitlements(ours.id);
+
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => { calls.push(args); throw new Error('no call should leave the server'); };
+  try {
+    const answer = await h.notify(h.notification({ notificationType: 'CONSUMPTION_REQUEST', subtype: null, notificationUUID: 'consumption-1', transaction: pass }));
+    assert.equal(answer.statusCode, 200, answer.body);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(calls, [], 'the server makes no call to Apple');
+  const [note] = await h.notes();
+  assert.equal(note.outcome, 'not_acted_on');
+  assert.equal(note.notification_type, 'CONSUMPTION_REQUEST');
+  assert.deepEqual(await h.entitlements(ours.id), before);
 });

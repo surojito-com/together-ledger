@@ -60,9 +60,15 @@ const UNLINKED_NOTIFICATION_DAYS = 30;
 const MAX_NOTIFICATION_LENGTH = 60 * 1024;
 const NOTIFICATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // What each App Store notification means for a journey's room. DID_FAIL_TO_RENEW, with or without
-// Apple's billing grace period, is a lapse: the room runs to the date already paid for, and the
-// usual grace starts there, as for a failed web payment. Anything not named here is logged and
-// left alone.
+// Apple's GRACE_PERIOD subtype, is a lapse: the room runs to the date already paid for, and our
+// own grace starts there, as for a failed web payment. Our grace is the only grace (owner, Oct 8
+// and 9, 2026), so Apple's gracePeriodExpiresDate is never read. Anything not named here is logged
+// as not_acted_on and left alone, among them:
+//   REFUND_REVERSED      should bring the room back; not built yet (#273)
+//   CONSUMPTION_REQUEST  never answered: it would send Apple how a person used the app, which the
+//                        privacy policy doesn't say we share (owner, Oct 9, 2026)
+// No notification writes a journey History entry: a refund is the payer's own matter, and the
+// others see only the grace and the rest that follow, as for any lapse (owner, Oct 9, 2026).
 const APPLE_EVENTS = Object.freeze({
   DID_RENEW: 'renewed',
   REFUND: 'refunded',
