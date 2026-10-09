@@ -31,7 +31,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql', '034_hear-refunds-and-renewals-from-the-stores.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql', '034_hear-refunds-and-renewals-from-the-stores.sql', '035_hear-reversed-refunds-and-refunded-extras.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -524,5 +524,61 @@ test('real PostgreSQL applies a Google notification once, however many deliverie
   const test = await pool.query("SELECT outcome,environment FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [testId]);
   assert.deepEqual(test.rows, [{ outcome: 'test', environment: null }]);
   await pool.query("DELETE FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [testId]);
+  await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+test('real PostgreSQL keeps one waiting row for a Google refund not listed yet, however many deliveries arrive together', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({
+    NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'billing', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
+    APPLE_ROOT_CERTIFICATES: appleChain().rootBase64,
+    GOOGLE_PLAY_NOTIFICATIONS_AUDIENCE: PUSH_AUDIENCE, GOOGLE_PLAY_NOTIFICATIONS_SERVICE_ACCOUNT_EMAIL: PUSH_EMAIL,
+  });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const email = `waiting-${suffix}@example.test`;
+  const { user } = await platform.register({ email, username: `waiting-${suffix}`, password: 'correct horse battery staple' });
+  await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+  const journey = await platform.createJourney(user.id, { name: 'Waiting', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const ids = await platform.storePurchaseIdentity(user.id, journey.id);
+  const token = `waiting-${suffix}`;
+  const voidedAt = Date.now();
+  const google = {
+    listed: false,
+    productPurchase: async () => ({ purchaseState: 0, consumptionState: 1, acknowledgementState: 1, purchaseType: 0, quantity: 1, purchaseTimeMillis: String(Date.now()), obfuscatedExternalAccountId: ids.obfuscatedAccountId, obfuscatedExternalProfileId: ids.obfuscatedProfileId }),
+    voidedPurchases: async () => (google.listed ? [{ purchaseToken: token, orderId: 'GPA.3300-0000-0000-00002', voidedTimeMillis: String(voidedAt) }] : []),
+  };
+  const keys = googleKeys();
+  const logged = [];
+  const store = new StorePurchaseService({
+    pool, config, google, history: (client, event) => platform.appendEvent(client, event), log: (level, message) => logged.push(message),
+    googlePush: new GooglePushVerifier({ ...config.googlePlayNotifications, fetch: keys.fetch }),
+  });
+  await store.verifyGoogle(user.id, { productId: 'room_51_week_pass', purchaseToken: token });
+  const push = (messageId) => store.handleGoogleNotification({
+    authorization: `Bearer ${pushToken(keys.current())}`,
+    body: pushBody({ version: '1.0', packageName: 'com.togetherledger.ledger', eventTimeMillis: String(Date.now()), voidedPurchaseNotification: { purchaseToken: token, orderId: 'GPA.3300-0000-0000-00002', productType: 2, refundType: 1 } }, { messageId }),
+  });
+  const messageId = `${Date.now()}3`;
+  const notes = () => pool.query("SELECT outcome FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [messageId]);
+
+  // Not listed: four deliveries at once are all asked for again, and leave one waiting row, logged once.
+  const early = await Promise.allSettled(Array.from({ length: 4 }, () => push(messageId)));
+  assert.deepEqual(early.map((answer) => answer.reason?.code), Array(4).fill('store_notification_not_confirmed'));
+  assert.deepEqual((await notes()).rows, [{ outcome: 'waiting' }]);
+  assert.equal(logged.filter((message) => message === 'google has not listed a refund yet').length, 1);
+
+  // Listed: four at once, applied once, to the same row.
+  google.listed = true;
+  const answers = await Promise.all(Array.from({ length: 4 }, () => push(messageId)));
+  assert.deepEqual(answers.map((answer) => answer.outcome).sort(), ['already-received', 'already-received', 'already-received', 'refunded']);
+  assert.deepEqual((await notes()).rows, [{ outcome: 'refunded' }]);
+
+  // 035's outcome check, as real Postgres names and enforces it.
+  await assert.rejects(pool.query("UPDATE billing_store_notifications SET outcome='nonsense' WHERE store='google' AND notification_id=$1", [messageId]), /billing_store_notifications_outcome_check/);
+  await pool.query("UPDATE billing_store_notifications SET outcome='reinstated' WHERE store='google' AND notification_id=$1", [messageId]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
 });

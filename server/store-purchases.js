@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { withTransaction } from './db.js';
 import { PlatformError } from './platform.js';
 import { AppleTransactionVerifier, AppleVerificationError } from './store-apple.js';
+import { paidEnvironments } from './billing-environments.js';
 import { GooglePlayDeveloperApi, GooglePlayError, GooglePushError, GooglePushVerifier } from './store-google.js';
 import { INCLUDED_PEOPLE, ROOM_CAPABILITY, appleTypeFor, passEnd, roomFor, storeProduct } from './store-products.js';
 
@@ -33,14 +34,18 @@ import { INCLUDED_PEOPLE, ROOM_CAPABILITY, appleTypeFor, passEnd, roomFor, store
 // in billing_store_notifications and applied through applyStoreEvent, the one place a store's
 // later word changes a journey's room, whichever store it came from. Apple's App Store Server
 // Notifications (handleAppleNotification) and Google Play's Real-time developer notifications
-// (handleGoogleNotification) both come here. What a refunded extra does is not decided yet.
+// (handleGoogleNotification) both come here. A refunded extra photo or place never takes away
+// what someone already added with it; only what it had not been used for yet is withdrawn
+// (withdrawExtra). A refund Apple reverses brings back what the refund took (owner, Oct 9, 2026).
+// A spike in refunds and revocations writes one error line (noticeRefundSpike).
 //
 // Not here: restoring on a new phone (#275).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PURCHASE_TOKEN = /^[A-Za-z0-9._:-]{1,2048}$/;
 const STORE = { apple: 'Apple', google: 'Google Play' };
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 // Google refunds what is not acknowledged within three days of the purchase.
 const ACKNOWLEDGE_WINDOW_MS = 3 * DAY_MS;
 // Waits between acknowledgement attempts. The longest stays well inside the three days.
@@ -63,16 +68,18 @@ const NOTIFICATION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 // What each App Store notification means for a journey's room. DID_FAIL_TO_RENEW, with or without
 // Apple's GRACE_PERIOD subtype, is a lapse: the room runs to the date already paid for, and our
 // own grace starts there, as for a failed web payment. Our grace is the only grace (owner, Oct 8
-// and 9, 2026), so Apple's gracePeriodExpiresDate is never read. Anything not named here is logged
-// as not_acted_on and left alone, among them:
-//   REFUND_REVERSED      should bring the room back; not built yet (#273)
+// and 9, 2026), so Apple's gracePeriodExpiresDate is never read. REFUND_REVERSED brings back what
+// the refund took, the way a renewal would (owner, Oct 9, 2026, decision 67). Anything not named
+// here is logged as not_acted_on and left alone, among them:
 //   CONSUMPTION_REQUEST  never answered: it would send Apple how a person used the app, which the
 //                        privacy policy doesn't say we share (owner, Oct 9, 2026)
 // No notification writes a journey History entry: a refund is the payer's own matter, and the
-// others see only the grace and the rest that follow, as for any lapse (owner, Oct 9, 2026).
+// others see only the grace and the rest that follow, as for any lapse (owner, Oct 9, 2026). A
+// reversed refund writes none either.
 const APPLE_EVENTS = Object.freeze({
   DID_RENEW: 'renewed',
   REFUND: 'refunded',
+  REFUND_REVERSED: 'reinstated',
   REVOKE: 'revoked',
   EXPIRED: 'lapsed',
   DID_FAIL_TO_RENEW: 'lapsed',
@@ -95,7 +102,9 @@ const GOOGLE_REFUND_TYPES = Object.freeze({ 1: 'FULL_REFUND', 2: 'QUANTITY_BASED
 // Google's grace period are all lapses: the room runs to the date already paid for, and our own
 // grace starts there. Our grace is the only grace (owner, Oct 8 and 9, 2026), so the end Google
 // gives a subscription in its grace period is never read. A voided purchase is a refund. Anything
-// not named here is logged as not_acted_on and left alone. No notification writes History.
+// not named here is logged as not_acted_on and left alone. No notification writes History. Google
+// sends nothing when a refund is reversed (its notification reference has no such kind, checked
+// Oct 9, 2026): a refunded subscription Google later renews comes back through the renewal.
 const GOOGLE_EVENTS = Object.freeze({
   SUBSCRIPTION_RENEWED: 'renewed',
   SUBSCRIPTION_RECOVERED: 'renewed',
@@ -110,6 +119,9 @@ const GOOGLE_EVENTS = Object.freeze({
 // is looked for from a day before Google says it happened.
 const VOIDED_LOOKBACK_MS = DAY_MS;
 const VOIDED_MAX_LOOKBACK_MS = 29 * DAY_MS;
+// The notifications that say money went back, or access was taken back, whatever they then did
+// here. Their count over a window is what noticeRefundSpike watches.
+const REFUND_NOTIFICATIONS = Object.freeze(['REFUND', 'REVOKE', 'VOIDED_PURCHASE', 'SUBSCRIPTION_REVOKED']);
 
 // Every refusal says whether trying again could change it. A phone finishes a transaction only on
 // success, so `retryable: true` is the phone's cue to keep it and send it again later.
@@ -709,10 +721,15 @@ export class StorePurchaseService {
   //             first; paymentFor then reads the usual grace from that end. A pass that had not
   //             started yet never starts. With `periodEnd` (the refunded period's end), a refund of
   //             a period that has since been paid again changes nothing.
+  //   reinstated
+  //             The store reversed a refund. Room a refund ended comes back to `endsAt`, the end it
+  //             had before, the way a renewal moves it, and reads exactly as if it had never been
+  //             refunded: running, or in grace from that end if it has passed. Room a refund didn't
+  //             end (an earlier period's refund, a revocation, a replacement) is left alone.
   //
-  // Answers with what it did: renewed, lapsed, refunded, revoked or unchanged.
+  // Answers with what it did: renewed, lapsed, refunded, revoked, reinstated or unchanged.
   async applyStoreEvent(client, { store, environment, recordId, event, at = null, endsAt = null, periodEnd = null, people = null }) {
-    if (!['renewed', 'lapsed', 'refunded', 'revoked'].includes(event)) throw new Error(`Unknown store event ${event}.`);
+    if (!['renewed', 'lapsed', 'refunded', 'revoked', 'reinstated'].includes(event)) throw new Error(`Unknown store event ${event}.`);
     const first = await this.entitlementFor(client, store, environment, recordId);
     if (!first) return { effect: 'unchanged', journeyId: null };
     await this.lockJourney(client, first.journey_id);
@@ -729,6 +746,14 @@ export class StorePurchaseService {
         [people ? people - INCLUDED_PEOPLE : Number(held.quantity), endsAt, now, at || now, held.id],
       );
       return { effect: 'renewed', journeyId: held.journey_id };
+    }
+    if (event === 'reinstated') {
+      if (held.reason !== REFUNDED.refunded || !endsAt) return unchanged;
+      await client.query(
+        `UPDATE billing_entitlements SET state='active',expires_at=$1,reason=NULL,last_verified_at=$2,provider_event_created_at=$3,updated_at=$2 WHERE id=$4`,
+        [end && end > endsAt ? end : endsAt, now, at || now, held.id],
+      );
+      return { effect: 'reinstated', journeyId: held.journey_id };
     }
     // Refunded or revoked.
     if (!['active', 'grace'].includes(held.state)) return unchanged;
@@ -750,12 +775,111 @@ export class StorePurchaseService {
     return { effect: event, journeyId: held.journey_id };
   }
 
-  // A purchase the store has since refunded or revoked. Marked once, never cleared.
+  // Whether Apple's reversal of this transaction's refund, signed after `signedAt`, is already here.
+  async reversedSince(client, transactionId, signedAt) {
+    const found = await client.query(
+      "SELECT 1 FROM billing_store_notifications WHERE store='apple' AND notification_type='REFUND_REVERSED' AND transaction_ref=$1 AND signed_at>$2 LIMIT 1",
+      [transactionId, signedAt],
+    );
+    return found.rowCount > 0;
+  }
+
+  // A purchase the store has since refunded or revoked. Marked once; only a reversed refund
+  // clears it (clearRevoked).
   async markRevoked(client, row, at, revocation) {
     await client.query(
       'UPDATE billing_store_purchases SET revoked_at=COALESCE(revoked_at,$1),revocation=COALESCE(revocation,$2),updated_at=$3 WHERE id=$4',
       [at, revocation, this.now(), row.id],
     );
+  }
+
+  // A refund the store has reversed: the purchase stands again.
+  async clearRevoked(client, row) {
+    await client.query('UPDATE billing_store_purchases SET revoked_at=NULL,revocation=NULL,updated_at=$1 WHERE id=$2', [this.now(), row.id]);
+  }
+
+  // A refunded extra photo or place never takes away what someone already added with it (#273;
+  // the owner decides on the PR whether this is the rule to keep). What it was already used for
+  // stays on its moment; what it had not been used for yet is withdrawn, so the refund leaves
+  // nothing new to add. A withdrawn slot is 'canceled', which no upload and no count reads.
+  //
+  // A photo slot is spent once (used_at), and deleting the photo never gives it back, so an unused
+  // one is simply withdrawn. A place slot is never spent: each time the moment is saved, its places
+  // beyond the free ones are counted against the payer's slots (assertLocationCapacity). So the
+  // slots its places need now stay, counting the payer's other slots first, or the moment could not
+  // be saved again without dropping a place. Only those beyond that are withdrawn. Either way the
+  // moment can hold what it held, and never more.
+  //
+  // Answers with how many slots were kept and how many withdrawn.
+  async withdrawExtra(client, row) {
+    await this.lockJourney(client, row.journey_id);
+    const now = this.now();
+    if (storeProduct(row.product_id)?.extra === 'photo') {
+      const withdrawn = await client.query(
+        "UPDATE moment_image_slots SET state='canceled',updated_at=$1 WHERE store_purchase_id=$2 AND state='active' AND used_at IS NULL RETURNING id",
+        [now, row.id],
+      );
+      const kept = await client.query("SELECT count(*)::int AS count FROM moment_image_slots WHERE store_purchase_id=$1 AND state<>'canceled'", [row.id]);
+      return { kept: Number(kept.rows[0].count), withdrawn: withdrawn.rowCount };
+    }
+    const slots = (await client.query(
+      "SELECT id FROM moment_location_slots WHERE store_purchase_id=$1 AND state IN ('active','grace') ORDER BY created_at,id",
+      [row.id],
+    )).rows;
+    if (!slots.length) return { kept: 0, withdrawn: 0 };
+    const moment = (await client.query('SELECT location_billing_baseline,jsonb_array_length(locations) AS places FROM journey_moments WHERE id=$1', [row.moment_id])).rows[0];
+    const paid = paidEnvironments(this.config, { from: 4 });
+    const others = await client.query(
+      `SELECT count(*)::int AS count FROM moment_location_slots
+       WHERE moment_id=$1 AND payer_user_id=$2 AND state IN ('active','grace') AND (store_purchase_id IS NULL OR store_purchase_id<>$3) AND ${paid.sql}`,
+      [row.moment_id, row.payer_user_id, row.id, ...paid.params],
+    );
+    const needed = moment ? Math.max(0, Number(moment.places) - Number(moment.location_billing_baseline || 1) - Number(others.rows[0].count)) : 0;
+    const keep = Math.min(needed, slots.length);
+    const withdraw = slots.slice(keep).map((slot) => slot.id);
+    for (const id of withdraw) {
+      await client.query("UPDATE moment_location_slots SET state='canceled',updated_at=$1 WHERE id=$2", [now, id]);
+    }
+    return { kept: keep, withdrawn: withdraw.length };
+  }
+
+  // A reversed refund of an extra: what was withdrawn comes back. A store slot is only ever
+  // 'canceled' by withdrawExtra.
+  async reinstateExtra(client, row) {
+    const table = storeProduct(row.product_id)?.extra === 'photo' ? 'moment_image_slots' : 'moment_location_slots';
+    const back = await client.query(`UPDATE ${table} SET state='active',updated_at=$1 WHERE store_purchase_id=$2 AND state='canceled' RETURNING id`, [this.now(), row.id]);
+    return { reinstated: back.rowCount };
+  }
+
+  // When refunds and revocations from the stores spike, which more often means something is wrong
+  // on our side than that many people asked at once (#273). Every refund or revocation notification
+  // this server's environment received within the window is counted, whatever it then did, and
+  // reaching the threshold writes one error line, "store refunds spiking", at most once a window
+  // per running server. The threshold and window are config (STORE_REFUND_ALERT_THRESHOLD,
+  // STORE_REFUND_ALERT_WINDOW_HOURS). Counting can never fail a notification.
+  async noticeRefundSpike() {
+    try {
+      const { threshold, windowHours } = this.config.storeRefundAlert || { threshold: 5, windowHours: 24 };
+      const now = this.now();
+      const windowMs = windowHours * HOUR_MS;
+      if (this.refundAlertAt && now.getTime() - this.refundAlertAt.getTime() < windowMs) return;
+      const since = new Date(now.getTime() - windowMs);
+      const counted = await this.pool.query(
+        `SELECT store,count(*)::int AS count FROM billing_store_notifications
+         WHERE notification_type IN ($1,$2,$3,$4) AND received_at>=$5 AND (environment IS NULL OR environment=$6)
+         GROUP BY store`,
+        [...REFUND_NOTIFICATIONS, since, this.config.storeEnvironment],
+      );
+      const byStore = Object.fromEntries(counted.rows.map((row) => [row.store, Number(row.count)]));
+      const count = (byStore.apple || 0) + (byStore.google || 0);
+      if (count < threshold) return;
+      this.refundAlertAt = now;
+      this.log('error', 'store refunds spiking', {
+        count, apple: byStore.apple || 0, google: byStore.google || 0, threshold, windowHours, since: since.toISOString(),
+      });
+    } catch (error) {
+      this.log('warn', 'store refunds could not be counted', { error: String(error?.name || 'error').slice(0, 100) });
+    }
   }
 
   // A notification, logged once. Answers with the new row, or null when this notification was
@@ -844,22 +968,25 @@ export class StorePurchaseService {
     const subtype = payload.subtype ? String(payload.subtype).slice(0, 64) : null;
     const transactionRef = transaction?.transactionId ? String(transaction.transactionId) : null;
 
-    return withTransaction(this.pool, async (client) => {
+    const signedAt = dateFrom(payload.signedDate);
+    const answer = await withTransaction(this.pool, async (client) => {
       const note = await this.noteNotification(client, {
-        store: 'apple', notificationId, environment, type, subtype, transactionRef, signedAt: dateFrom(payload.signedDate),
+        store: 'apple', notificationId, environment, type, subtype, transactionRef, signedAt,
       });
       if (!note) {
         this.log('info', 'store notification received again', { store: 'apple', type, notificationId });
         return { outcome: 'already-received' };
       }
-      const result = await this.appleNotificationEffect(client, { type, environment, transaction });
+      const result = await this.appleNotificationEffect(client, { type, environment, transaction, signedAt });
       await this.settleNotification(client, note.id, result);
-      this.log('info', 'store notification', { store: 'apple', type, subtype, environment, outcome: result.outcome, transactionId: transactionRef });
-      return { outcome: result.outcome };
+      this.log('info', 'store notification', { store: 'apple', type, subtype, environment, outcome: result.outcome, transactionId: transactionRef, ...result.extra });
+      return { outcome: result.outcome, logged: true };
     });
+    if (answer.logged && REFUND_NOTIFICATIONS.includes(type)) await this.noticeRefundSpike();
+    return { outcome: answer.outcome };
   }
 
-  async appleNotificationEffect(client, { type, environment, transaction }) {
+  async appleNotificationEffect(client, { type, environment, transaction, signedAt = null }) {
     if (type === 'TEST') return { outcome: 'test' };
     if (!transaction || !environment || !transaction.transactionId) return { outcome: Object.hasOwn(APPLE_EVENTS, type) ? 'unknown_purchase' : 'not_acted_on' };
     const transactionId = String(transaction.transactionId);
@@ -869,16 +996,39 @@ export class StorePurchaseService {
     const purchase = named.row;
     const event = Object.hasOwn(APPLE_EVENTS, type) ? APPLE_EVENTS[type] : null;
     if (!event) return { outcome: 'not_acted_on', purchaseId: purchase.id };
-    // What a refunded extra photo or place does is not decided yet: noted, nothing changed.
-    if (purchase.kind === 'extra') return { outcome: 'extra_noted', purchaseId: purchase.id };
     // Family Sharing is off for every product, so a shared copy never made room to take back.
     if (transaction.inAppOwnershipType && transaction.inAppOwnershipType !== 'PURCHASED') return { outcome: 'unchanged', purchaseId: purchase.id };
     const product = storeProduct(transaction.productId);
     const subscription = purchase.kind === 'subscription';
     const store = { store: 'apple', environment, recordId: purchase.entitlement_record_id };
 
+    // A reversed refund. Only a purchase we hold as refunded comes back, so a second reversal, or
+    // one for a purchase never refunded here, changes nothing.
+    if (event === 'reinstated') {
+      if (!named.own || purchase.revocation !== 'refunded') return { outcome: 'unchanged', purchaseId: purchase.id };
+      await this.clearRevoked(client, purchase);
+      if (purchase.kind === 'extra') {
+        const extra = await this.reinstateExtra(client, purchase);
+        return { outcome: 'reinstated', purchaseId: purchase.id, extra };
+      }
+      // A pass comes back to the end it was granted; a subscription to the end of the period whose
+      // refund was reversed.
+      const endsAt = subscription ? dateFrom(transaction.expiresDate) : (purchase.expires_at ? new Date(purchase.expires_at) : null);
+      const applied = await this.applyStoreEvent(client, { ...store, event: 'reinstated', endsAt, at: signedAt });
+      return { outcome: applied.effect, purchaseId: purchase.id };
+    }
+
     if (event === 'refunded' || event === 'revoked') {
+      // Apple doesn't promise order. A refund whose reversal, signed later, has already arrived
+      // stays reversed.
+      if (event === 'refunded' && signedAt && await this.reversedSince(client, transactionId, signedAt)) return { outcome: 'unchanged', purchaseId: purchase.id };
       const at = dateFrom(transaction.revocationDate) || this.now();
+      if (purchase.kind === 'extra') {
+        if (purchase.revoked_at) return { outcome: 'unchanged', purchaseId: purchase.id };
+        await this.markRevoked(client, purchase, at, event);
+        const extra = await this.withdrawExtra(client, purchase);
+        return { outcome: event, purchaseId: purchase.id, extra };
+      }
       let row = purchase;
       if (named.own) {
         await this.markRevoked(client, purchase, at, event);
@@ -891,6 +1041,9 @@ export class StorePurchaseService {
       const applied = await this.applyStoreEvent(client, { ...store, event, at, periodEnd: subscription ? dateFrom(transaction.expiresDate) : null });
       return { outcome: applied.effect, purchaseId: row.id };
     }
+
+    // A renewal or a lapse means nothing for an extra, which never lapses.
+    if (purchase.kind === 'extra') return { outcome: 'unchanged', purchaseId: purchase.id };
 
     if (event === 'renewed') {
       const endsAt = dateFrom(transaction.expiresDate);
@@ -951,9 +1104,9 @@ export class StorePurchaseService {
     }
 
     // Pub/Sub delivers at least once. A message already logged changes nothing, and costs no call
-    // to Google.
-    const seen = await this.pool.query("SELECT 1 FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [messageId]);
-    if (seen.rowCount) {
+    // to Google, unless it is still waiting for Google to show a refund or revocation.
+    const seen = await this.pool.query("SELECT outcome FROM billing_store_notifications WHERE store='google' AND notification_id=$1", [messageId]);
+    if (seen.rowCount && seen.rows[0].outcome !== 'waiting') {
       this.log('info', 'store notification received again', { store: 'google', type, notificationId: messageId });
       return { outcome: 'already-received' };
     }
@@ -963,30 +1116,51 @@ export class StorePurchaseService {
     const now = this.now();
     const told = dateFrom(notification.eventTimeMillis);
     const eventAt = told && told < now ? told : now;
-    // Only a notification that could change a room is read again from Google: one about a room we
-    // granted. An extra is only noted (16C decides what a refunded one does), and a
-    // quantity-based partial refund is left alone.
+    // Only a notification that could change what we granted is read again from Google: about a
+    // room, or the refund of an extra. A quantity-based partial refund is only logged (owner, Oct 9,
+    // 2026).
     const partial = subtype === 'QUANTITY_BASED_PARTIAL_REFUND';
-    const word = event && purchase && purchase.kind !== 'extra' && !partial
+    const word = event && purchase && !partial && (purchase.kind !== 'extra' || event === 'refunded')
       ? await this.askGoogle(purchase, { type, eventAt })
       : null;
 
-    return withTransaction(this.pool, async (client) => {
-      const note = await this.noteNotification(client, {
+    const answer = await withTransaction(this.pool, async (client) => {
+      let note = await this.noteNotification(client, {
         store: 'google', notificationId: messageId, environment: purchase?.environment || null, type, subtype,
         transactionRef: token ? fingerprint(token) : null, signedAt: told,
       });
+      const first = Boolean(note);
       if (!note) {
-        this.log('info', 'store notification received again', { store: 'google', type, notificationId: messageId });
-        return { outcome: 'already-received' };
+        // Received before. Only a message still waiting for Google is looked at again.
+        const waiting = await client.query("SELECT * FROM billing_store_notifications WHERE store='google' AND notification_id=$1 AND outcome='waiting' FOR UPDATE", [messageId]);
+        if (!waiting.rowCount) {
+          this.log('info', 'store notification received again', { store: 'google', type, notificationId: messageId });
+          return { outcome: 'already-received' };
+        }
+        note = waiting.rows[0];
       }
       const result = await this.googleNotificationEffect(client, { type, event, partial, purchase, word, token, orderId, eventAt });
+      const fields = { store: 'google', type, subtype, environment: purchase?.environment || null, outcome: result.outcome, ...(token ? { purchase: fingerprint(token) } : {}), ...result.extra };
+      if (result.outcome === 'waiting') {
+        // Written and logged on the first delivery only. Each retry until Google shows it is quiet.
+        if (first) {
+          await this.settleNotification(client, note.id, result);
+          this.log('warn', 'google has not listed a refund yet', { ...fields, reason: result.reason, notificationId: messageId });
+        }
+        return { outcome: 'waiting', first };
+      }
       await this.settleNotification(client, note.id, result);
-      this.log('info', 'store notification', {
-        store: 'google', type, subtype, environment: purchase?.environment || null, outcome: result.outcome, ...(token ? { purchase: fingerprint(token) } : {}),
-      });
-      return { outcome: result.outcome };
+      this.log('info', 'store notification', fields);
+      return { outcome: result.outcome, first };
     });
+    if (answer.first && REFUND_NOTIFICATIONS.includes(type)) await this.noticeRefundSpike();
+    // Pub/Sub sends again on anything but a success, for as long as the subscription keeps the
+    // message (seven days). The waiting row was committed above, so the next delivery reads Google
+    // again rather than being taken for a replay.
+    if (answer.outcome === 'waiting') {
+      throw refuse(503, 'store_notification_not_confirmed', 'Google Play doesn’t show this refund or revocation yet, so nothing was changed. Send it again later.', true);
+    }
+    return { outcome: answer.outcome };
   }
 
   // Pub/Sub's push body: { message: { data: <base64 DeveloperNotification>, messageId }, subscription }.
@@ -1065,22 +1239,32 @@ export class StorePurchaseService {
     if (!row) return { outcome: 'unknown_purchase' };
     const purchaseId = row.id;
     if (!event || partial) return { outcome: 'not_acted_on', purchaseId };
-    // What a refunded extra photo or place does is not decided yet (16C): noted, nothing changed.
-    if (row.kind === 'extra') return { outcome: 'extra_noted', purchaseId };
+    // An extra never lapses or renews; only its refund means anything.
+    if (row.kind === 'extra' && event !== 'refunded') return { outcome: 'unchanged', purchaseId };
     const notConfirmed = (reason) => {
       this.log('warn', 'google did not confirm a notification', { type, reason, purchase: fingerprint(token) });
       return { outcome: 'unchanged', purchaseId };
     };
+    // A refund or revocation Google's API doesn't show yet is asked for again: Pub/Sub keeps
+    // sending it for up to seven days (owner, Oct 9, 2026, decision 78). Reconciliation (#277) is
+    // the second net.
+    const waiting = (reason) => ({ outcome: 'waiting', purchaseId, reason });
     if (!word || word.missing) return notConfirmed('google does not know the purchase');
-    if (!row.entitlement_record_id) return { outcome: 'unchanged', purchaseId };
-    const room = { store: 'google', environment: row.environment, recordId: row.entitlement_record_id };
 
     if (event === 'refunded') {
       const voids = (word.voided || []).filter((entry) => row.kind !== 'subscription' || !orderId || entry.orderId === orderId);
       const voided = voids[0];
-      if (!voided) return notConfirmed('not among the voided purchases');
+      if (!voided) return waiting('not among the voided purchases');
       const at = dateFrom(voided.voidedTimeMillis) || eventAt;
       const refundedAt = at < this.now() ? at : this.now();
+      if (row.kind === 'extra') {
+        if (row.revoked_at) return { outcome: 'unchanged', purchaseId };
+        await this.markRevoked(client, row, refundedAt, 'refunded');
+        const extra = await this.withdrawExtra(client, row);
+        return { outcome: 'refunded', purchaseId, extra };
+      }
+      if (!row.entitlement_record_id) return { outcome: 'unchanged', purchaseId };
+      const room = { store: 'google', environment: row.environment, recordId: row.entitlement_record_id };
       if (row.kind === 'subscription') {
         // Each renewal is its own order under the same token. A refund of an order that has since
         // been paid again changes nothing, as for Apple.
@@ -1094,7 +1278,8 @@ export class StorePurchaseService {
     }
 
     // Everything else is about a subscription.
-    if (row.kind !== 'subscription') return { outcome: 'unchanged', purchaseId };
+    if (row.kind !== 'subscription' || !row.entitlement_record_id) return { outcome: 'unchanged', purchaseId };
+    const room = { store: 'google', environment: row.environment, recordId: row.entitlement_record_id };
     const record = word.subscription || {};
     const line = this.googleLine(record, row.product_id);
     if (!line) return notConfirmed('no line for the product');
@@ -1120,7 +1305,7 @@ export class StorePurchaseService {
     }
 
     if (event === 'revoked') {
-      if (state !== 'SUBSCRIPTION_STATE_EXPIRED') return notConfirmed(`state ${String(state).slice(0, 64)}`);
+      if (state !== 'SUBSCRIPTION_STATE_EXPIRED') return waiting(`state ${String(state).slice(0, 64)}`);
       const ended = dateFrom(line.expiryTime);
       const at = ended && ended < eventAt ? ended : eventAt;
       await this.markRevoked(client, row, at, 'revoked');

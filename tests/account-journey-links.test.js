@@ -51,6 +51,7 @@ const MIGRATIONS = [
   '032_let-an-invitation-last-fourteen-days.sql',
   '033_let-a-moment-held-offline-arrive-once.sql',
   '034_hear-refunds-and-renewals-from-the-stores.sql',
+  '035_hear-reversed-refunds-and-refunded-extras.sql',
 ];
 
 async function appAtItsOwnHome() {

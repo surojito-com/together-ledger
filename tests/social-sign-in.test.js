@@ -43,6 +43,7 @@ const MIGRATIONS = [
   '031_let-a-lost-renewal-reply-be-asked-again.sql',
   '033_let-a-moment-held-offline-arrive-once.sql',
   '034_hear-refunds-and-renewals-from-the-stores.sql',
+  '035_hear-reversed-refunds-and-refunded-extras.sql',
 ];
 
 function provider(kid) {
