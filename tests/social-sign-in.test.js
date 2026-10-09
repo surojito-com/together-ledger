@@ -558,3 +558,66 @@ test('a refused Apple deletion is remembered, listed with its journey, and finis
   // Deleting it revoked its Apple token like any other deletion.
   assert.equal(revokeCalls().at(-1).form.token.startsWith('rt-'), true);
 });
+
+// The web shows "Continue with Google" and "Continue with Apple" only when both can work (#216).
+// What tells it is a public read: client identifiers and the Return URL, never anything about an
+// account, and no session is needed or set to read it.
+test('the web is told which sign-ins are ready, and only public identifiers', async () => {
+  const WEB_CLIENT = 'web-only-client.apps.googleusercontent.com';
+  const read = async (app, headers = {}) => {
+    const response = await app.inject({ method: 'GET', url: '/api/v1/auth/providers', headers: { origin, ...headers } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.equal(response.headers['set-cookie'], undefined);
+    return response.json().data;
+  };
+
+  // The phones' Google IDs never stand in for the web's own.
+  const { app: withoutWebClient } = await setup();
+  assert.deepEqual(await read(withoutWebClient), {
+    google: null,
+    apple: { clientId: 'com.togetherledger.ledger.web', redirectUri: 'https://app.together-ledger.com/' },
+  });
+
+  const { app, platform } = await setup({ GOOGLE_WEB_CLIENT_ID: WEB_CLIENT });
+  assert.deepEqual(await read(app), {
+    google: { clientId: WEB_CLIENT },
+    apple: { clientId: 'com.togetherledger.ledger.web', redirectUri: 'https://app.together-ledger.com/' },
+  });
+  // The web's client ID is an accepted audience without being repeated in GOOGLE_CLIENT_IDS.
+  const signedIn = await post(app, '/api/v1/auth/google', { idToken: googleToken({ sub: 'g-web', email: 'web@example.com', aud: WEB_CLIENT }) });
+  assert.equal(signedIn.statusCode, 200, signedIn.body);
+  // A signed-in browser reads exactly the same thing.
+  const cookie = signedIn.headers['set-cookie'].split(';')[0];
+  assert.deepEqual(await read(app, { cookie }), await read(app));
+
+  // Apple whose code can't be exchanged can't open an account, so it isn't offered.
+  platform.apple = new AppleSignIn({ teamId: '769MBW6826', keyId: '985BDXJP8S', privateKey: '', encryptionKey: '', fetch: async () => { throw new Error('must not be called'); } });
+  assert.equal((await read(app)).apple, null);
+
+  // Nothing configured: nothing offered.
+  const { app: bare } = await setup({ GOOGLE_CLIENT_IDS: '', APPLE_CLIENT_IDS: '' });
+  assert.deepEqual(await read(bare), { google: null, apple: null });
+
+  const loaded = loadConfig({ NODE_ENV: 'test', GOOGLE_CLIENT_IDS: 'phone.apps.googleusercontent.com', GOOGLE_WEB_CLIENT_ID: WEB_CLIENT });
+  assert.deepEqual(loaded.googleClientIds, ['phone.apps.googleusercontent.com', WEB_CLIENT]);
+});
+
+// The web's Delete account asks for a password only when the account has one (#216).
+test('a user says whether it has a password, on sign-in and on the session', async () => {
+  const { app } = await setup();
+  const social = await post(app, '/api/v1/auth/google', { idToken: googleToken({ sub: 'g-hp', email: 'hp@example.com' }) });
+  assert.equal(social.json().data.user.hasPassword, false);
+  const socialSession = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { origin, cookie: social.headers['set-cookie'].split(';')[0] } });
+  assert.equal(socialSession.json().data.user.hasPassword, false);
+
+  const owner = await registerWithPassword(app, 'haspw@example.com');
+  assert.equal(owner.hasPassword, true);
+  const login = await post(app, '/api/v1/auth/login', { identifier: 'haspw@example.com', password: PASSWORD });
+  assert.equal(login.json().data.user.hasPassword, true);
+  const session = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { origin, cookie: login.headers['set-cookie'].split(';')[0] } });
+  assert.equal(session.json().data.user.hasPassword, true);
+  const phone = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { 'x-together-client': 'app' }, payload: { identifier: 'haspw@example.com', password: PASSWORD } });
+  const bearer = await app.inject({ method: 'GET', url: '/api/v1/session', headers: { authorization: `Bearer ${phone.json().data.token}` } });
+  assert.equal(bearer.json().data.user.hasPassword, true);
+});

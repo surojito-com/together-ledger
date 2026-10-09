@@ -188,6 +188,14 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return { data: { user: result.user, csrfToken: result.session.csrfToken } };
   }
 
+  // What the web needs to draw "Continue with Google" and "Continue with Apple" (#216): public
+  // client identifiers, never anything about an account, so it asks for no session. It is read
+  // fresh each time, so the buttons appear once the server is configured and restarted.
+  app.get('/api/v1/auth/providers', async (_request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { data: platform.webSignInProviders() };
+  });
+
   for (const provider of ['google', 'apple']) {
     app.post(`/api/v1/auth/${provider}`, { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => (
       socialReply(request, reply, (options) => platform.socialSignIn(provider, request.body || {}, options))

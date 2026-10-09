@@ -48,6 +48,11 @@ const ConfigSchema = z.object({
   // Services ID. Google's wait for Together Ledger's own OAuth clients; empty turns Google
   // sign-in off rather than accepting a token for someone else's app.
   GOOGLE_CLIENT_IDS: z.string().default(''),
+  // The web's own Google OAuth client (#216), the one Google Identity Services is initialised
+  // with on the account dialog. It is accepted as an audience too, so it need not be repeated in
+  // GOOGLE_CLIENT_IDS. Empty keeps both buttons off the web; the phones' IDs never stand in for
+  // it, because the server cannot tell which of several IDs is the web's.
+  GOOGLE_WEB_CLIENT_ID: z.string().default(''),
   APPLE_CLIENT_IDS: z.string().default('com.togetherledger.ledger,com.togetherledger.ledger.web'),
   // Sign in with Apple's REST API (#218, server/apple.js): exchanging a sign-in's code for a
   // refresh token, and revoking it when the account is deleted. The Team ID, the key's ID and the
@@ -148,7 +153,7 @@ export function loadConfig(overrides = {}) {
   return {
     ...config,
     appOrigins,
-    googleClientIds: listOf(config.GOOGLE_CLIENT_IDS),
+    googleClientIds: listOf([config.GOOGLE_CLIENT_IDS, config.GOOGLE_WEB_CLIENT_ID].join(',')),
     appleClientIds: listOf(config.APPLE_CLIENT_IDS),
     databaseSsl: config.DATABASE_SSL === 'true',
     cookieSecure: config.COOKIE_SECURE === 'true',

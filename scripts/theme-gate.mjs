@@ -44,6 +44,31 @@ const HUE_SEPARATION = [
   { name: 'shared now and share later', roles: ['--shared-now', '--share-later'], minimum: 30 },
 ];
 
+// Sign in with Apple's button may only be drawn the ways Apple's guidelines allow: black or white,
+// its title in the other one, and a white button keeps Apple's black outline wherever it would
+// otherwise vanish into the surface it sits on (#216). Once one theme paints the button, every
+// theme must, so a repaint cannot turn it a third colour or lose it into the dialog.
+const APPLE_BUTTON_TOKENS = ['--apple-button-bg', '--apple-button-fg', '--apple-button-outline'];
+const BLACK = '#000000';
+const WHITE = '#FFFFFF';
+
+export function appleButtonProblems(themeId, values) {
+  const problems = [];
+  const bg = values.get('--apple-button-bg')?.toUpperCase();
+  const fg = values.get('--apple-button-fg')?.toUpperCase();
+  const outline = values.get('--apple-button-outline')?.toLowerCase();
+  const surface = values.get('--surface') || values.get('--bg');
+  if (bg !== BLACK && bg !== WHITE) return [`${themeId} Apple button is ${bg}; Apple allows only black (#000000) or white (#FFFFFF)`];
+  if (fg !== (bg === BLACK ? WHITE : BLACK)) problems.push(`${themeId} Apple button title is ${fg} on ${bg}; Apple's title is white on black and black on white`);
+  if (outline !== 'transparent' && outline !== BLACK.toLowerCase()) problems.push(`${themeId} Apple button outline is ${outline}; Apple allows none (transparent) or black, on a white button`);
+  if (bg === BLACK && outline !== 'transparent') problems.push(`${themeId} Apple button is black with an outline; Apple outlines only the white button`);
+  const edge = contrast(bg, surface);
+  if (edge === null) problems.push(`${themeId} cannot contrast-check the Apple button against its surface`);
+  else if (edge < 3 && bg === BLACK) problems.push(`${themeId} black Apple button is ${edge.toFixed(2)}:1 against its surface; use the white button there`);
+  else if (edge < 3 && outline !== BLACK.toLowerCase()) problems.push(`${themeId} white Apple button is ${edge.toFixed(2)}:1 against its surface; it needs Apple's black outline there`);
+  return problems;
+}
+
 const MOMENT_TOKEN_MAP = new Map([
   ['--bg', '--moment-bg'], ['--fg', '--moment-fg'], ['--muted', '--moment-muted'],
   ['--accent', '--moment-accent'], ['--border', '--moment-border'],
@@ -203,6 +228,16 @@ export function auditThemes({ css, themes, momentThemes }) {
     }
   }
 
+  const paintsAppleButton = [...declared.values()].some((values) => APPLE_BUTTON_TOKENS.some((token) => values.has(token)));
+  if (paintsAppleButton) {
+    for (const theme of themes) {
+      const values = declared.get(theme.id);
+      const missing = APPLE_BUTTON_TOKENS.filter((token) => !values.has(token));
+      if (missing.length) problems.push(`${theme.id} does not define ${missing.join(', ')}; the Apple button must be painted in every theme`);
+      else problems.push(...appleButtonProblems(theme.id, values));
+    }
+  }
+
   for (const id of painted.keys()) {
     if (!themes.some((theme) => theme.id === id)) problems.push(`${id} has CSS but is not registered`);
   }
@@ -242,8 +277,9 @@ export function auditThemes({ css, themes, momentThemes }) {
       pairings: themes.length * momentThemes.length,
       contrastPairs: contrastResults.length,
       minimumContrast: contrastResults.length ? Math.min(...contrastResults) : null,
+      appleButtonThemes: paintsAppleButton ? themes.length : 0,
     },
   };
 }
 
-export { REQUIRED_TOKENS, EMERGING_ROLES, CONTRAST_CONTRACT, EMERGING_CONTRAST, HUE_SEPARATION };
+export { REQUIRED_TOKENS, EMERGING_ROLES, CONTRAST_CONTRACT, EMERGING_CONTRAST, HUE_SEPARATION, APPLE_BUTTON_TOKENS };

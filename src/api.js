@@ -1,10 +1,11 @@
 import { stripPhotoMetadata } from './photo-metadata.js';
 
 export class ApiError extends Error {
-  constructor(message, { code = 'request_failed', status = 0 } = {}) {
+  constructor(message, { code = 'request_failed', status = 0, details = null } = {}) {
     super(message);
     this.code = code;
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -61,6 +62,7 @@ export class TogetherApi {
       throw new ApiError(payload?.error?.message || 'The service could not complete that request.', {
         code: payload?.error?.code,
         status: response.status,
+        details: payload?.error?.details ?? null,
       });
     }
     return payload?.data ?? null;
@@ -81,6 +83,28 @@ export class TogetherApi {
 
   async login(input) {
     const data = await this.request('/auth/login', { method: 'POST', body: input });
+    this.csrfToken = data.csrfToken;
+    return data.user;
+  }
+
+  // Which of Google and Apple this server can sign a browser in with (#216). Public identifiers
+  // only; nothing about an account.
+  providers() {
+    return this.request('/auth/providers');
+  }
+
+  // Google's or Apple's ID token goes to the server and nowhere else. The reply is a password
+  // sign-in's: the session cookie, and the CSRF token kept here in memory. Nothing is stored.
+  async socialSignIn(provider, body) {
+    const data = await this.request(`/auth/${provider}`, { method: 'POST', body });
+    this.csrfToken = data.csrfToken;
+    return data.user;
+  }
+
+  // The answer to `link_required`: the same sign-in, with the password of the account that
+  // already uses its email.
+  async linkIdentity(body) {
+    const data = await this.request('/auth/link', { method: 'POST', body });
     this.csrfToken = data.csrfToken;
     return data.user;
   }
