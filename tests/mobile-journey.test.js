@@ -121,6 +121,22 @@ test('the visibility cue is drawn with the moment, never after it', async () => 
   assert.match(body, /accessibilityLabel=\{`Visibility: \$\{cue\.label\}`\}/, 'and a screen reader says it');
 });
 
+test('a themed card wears its theme without naming it; the form and History still name it (Oct 9)', async () => {
+  const card = await read('src/components/moment-card.tsx');
+  const body = card.slice(card.indexOf('export function MomentCard'), card.indexOf('function Chip'));
+  assert.match(body, /const colors = ownTheme \? getTheme\(ownTheme\)\.colors : app\.colors;/, 'still painted in its own theme');
+  assert.doesNotMatch(card, /momentThemeLabel/, 'the card never looks up its theme\'s name');
+  assert.doesNotMatch(body, /\btheme`|\btheme'|\btheme"/, 'and writes no "… theme" label beside the visibility cue');
+  assert.match(body, /accessibilityLabel=\{`Visibility: \$\{cue\.label\}`\}/, 'the cue\'s own accessible label is unchanged');
+  assert.ok(!web.includes('moment-theme-chip') && !css.includes('moment-theme-chip'), 'the web card has dropped it too, with the style only it used');
+
+  const form = await read('app/moment.tsx');
+  assert.match(form, /\[\{ id: '', label: 'Use my theme' \}, \.\.\.MOMENT_THEMES\]/, 'the form still offers each theme by name');
+  assert.match(form, /help=\{`\$\{momentThemeLabel\(draft\.theme\)\} · exactly as this moment will appear in the ledger\.`\}/, 'and the live preview still says which');
+  const sharing = await importMobile('src/journey/sharing-view.ts');
+  assert.equal(sharing.valueLabel('theme', 'flexoki'), 'Flexoki', 'History still names a changed theme');
+});
+
 test('switching journey, or account, never shows one journey\'s moments under another', async () => {
   const hook = await read('src/journey/use-journey.ts');
   assert.match(hook, /select: \(journeyId: string\) => \{\s*if \(!userId \|\| journeyId === activeId\) return;\s*setHeld\(\{ forUser: userId, state: \{ phase: 'loading' \} \}\);/);

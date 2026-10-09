@@ -51,7 +51,8 @@ test('the public welcome earns the first browser-only moment without making a pr
   await expect(page.locator('#moment-timeline')).toContainText('We made room to listen');
   await expect(page.locator('.trip-bar')).toBeVisible();
   await expect(page.locator('#moment-timeline')).toContainText('Share later');
-  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]')).toContainText("Flexoki theme");
+  // The card wears its theme but never names it: beside the visibility cue, a name would read as a second one (Oct 9).
+  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]')).not.toContainText('Flexoki', { ignoreCase: true });
   await expect(page.locator('#moment-timeline')).toContainText('19.95 is held here as context, not a score.');
   await expect(page.locator('#moment-timeline')).toContainText('Practical money context');
   await expect(page.locator('#guidance')).toBeVisible();
@@ -71,6 +72,35 @@ test('the public welcome earns the first browser-only moment without making a pr
   expect(accessibilityScan.violations).toEqual([]);
   await page.reload();
   await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]')).toContainText('We made room to listen');
+});
+
+test('a themed card is painted in its theme without naming it, while the form and History still name it', async ({ page }) => {
+  await page.goto('/');
+  await beginBrowserLedger(page);
+  await page.locator('#moment-form [name="title"]').fill('The long way home');
+  await page.getByLabel('Flexoki', { exact: true }).check();
+  await expect(page.locator('#moment-theme-preview-name')).toHaveText('Flexoki');
+  await page.getByRole('button', { name: 'Hold this moment' }).click();
+
+  const card = page.locator('#moment-timeline .moment-card[data-moment-theme="flexoki"]');
+  await expect(card).toContainText('The long way home');
+  await expect(card).not.toContainText('Flexoki', { ignoreCase: true });
+  await expect(card).not.toContainText('theme', { ignoreCase: true });
+  // Kind, date and the visibility cue: nothing beside the cue to be mistaken for another one.
+  await expect(card.locator('.moment-meta > *')).toHaveCount(3);
+  await expect(card.locator('.moment-meta > *').last()).toHaveClass(/visibility-chip/);
+
+  await card.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.getByLabel('Flexoki', { exact: true })).toBeChecked();
+  await page.getByLabel('Dark', { exact: true }).check();
+  await expect(page.locator('#moment-theme-preview-name')).toHaveText('Dark');
+  await page.getByRole('button', { name: 'Save moment' }).click();
+  await expect(page.locator('#moment-timeline .moment-card[data-moment-theme="dark"]')).not.toContainText('Dark', { ignoreCase: true });
+
+  await page.locator('#event-manager-button').click();
+  const entry = page.locator('#event-dialog .event-row').filter({ hasText: 'Changed moment theme' });
+  await entry.locator('summary').click();
+  await expect(entry.locator('dl div').filter({ has: page.locator('dt', { hasText: /^theme$/ }) }).locator('dd')).toHaveText('Flexoki → Dark');
 });
 
 test('the browser-only starter holds the requested everyday moment kinds', async ({ page }) => {

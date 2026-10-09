@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '../auth/session';
-import { locationContext, momentLabel, momentThemeLabel, moneyContext, normalizeMomentTheme, visibilityCue, visibilityRole, dateLabel, type MomentImage, type ShownMoment } from '../journey/journey-view';
+import { locationContext, momentLabel, moneyContext, normalizeMomentTheme, visibilityCue, visibilityRole, dateLabel, type MomentImage, type ShownMoment } from '../journey/journey-view';
 import { fonts, getTheme, targetSize, useTheme, type ThemeColors } from '../theme';
 
 /**
  * One moment, as the web's .moment-card draws it (TL-M-07, #182). A moment with its own
  * atmosphere (moment.theme) is painted in that theme's colours whatever the app's theme is.
+ * The card doesn't name the theme: beside the visibility cue, a name read as a second cue.
  *
  * The visibility cue is part of the card itself, drawn in the same pass as the title, so a
  * moment is never on screen without it: shape, word and border together, never colour alone.
@@ -32,7 +33,6 @@ export function MomentCard({ moment, actions }: { moment: ShownMoment; actions?:
             {cue.label}
           </Text>
         </View>
-        {ownTheme ? <Chip colors={colors} radius={radius.pill} text={`${momentThemeLabel(ownTheme)} theme`} /> : null}
       </View>
       <Text style={[styles.title, fonts.serif, { color: colors.fg }]}>{moment.title}</Text>
       {moment.detail ? <Text style={[styles.detail, { color: colors.muted }]}>{moment.detail}</Text> : null}

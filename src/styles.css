@@ -576,7 +576,7 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .moment-card.shared-now { border-left-color: var(--shared-now); }
 .moment-card.share-later { border-left-color: var(--share-later); }
 .moment-meta { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: 12px; font-weight: 800; gap: 7px; margin-bottom: 9px; text-transform: uppercase; }
-.moment-kind, .visibility-chip, .moment-theme-chip { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--ink); font-size: 14px; letter-spacing: .06em; padding: 4px 8px; }
+.moment-kind, .visibility-chip { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--ink); font-size: 14px; letter-spacing: .06em; padding: 4px 8px; }
 .visibility-chip.private { color: var(--private); }
 .visibility-chip.shared-now { color: var(--shared-now); }
 .visibility-chip.share-later { color: var(--share-later); }
