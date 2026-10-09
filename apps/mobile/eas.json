@@ -32,6 +32,9 @@
       "android": {
         "track": "internal",
         "releaseStatus": "draft"
+      },
+      "ios": {
+        "ascAppId": "<OWNER: App Store Connect app ID>"
       }
     }
   }
