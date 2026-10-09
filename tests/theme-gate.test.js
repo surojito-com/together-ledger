@@ -179,3 +179,35 @@ test('hue and saturation are measured as colour, not as bytes', () => {
   assert.ok(hsl('#6B6B6B').saturation < .2);
   assert.ok(hsl('#0B5AA8').saturation > .2);
 });
+
+// Sign in with Apple's button may only be black or white, with Apple's own outline where a white
+// button would vanish (#216). The fixture's surface is white, so a white button there needs it.
+const APPLE_WHITE_OUTLINED = { '--apple-button-bg': '#FFFFFF', '--apple-button-fg': '#000000', '--apple-button-outline': '#000000' };
+
+test('an Apple button drawn the ways Apple allows is accepted in every theme', () => {
+  const { problems, stats } = audit({ extra: APPLE_WHITE_OUTLINED });
+  assert.deepEqual(problems, []);
+  assert.equal(stats.appleButtonThemes, 4);
+  assert.deepEqual(audit({ extra: { '--apple-button-bg': '#000000', '--apple-button-fg': '#FFFFFF', '--apple-button-outline': 'transparent' } }).problems, []);
+});
+
+test('an Apple button painted in one theme must be painted in all of them', () => {
+  const { problems } = audit({ extra: APPLE_WHITE_OUTLINED, extraFor: ['light'] });
+  assert.ok(complains(problems, 'dark does not define --apple-button-bg'));
+});
+
+test('an Apple button in a colour of our own, or with the wrong title colour, is rejected', () => {
+  assert.ok(complains(audit({ extra: { ...APPLE_WHITE_OUTLINED, '--apple-button-bg': '#1F5257' } }).problems, 'Apple allows only black'));
+  assert.ok(complains(audit({ extra: { ...APPLE_WHITE_OUTLINED, '--apple-button-fg': '#1F5257' } }).problems, "Apple's title is white on black"));
+  assert.ok(complains(audit({ extra: { ...APPLE_WHITE_OUTLINED, '--apple-button-outline': '#747775' } }).problems, 'Apple allows none (transparent) or black'));
+});
+
+test('a white Apple button that would vanish into its surface without the outline is rejected', () => {
+  const { problems } = audit({ extra: { ...APPLE_WHITE_OUTLINED, '--apple-button-outline': 'transparent' } });
+  assert.ok(complains(problems, "it needs Apple's black outline there"));
+});
+
+test('a black Apple button on a dark surface is rejected in favour of the white one', () => {
+  const { problems } = audit({ extra: { '--surface': '#111111', '--apple-button-bg': '#000000', '--apple-button-fg': '#FFFFFF', '--apple-button-outline': 'transparent' } });
+  assert.ok(complains(problems, 'use the white button there'));
+});

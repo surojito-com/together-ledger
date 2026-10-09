@@ -114,7 +114,7 @@ is, so they are honest today and say which answer changes if a fix lands.
   (`PRIVACY.md:80`). The `member_deleted_account` event itself is without it
   (`server/platform.js:1890`); the invitation and proposal records are not.
 
-### 1.5 Apple and Google sign-in exist on the server (true; no client offers them yet)
+### 1.5 Apple and Google sign-in exist on the server (true; the web offers them once configured, the phone doesn't)
 
 - **Verified in code.** `POST /api/v1/auth/google` and `/api/v1/auth/apple`, and the link route,
   exist (`server/app.js:191-209`), backed by `server/platform.js:528-680`, `server/identity.js` and
@@ -122,12 +122,20 @@ is, so they are honest today and say which answer changes if a fix lands.
   (or a placeholder for an Apple relay that is taken or missing), and the name it gives
   (`server/platform.js:607-645`). An Apple account also keeps an encrypted Apple refresh token,
   revoked with Apple when the account is deleted (`server/platform.js:1897-1914`, `:1928-1931`).
-- **Verified in code.** Neither the phone nor the web offers either one: the phone's client has
-  no call to these routes (`apps/mobile/src/api/client.ts:135-268`) and no Apple or Google
-  sign-in dependency (`apps/mobile/package.json:13-30`).
-- **What it means.** Nothing goes to Apple or Google for sign-in today. The day a client offers
-  either, Apple and Google become recipients `PRIVACY.md` must name, and **App Store guideline 4.8
-  then requires Sign in with Apple on the phone whenever Google sign-in is offered there.**
+- **Verified in code.** The phone offers neither: its client has no call to these routes
+  (`apps/mobile/src/api/client.ts:135-268`) and no Apple or Google sign-in dependency
+  (`apps/mobile/package.json:13-30`).
+- **Verified in code (#216).** The web offers both together, or neither. It shows "Continue with
+  Google" and "Continue with Apple" only when `GET /api/v1/auth/providers` says both are
+  configured (`server/app.js:194-197`, `server/platform.js:644-651`), and it loads Google's and
+  Apple's own scripts only when a signed-out person opens the account dialog
+  (`src/app.js:1683-1715`). Until `GOOGLE_WEB_CLIENT_ID` is set on the server, it shows neither.
+  The store answers in Part 3 are about the phone and don't change.
+- **What it means.** Nothing goes to Apple or Google for sign-in from the phone, and nothing from
+  the web until the owner sets `GOOGLE_WEB_CLIENT_ID`. Then, on the web, the person's browser
+  signs in with Apple or Google directly, and `PRIVACY.md` already names both (its "Signing in
+  with Apple or Google"). **App Store guideline 4.8 requires Sign in with Apple on the phone
+  whenever Google sign-in is offered there.**
 - **Verified in code.** The phone deletes an account only with a password
   (`apps/mobile/app/delete-account.tsx:48-50`). A Google or Apple account has none
   (`server/platform.js:642`, `:1842-1848`), so the phone's delete screen needs to change before
@@ -160,7 +168,7 @@ is, so they are honest today and say which answer changes if a fix lands.
 | Password | Required | Typed at registration, 12–128 characters, stored only as an Argon2id hash (`server/platform.js:89-91`, `server/security.js:17-27`) | Verified in code |
 | Display name (what journeyers see) | Optional | Starts as the username (`server/platform.js:459`); changed in the app (`client.ts:214-216`, `server/platform.js:1801-1815`). A change is written into every journey's history (`server/platform.js:1809-1812`) | Verified in code |
 | Email verified, created-at | Set by the server | `server/platform.js:99-108`, `:492` | Verified in code |
-| Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; no client uses it (1.5) | Verified in code |
+| Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; the web, once configured, and not the phone (1.5) | Verified in code |
 | Store purchase tokens (random UUIDs per account and per journey) | Only when a purchase starts | `server/platform.js:1824-1839`; fetched by the phone before each purchase (`apps/mobile/src/api/client.ts:255`) and handed to Apple or Google (`apps/mobile/src/billing/store-purchase.ts:117`, `:121`) (#340) | Verified in code |
 | Store purchases (the Apple signed transaction, or the Google product and purchase token; the moment for an extra place) | Only when the person buys | Sent by the phone after each purchase (`apps/mobile/src/api/client.ts:264-268`, `apps/mobile/src/billing/store-purchase.ts:186`) and kept as a `billing_store_purchases` row (`docs/STORE_PURCHASES.md`) (#340) | Verified in code |
 | What Apple says about a purchase afterwards (App Store Server Notifications: type, subtype, Apple's `transactionId`, when it was signed and received, and what changed) | Only when Apple sends one, server to server; the phone is not involved | Kept as a `billing_store_notifications` row (`server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql`, `docs/STORE_PURCHASES.md`) (#273) | Verified in code |
@@ -210,8 +218,8 @@ password, `server/platform.js:821-840`), the theme, and any moment still waiting
 | Cloudflare | Domain names, and serves the web app; sees request details for those hosts | DNS, web app hosting | Partly: the web app deploys through Wrangler (`wrangler.jsonc`); whether `api.together-ledger.com` is proxied through Cloudflare is not verified |
 | Email sender (Resend) | Destination address, message content (verification, recovery, invitation and proposal emails) | Sending account and journey emails | The code sends through any SMTP server (`server/mailer.js:41-43`, `server/config.js:23`); that it is Resend is **not verified** in code (`PRIVACY.md:46`) |
 | Stripe | Email, internal account/journey/moment references (`server/billing.js:185-186`, `:223-240`, `:272`, `:288`) | Web payments | Verified in code. **The phone never reaches Stripe** (`tests/mobile-no-stripe.test.js`) |
-| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing today (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
-| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing today (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
+| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing from the phone; on the web, once configured, the person's browser signs in with Apple directly (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
+| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing from the phone; on the web, once configured, the person's browser signs in with Google directly (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
 | Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision (owner, Oct 8, 2026)**: it stays *not verified*; Google Play's own guidance is checked before the Data safety form is filled in, and that decides whether it counts as our collection or Google's |
 | Expo (EAS) | Builds and submits the phone app. The app itself makes no call to Expo: there is no `expo-updates`, `expo-insights` or notifications dependency (`apps/mobile/package.json:13-30`) | Building | Not verified by captured traffic (TL-C-03, #261) |
 

@@ -21,4 +21,4 @@ if (problems.length) {
 const roles = activeRoles.length
   ? `${activeRoles.length} semantic roles beyond the base seven`
   : 'base seven tokens only';
-console.log(`✓ theme check passed — ${stats.themes} page themes (${stats.light} light, ${stats.dark} dark), ${stats.momentThemes} approved moment themes, ${stats.pairings} scoped pairings, ${roles}, ${stats.contrastPairs} WCAG AA text pairs, minimum ${stats.minimumContrast.toFixed(2)}:1.`);
+console.log(`✓ theme check passed — ${stats.themes} page themes (${stats.light} light, ${stats.dark} dark), ${stats.momentThemes} approved moment themes, ${stats.pairings} scoped pairings, ${roles}, ${stats.contrastPairs} WCAG AA text pairs, minimum ${stats.minimumContrast.toFixed(2)}:1${stats.appleButtonThemes ? `, Apple's button checked in all ${stats.appleButtonThemes}` : ''}.`);
