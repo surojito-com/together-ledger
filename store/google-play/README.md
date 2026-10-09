@@ -32,7 +32,8 @@ node store/google-play/check-listing.mjs
 
 It checks the three lengths, emoji, superlatives and other brands' names, the
 capacity words `CLAUDE.md` rules out (seats, licenses, slots, "removed"),
-claims nothing in Together Ledger backs yet, and that "A journey of two is
+claims nothing in Together Ledger backs yet (and offline, until the owner
+decides; see below), and that "A journey of two is
 free" and the agreement rule for adding people are still there. It runs in
 `npm run check` too, beside the App Store check (owner, Oct 8).
 
@@ -57,9 +58,12 @@ free" and the agreement rule for adding people are still there. It runs in
 | 18 and over; not therapy, financial advice or professional support | `TERMS.md`, `PRIVACY.md`, `index.html` |
 
 Left out on purpose, because nothing in Together Ledger does them yet:
-**notifications** (#265), **offline** (#300), **encryption**, and
-"seamless" sync (#186 is open and `TERMS.md` disclaims conflicts). A
-**price** is left out too: only "a journey of two is free" is stated, since
+**notifications** (#265), **encryption**, and "seamless" sync (#186 is open
+and `TERMS.md` disclaims conflicts). **Offline** (#300) is left out too, but
+no longer for that reason: since #361 and #366 the phone says when it is
+offline and holds a new moment until the connection returns. Whether the
+listing says so is the owner's call, not yet made, so the check still refuses
+the word. A **price** is left out too: only "a journey of two is free" is stated, since
 live billing isn't on yet.
 
 ## Images

@@ -8,8 +8,11 @@
  * EAS build profile) is active for that build — local, staging, or
  * production. See `apps/mobile/.env.example` and the mobile section of the
  * root README for how each environment sets it.
+ *
+ * The development fallback is the API server's own port (`PORT` in `server/config.js`, 4174), not
+ * the static web server's (`scripts/dev.mjs`, 4173), which has no `/api/v1` (#283).
  */
-const LOCAL_DEV_ORIGIN = 'http://localhost:4173';
+const LOCAL_DEV_ORIGIN = 'http://localhost:4174';
 
 export function apiOrigin(): string {
   const configured = process.env.EXPO_PUBLIC_API_ORIGIN?.trim();
