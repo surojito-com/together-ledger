@@ -7,6 +7,7 @@
  */
 import { countOf, dateLabel, money, MOMENT_TYPES, RECENT_MOMENTS_SHOWN, seeAllShown } from '../../../../src/model.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
+import type { MomentView } from '../storage/ledger-store';
 import type { Grace } from './sharing-view';
 
 export { dateLabel, money, MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, seeAllShown };
@@ -84,6 +85,15 @@ const momentTypes = MOMENT_TYPES as [string, string][];
 export function momentLabel(kind: string, kindLabel?: string | null) {
   if (kind === 'other') return kindLabel || 'A shared note';
   return momentTypes.find(([value]) => value === kind)?.[1] || 'Moment';
+}
+
+/** The choice above the moment list (Oct 9), in the words the owner approves. */
+export const MOMENT_VIEW_LABEL = 'Show moments';
+export const MOMENT_VIEWS: [MomentView, string][] = [['full', 'In full'], ['compact', 'Compact']];
+
+/** What a screen reader hears for a compact row: its title, its date and its visibility. */
+export function compactRowLabel(moment: Moment) {
+  return `${moment.title}, ${dateLabel(moment.occurredOn)}, Visibility: ${visibilityCue(moment.visibility).label}`;
 }
 
 export function journeyPeriod(journey: Journey) {
