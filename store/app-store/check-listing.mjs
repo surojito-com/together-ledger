@@ -52,8 +52,10 @@ const listingWords = [
   'android', 'google', 'play store', 'whatsapp',
 ];
 // What the iPhone app can't do yet, so the listing doesn't claim it: notifications (#265),
-// offline (#300), encryption, seamless sync (#186), attaching a photo (#187), the web's export and
-// guided check-in. Nor anything that scores a relationship.
+// encryption, seamless sync (#186), attaching a photo (#187), the web's export and guided
+// check-in. Nor anything that scores a relationship. Offline (#300) is refused for another
+// reason: since #361 and #366 the phone says when it is offline and holds a new moment until the
+// connection returns, but whether the listing says so is the owner's call, not yet made.
 const listingStems = ['notification', 'offline', 'end-to-end', 'encrypt', 'sync', 'photo', 'export', 'check-in', 'check in'];
 const listingPhrases = ['relationship score', 'healthy relationship'];
 
