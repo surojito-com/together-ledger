@@ -34,7 +34,7 @@
         "releaseStatus": "draft"
       },
       "ios": {
-        "ascAppId": "<OWNER: App Store Connect app ID>"
+        "ascAppId": "6820375940"
       }
     }
   }

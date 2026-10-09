@@ -158,10 +158,10 @@ test('the privacy manifest collects exactly what the App Privacy answers say, fo
 
 // ---------------------------------------------------------------------------------------------
 
-test('eas submit sends the iPhone build to the owner\'s App Store Connect app, once its ID is filled in', () => {
-  // A placeholder, not an ID: EAS refuses an ascAppId that is not all digits, so `eas submit -p ios`
-  // stops here until the owner puts in the Apple ID from App Information. It is not a secret.
-  assert.equal(eas.submit.production.ios.ascAppId, '<OWNER: App Store Connect app ID>');
+test('eas submit sends the iPhone build to the owner\'s App Store Connect app', () => {
+  // The Apple ID from App Store Connect → Together-Ledger → App Information (owner, Oct 9). EAS
+  // refuses an ascAppId that is not all digits. It is not a secret.
+  assert.equal(eas.submit.production.ios.ascAppId, '6820375940');
   assert.deepEqual(Object.keys(eas.submit.production.ios), ['ascAppId'], 'the API key lives in EAS, never here');
   assert.deepEqual(eas.submit.production.android, { track: 'internal', releaseStatus: 'draft' });
   assert.deepEqual(eas.build.production, { channel: 'production', env: { EXPO_PUBLIC_API_ORIGIN: 'https://api.together-ledger.com' }, autoIncrement: true });

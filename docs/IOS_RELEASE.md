@@ -42,15 +42,13 @@ change in App Store Connect, the Apple Developer account or EAS. The owner runs 
    purchase products (#271) need the same record, so it probably exists already. If it doesn't:
    App Store Connect → Apps → **+** → New App, platform iOS, name "Together-Ledger", bundle ID
    `com.togetherledger.ledger`.
-5. **The record's Apple ID, in `apps/mobile/eas.json`.** Replace
-   `<OWNER: App Store Connect app ID>` under `submit.production.ios.ascAppId` with the number
-   shown at App Store Connect → Apps → Together-Ledger → **App Information** → General Information
+5. **The record's Apple ID, in `apps/mobile/eas.json`.** Done Oct 9: `submit.production.ios.ascAppId`
+   is `6820375940`, the number shown at App Store Connect → Apps → Together-Ledger → **App Information** → General Information
    → **Apple ID** ([Expo: How to find ascAppId](https://docs.expo.dev/submit/ios/#configure-a-submission-profile);
    [Apple: App information](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information):
    "A unique identifier automatically generated for your app"). It is not a secret, so commit it in
-   its own pull request. Until it is filled in, `eas submit -p ios` stops, because EAS accepts only
-   digits there: "It should consist only of digits" (`@expo/eas-json` 24.9.0,
-   `build/submit/schema.js`). Android submissions are not affected.
+   its own pull request. EAS accepts only digits there: "It should consist only of digits"
+   (`@expo/eas-json` 24.9.0, `build/submit/schema.js`). Android submissions are not affected.
 
 ---
 
@@ -160,7 +158,7 @@ number.
 
 ## 3. Submit it to TestFlight
 
-From `apps/mobile`, once `ascAppId` is filled in (Before you start, 5):
+From `apps/mobile`, with `ascAppId` filled in (Before you start, 5):
 
 ```
 eas submit --platform ios --profile production
@@ -326,4 +324,4 @@ Checked at this pull request's head. `tests/mobile-ios-release.test.js` fails if
 | The StoreKit product IDs match the server's | `apps/mobile/src/billing/store-products.ts:29-38` and `server/store-products.js:19-28`, the same eight IDs; held by `tests/mobile-store-purchase.test.js:116-122` |
 | No social login on the phone, so guideline 4.8 doesn't require Sign in with Apple | `apps/mobile/src/api/client.ts:116-179` calls only `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/refresh`, `/auth/resend-verification` and `/auth/verify-email`; no Apple or Google sign-in dependency. The server can do both (`docs/STORE_READINESS.md` 1.5). The day the phone offers Google, Sign in with Apple has to come with it |
 | Privacy manifest present, no tracking | `apps/mobile/app.json`, `expo.ios.privacyManifests` |
-| Submit profile points at the owner's app | `apps/mobile/eas.json`, `submit.production.ios.ascAppId`, a placeholder until the owner fills it in |
+| Submit profile points at the owner's app | `apps/mobile/eas.json`, `submit.production.ios.ascAppId`, `6820375940` (App Information → Apple ID) |
