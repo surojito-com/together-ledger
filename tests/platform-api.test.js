@@ -18,6 +18,7 @@ const apiOrigin = 'https://api.example.test';
 
 async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z'), beforeMigration029 } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
+  memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   memory.public.registerFunction({
     name: 'char_length',
     args: ['text'],
@@ -38,6 +39,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/012_bill-additional-moment-images.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/013_name-moment-image-attachments.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/014_hold-places-with-shared-moments.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/015_bill-additional-moment-places.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/016_make-extra-image-payments-one-time.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/017_keep-one-removed-photo-per-moment.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/018_allow-ninety-nine-paid-journey-places.sql', import.meta.url), 'utf8'));
@@ -49,6 +51,9 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
+  // 034 adds to the store purchase records, so they come first.
+  await pool.query(await readFile(new URL('../server/migrations/027_tie-every-store-purchase-to-an-account.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/028_turn-a-store-purchase-into-capacity.sql', import.meta.url), 'utf8'));
   if (beforeMigration029) await beforeMigration029(pool);
   await pool.query(await readFile(new URL('../server/migrations/029_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
   // pg-mem cannot parse NOT VALID. Real PostgreSQL runs 030 as written, and
@@ -57,6 +62,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/031_let-a-lost-renewal-reply-be-asked-again.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/033_let-a-moment-held-offline-arrive-once.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -2795,4 +2801,115 @@ test('the request log keeps which phone build asked, cleaned and capped, and not
 
   assert.equal(cleanBuild(['and/1']), undefined);
   assert.equal(cleanBuild('and/0.1.0+2/977f365\r\nInjected: yes'), 'and/0.1.0+2/977f365Injectedyes', 'no new line can start a fake log entry');
+});
+
+// #367: a date shaped like one but not on the calendar, such as 2026-02-30, reached Postgres and
+// came back as a 500. Every date the server accepts is now a real day, and an impossible one is
+// refused in the words that field is refused with already.
+test('an impossible date is refused in words, for a moment, an expense and a journey, and a leap day is not', async (t) => {
+  const { app, pool, alice, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const impossible = ['2026-02-30', '2026-02-29', '2026-13-01', '2026-01-00', '2026-04-31', '0000-01-01'];
+  const refusedWith = (response, message, date) => {
+    assert.equal(response.statusCode, 400, `${date}: ${response.body}`);
+    assert.deepEqual(response.json().error, { code: 'invalid_input', message }, date);
+  };
+  const momentInput = { kind: 'memory', title: 'A day that is', detail: '', visibility: 'shared-now' };
+  const expenseInput = { merchant: 'Bakery', category: 'Restaurants', amountCents: 500, payerLabel: 'Alice', status: 'paid' };
+  const journeyInput = { name: 'Dated', location: '', startDateStatus: 'exact', endDateStatus: 'date', budgetCents: 0 };
+  const post = (url, payload) => app.inject({ method: 'POST', url, headers: authHeaders(alice), payload });
+  const patch = (url, payload) => app.inject({ method: 'PATCH', url, headers: authHeaders(alice), payload });
+
+  const moment = (await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: '2026-02-28' })).json().data.moment;
+  const expense = (await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: '2026-02-28' })).json().data.expense;
+  const dated = (await post('/api/v1/journeys', { ...journeyInput, startDate: '2026-02-01', endDate: '2026-02-28' })).json().data.journey;
+  for (const date of impossible) {
+    refusedWith(await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: date }), 'Choose a valid moment date.', date);
+    refusedWith(await patch(`/api/v1/journeys/${journey.id}/moments/${moment.id}`, { occurredOn: date, version: moment.version }), 'Choose a valid moment date.', date);
+    refusedWith(await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: date }), 'Choose a valid expense date.', date);
+    refusedWith(await patch(`/api/v1/journeys/${journey.id}/expenses/${expense.id}`, { occurredOn: date, version: expense.version }), 'Expense details are not valid.', date);
+    refusedWith(await post('/api/v1/journeys', { ...journeyInput, startDate: date, endDate: '2026-12-31' }), 'Choose a start date or select “I don’t remember exactly.”', date);
+    refusedWith(await post('/api/v1/journeys', { ...journeyInput, startDate: '2026-01-01', endDate: date }), 'Choose an end date or select another ending.', date);
+    refusedWith(await patch(`/api/v1/journeys/${dated.id}`, { startDate: date, version: dated.version }), 'Choose a start date or select “I don’t remember exactly.”', date);
+    refusedWith(await patch(`/api/v1/journeys/${dated.id}`, { endDate: date, version: dated.version }), 'Choose an end date or select another ending.', date);
+  }
+  const unchanged = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data;
+  assert.equal(unchanged.moments.find((one) => one.id === moment.id).occurredOn, '2026-02-28', 'nothing refused was kept');
+  assert.equal(unchanged.expenses.find((one) => one.id === expense.id).occurredOn, '2026-02-28');
+
+  // February 29 is a day in a leap year, and in a century year only when it divides by 400.
+  for (const date of ['2028-02-29', '2000-02-29']) {
+    const held = await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: date });
+    assert.equal(held.statusCode, 201, `${date}: ${held.body}`);
+    assert.equal(held.json().data.moment.occurredOn, date);
+    const paid = await post(`/api/v1/journeys/${journey.id}/expenses`, { ...expenseInput, occurredOn: date });
+    assert.equal(paid.statusCode, 201, `${date}: ${paid.body}`);
+    const started = await post('/api/v1/journeys', { ...journeyInput, startDate: date, endDate: date });
+    assert.equal(started.statusCode, 201, `${date}: ${started.body}`);
+  }
+  refusedWith(await post(`/api/v1/journeys/${journey.id}/moments`, { ...momentInput, occurredOn: '2100-02-29' }), 'Choose a valid moment date.', '2100-02-29');
+  const changed = await patch(`/api/v1/journeys/${journey.id}/moments/${moment.id}`, { occurredOn: '2028-02-29', version: moment.version });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const repriced = await patch(`/api/v1/journeys/${journey.id}/expenses/${expense.id}`, { occurredOn: '2028-02-29', version: expense.version });
+  assert.equal(repriced.statusCode, 200, repriced.body);
+  const redated = await patch(`/api/v1/journeys/${dated.id}`, { endDate: '2028-02-29', version: dated.version });
+  assert.equal(redated.statusCode, 200, redated.body);
+});
+
+// #368: a moment's History entries named both who added it and who last changed it as Journey
+// member, because the rows they were written from carried no names. They now carry the names the
+// journey knew those people by when the entry was written, and Former journeyer for anyone who had
+// left. History is append-only: what an entry recorded never changes afterwards.
+test('a moment\'s History entries name who added it and who last changed it, as the journey knew them then', async (t) => {
+  const { app, pool, platform, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const momentInput = { kind: 'memory', title: 'The harbour', detail: 'What we said there', occurredOn: '2026-08-01', visibility: 'shared-now' };
+  const entries = async (action) => (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data.events.filter((event) => event.action === action);
+  const names = (value) => value && { createdBy: value.createdBy, updatedBy: value.updatedBy };
+
+  const added = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(alice), payload: momentInput });
+  assert.equal(added.statusCode, 201, added.body);
+  const moment = added.json().data.moment;
+  assert.deepEqual(names(moment), { createdBy: 'name-alice', updatedBy: 'name-alice' }, 'the reply names her too');
+  assert.deepEqual(names((await entries('moment_added'))[0].after), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+
+  const changed = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(bob), payload: { title: 'The harbour at night', version: moment.version } });
+  assert.equal(changed.statusCode, 200, changed.body);
+  const [byBob] = await entries('moment_updated');
+  assert.deepEqual(names(byBob.before), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+  assert.deepEqual(names(byBob.after), { createdBy: 'name-alice', updatedBy: 'name-bob' });
+
+  // A name changed later is not written back into entries already there.
+  await app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(bob), payload: { displayName: 'Sam' } });
+  const again = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${moment.id}`, headers: authHeaders(alice), payload: { title: 'The harbour, late', version: changed.json().data.moment.version } });
+  assert.equal(again.statusCode, 200, again.body);
+  const updates = await entries('moment_updated');
+  assert.deepEqual(names(updates[0].after), { createdBy: 'name-alice', updatedBy: 'name-bob' }, 'the earlier entry stays as it was written');
+  assert.deepEqual(names(updates[1].before), { createdBy: 'name-alice', updatedBy: 'Sam' }, 'the new one has the name used now');
+  assert.deepEqual(names(updates[1].after), { createdBy: 'name-alice', updatedBy: 'name-alice' });
+
+  // Someone who has left the journey is Former journeyer, in what is written from then on.
+  const theirs = (await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob), payload: { ...momentInput, title: 'The ferry' } })).json().data.moment;
+  assert.deepEqual(names((await entries('moment_added'))[1].after), { createdBy: 'Sam', updatedBy: 'Sam' });
+  await platform.removeMember(alice.user.id, journey.id, bob.user.id);
+  const afterLeaving = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}/moments/${theirs.id}`, headers: authHeaders(alice), payload: { title: 'The ferry home', version: theirs.version } });
+  assert.equal(afterLeaving.statusCode, 200, afterLeaving.body);
+  const left = (await entries('moment_updated'))[2];
+  assert.deepEqual(names(left.before), { createdBy: 'Former journeyer', updatedBy: 'Former journeyer' });
+  assert.deepEqual(names(left.after), { createdBy: 'Former journeyer', updatedBy: 'name-alice' });
+  assert.deepEqual(names((await entries('moment_added'))[1].after), { createdBy: 'Sam', updatedBy: 'Sam' }, 'what was written while they were here stays');
+});
+
+test('a moment added by someone who then deleted their account is recorded under Former journeyer', async (t) => {
+  const { app, pool, platform, alice, bob, journey } = await sharedJourney();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const theirs = (await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(bob), payload: { kind: 'memory', title: 'The ferry', detail: '', occurredOn: '2026-08-01', visibility: 'shared-now' } })).json().data.moment;
+  await platform.eraseAccount(bob.user.id);
+  const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/moments/${theirs.id}`, headers: authHeaders(alice), payload: { version: theirs.version } });
+  assert.equal(removed.statusCode, 204, removed.body);
+  const events = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: authHeaders(alice) })).json().data.events;
+  const tombstone = events.find((event) => event.action === 'moment_deleted');
+  assert.equal(tombstone.before.createdBy, 'Former journeyer', 'never Deleted account, and never the name they had');
+  assert.equal(tombstone.before.updatedBy, 'Former journeyer');
+  assert.equal(events.find((event) => event.action === 'moment_added').after.createdBy, 'name-bob', 'the entry written while they were here stays as it was');
 });

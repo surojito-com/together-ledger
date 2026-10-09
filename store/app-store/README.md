@@ -96,11 +96,11 @@ Decided by the owner on Oct 8, 2026:
 the end of `full-description.txt`), so nothing in them changes. Two things
 outside them do:
 
-1. **`docs/STORE_READINESS.md` (3.2) still gives
-   `https://together-ledger.com/privacy`.** That address serves the company
-   site's own privacy page ("Privacy — Together Ledger Digital", checked Oct 8),
-   not `PRIVACY.md`. Change it to the `app.` address, and check that Play
-   Console's Privacy policy field holds the `app.` address too.
+1. **`docs/STORE_READINESS.md` (3.2) gave
+   `https://together-ledger.com/privacy`,** which serves the company site's
+   own privacy page ("Privacy — Together Ledger Digital", checked Oct 8), not
+   `PRIVACY.md`. It now gives the `app.` address. Check that Play Console's
+   Privacy policy field holds the `app.` address too.
 2. **Play's Data safety "Delete account URL"** is
    `https://together-ledger.com/privacy`, by the owner's decision of Oct 8
    (`docs/STORE_READINESS.md`, 3.1). That is a separate field and decision;

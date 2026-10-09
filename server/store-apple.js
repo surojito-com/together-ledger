@@ -159,8 +159,10 @@ export class AppleTransactionVerifier {
 
   // The verified payload of a signed transaction, or an AppleVerificationError saying which check
   // failed. The reason is for our log; the person is told only that it could not be confirmed.
-  verify(signedTransaction) {
-    if (typeof signedTransaction !== 'string' || signedTransaction.length > MAX_JWS_LENGTH) throw new AppleVerificationError('it is not a signed transaction');
+  // App Store Server Notifications (#273) are signed the same way, with the same chain, and carry
+  // the transaction inside them as a JWS of its own, so a notification may be longer.
+  verify(signedTransaction, { maxLength = MAX_JWS_LENGTH } = {}) {
+    if (typeof signedTransaction !== 'string' || signedTransaction.length > maxLength) throw new AppleVerificationError('it is not a signed transaction');
     const parts = signedTransaction.split('.');
     if (parts.length !== 3) throw new AppleVerificationError('it is not a compact JWS');
     const [headerSegment, payloadSegment, signatureSegment] = parts;

@@ -32,14 +32,17 @@ const MIGRATIONS = [
   '001_platform.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql',
   '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql',
   '009_reserve-group-places.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql',
-  '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '016_make-extra-image-payments-one-time.sql',
+  '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql',
   '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql',
   '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql',
   '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql',
   '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql',
   '026_remember-a-refused-apple-deletion.sql',
+  // 034 adds to the store purchase records, so they come first.
+  '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql',
   '031_let-a-lost-renewal-reply-be-asked-again.sql',
   '033_let-a-moment-held-offline-arrive-once.sql',
+  '034_hear-refunds-and-renewals-from-the-stores.sql',
 ];
 
 function provider(kid) {
@@ -104,6 +107,7 @@ const appleToken = (claims, options) => idToken(apple, { iss: 'https://appleid.a
 async function setup(overrides = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
+  memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   const pool = new (memory.adapters.createPg().Pool)();
   for (const name of MIGRATIONS) await pool.query(await readFile(new URL(`../server/migrations/${name}`, import.meta.url), 'utf8'));
   const config = loadConfig({

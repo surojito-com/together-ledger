@@ -113,6 +113,19 @@ function publicUser(row) {
   };
 }
 
+// A date the server accepts is a real day on the calendar (#367), not only one shaped like it:
+// 2026-02-30 used to reach the database, which refused it, and the person got a server error
+// instead of words they could act on.
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function isCalendarDate(value) {
+  if (typeof value !== 'string' || !DATE_PATTERN.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return day <= (month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1]);
+}
+
 function dateOnly(value) {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   const text = String(value || '');
@@ -326,7 +339,7 @@ function cleanMoment(input, existing = null) {
     ? cleanText(input.kindLabel ?? existing?.kindLabel, 'A name for this kind of moment', 60)
     : '';
   const occurredOn = input.occurredOn ?? existing?.occurredOn;
-  if (!DATE_PATTERN.test(occurredOn || '')) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
+  if (!isCalendarDate(occurredOn)) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
   const moneyValue = Object.hasOwn(input, 'moneyCents') ? input.moneyCents : existing?.moneyCents;
   const moneyCents = moneyValue == null || moneyValue === '' ? null : Number(moneyValue);
   if (moneyCents != null && (!Number.isSafeInteger(moneyCents) || moneyCents < 0 || moneyCents > 100000000)) throw new PlatformError(400, 'invalid_input', 'Enter a valid optional money context.');
@@ -369,8 +382,8 @@ function cleanJourneyDetails(input, existing = null) {
   const suppliedEndDate = Object.hasOwn(input, 'endDate') ? input.endDate : existing?.endDate;
   const startDate = startDateStatus === 'exact' ? (suppliedStartDate ?? '') : null;
   const endDate = endDateStatus === 'date' ? (suppliedEndDate ?? '') : null;
-  if (startDateStatus === 'exact' && !DATE_PATTERN.test(startDate)) throw new PlatformError(400, 'invalid_input', 'Choose a start date or select “I don’t remember exactly.”');
-  if (endDateStatus === 'date' && !DATE_PATTERN.test(endDate)) throw new PlatformError(400, 'invalid_input', 'Choose an end date or select another ending.');
+  if (startDateStatus === 'exact' && !isCalendarDate(startDate)) throw new PlatformError(400, 'invalid_input', 'Choose a start date or select “I don’t remember exactly.”');
+  if (endDateStatus === 'date' && !isCalendarDate(endDate)) throw new PlatformError(400, 'invalid_input', 'Choose an end date or select another ending.');
   if (startDate && endDate && endDate < startDate) throw new PlatformError(400, 'invalid_input', 'The end date must be on or after the start date.');
   return { startDateStatus, endDateStatus, startDate, endDate };
 }
@@ -1736,7 +1749,7 @@ export class PlatformService {
       const amountCents = Number(input.amountCents);
       if (!Number.isSafeInteger(amountCents) || amountCents < 1 || amountCents > 100000000) throw new PlatformError(400, 'invalid_input', 'Enter a valid amount.');
       if (!CATEGORIES.has(input.category)) throw new PlatformError(400, 'invalid_input', 'Choose a valid category.');
-      if (!DATE_PATTERN.test(input.occurredOn || '')) throw new PlatformError(400, 'invalid_input', 'Choose a valid expense date.');
+      if (!isCalendarDate(input.occurredOn)) throw new PlatformError(400, 'invalid_input', 'Choose a valid expense date.');
       const created = await client.query(
         `INSERT INTO expenses (id,journey_id,merchant,category,amount_cents,occurred_on,paid_by_user_id,payer_label,account,status,reference,notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
@@ -1765,7 +1778,7 @@ export class PlatformService {
       const nextCategory = input.category ?? before.category;
       const nextDate = input.occurredOn ?? before.occurredOn;
       const nextStatus = input.status ?? before.status;
-      if (!Number.isSafeInteger(nextAmount) || nextAmount < 1 || nextAmount > 100000000 || !CATEGORIES.has(nextCategory) || !DATE_PATTERN.test(nextDate) || !STATUSES.has(nextStatus)) throw new PlatformError(400, 'invalid_input', 'Expense details are not valid.');
+      if (!Number.isSafeInteger(nextAmount) || nextAmount < 1 || nextAmount > 100000000 || !CATEGORIES.has(nextCategory) || !isCalendarDate(nextDate) || !STATUSES.has(nextStatus)) throw new PlatformError(400, 'invalid_input', 'Expense details are not valid.');
       const updated = await client.query(
         `UPDATE expenses SET merchant=$1,category=$2,amount_cents=$3,occurred_on=$4,paid_by_user_id=$5,payer_label=$6,account=$7,status=$8,reference=$9,notes=$10,version=version+1,updated_at=$11 WHERE id=$12 RETURNING *`,
         [cleanText(input.merchant ?? before.merchant, 'Expense name', 80), nextCategory, nextAmount, nextDate, input.paidByUserId ?? before.paidByUserId, cleanText(input.payerLabel ?? before.payerLabel, 'Payer', 80), String(input.account ?? before.account).slice(0, 50), nextStatus, String(input.reference ?? before.reference).slice(0, 60), String(input.notes ?? before.notes).slice(0, 300), this.now(), expenseId],
@@ -1774,6 +1787,18 @@ export class PlatformService {
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'expense_updated', entityType: 'expense', entityId: expenseId, summary: `Updated expense: ${after.merchant}`, before: auditExpense(before), after: auditExpense(after) });
       return after;
     });
+  }
+
+  // Who added a moment and who last changed it, by the names the journey knows them by right now
+  // (#368), so the History entry written in the same step records them. A row read straight from
+  // journey_moments has neither name, and every moment entry used to say Journey member. Anyone no
+  // longer in the journey, because they left, were removed or deleted their account, is Former
+  // journeyer, as everywhere else in History.
+  async nameMomentPeople(client, journeyId, row) {
+    const people = await client.query('SELECT u.id,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id WHERE jm.journey_id=$1', [journeyId]);
+    const names = new Map(people.rows.map((person) => [person.id, person.display_name]));
+    const nameOf = (id) => (id ? names.get(id) || 'Former journeyer' : null);
+    return { ...row, created_by_name: nameOf(row.created_by_user_id), updated_by_name: nameOf(row.updated_by_user_id) };
   }
 
   async createMoment(userId, journeyId, input) {
@@ -1801,7 +1826,7 @@ export class PlatformService {
           if (held.rows[0].content_hash !== contentHash) throw new PlatformError(409, 'moment_key_reused', 'This moment was already sent with different details. The first one is kept, and this one was not held.');
           const found = await client.query('SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND created_by_user_id=$3', [held.rows[0].moment_id, journeyId, userId]);
           if (!found.rowCount) throw new PlatformError(409, 'moment_already_deleted', 'This moment was already held and has since been deleted, so it was not held again.');
-          return { moment: publicMoment(found.rows[0]), replayed: true };
+          return { moment: publicMoment(await this.nameMomentPeople(client, journeyId, found.rows[0])), replayed: true };
         }
         await this.requireMember(client, userId, journeyId);
       }
@@ -1811,7 +1836,7 @@ export class PlatformService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14) RETURNING *`,
         [id, journeyId, next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.theme || null, next.moneyCents, next.moneyCurrency, JSON.stringify(next.locations), userId, userId],
       );
-      const moment = publicMoment(created.rows[0]);
+      const moment = publicMoment(await this.nameMomentPeople(client, journeyId, created.rows[0]));
       if (moment.visibility === 'shared-now') {
         await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'moment_added', entityType: 'moment', entityId: id, summary: `Held ${moment.kindLabel || moment.kind}: ${moment.title}`, after: auditMoment(moment) });
       } else {
@@ -1830,7 +1855,7 @@ export class PlatformService {
       await this.lockJourney(client, journeyId);
       const found = await client.query("SELECT * FROM journey_moments WHERE id=$1 AND journey_id=$2 AND (visibility='shared-now' OR created_by_user_id=$3) FOR UPDATE", [momentId, journeyId, userId]);
       if (!found.rowCount) throw notFound();
-      const before = publicMoment(found.rows[0]);
+      const before = publicMoment(await this.nameMomentPeople(client, journeyId, found.rows[0]));
       if (Number(input.version) !== before.version) throw new PlatformError(409, 'conflict', 'This moment changed on another device.');
       if (remove) {
         if (before.visibility !== 'shared-now') {
@@ -1847,7 +1872,7 @@ export class PlatformService {
         `UPDATE journey_moments SET kind=$1,kind_label=$2,occurred_on=$3,title=$4,detail=$5,visibility=$6,theme=$7,money_cents=$8,money_currency=$9,locations=$10::jsonb,updated_by_user_id=$11,version=version+1,updated_at=$12 WHERE id=$13 RETURNING *`,
         [next.kind, next.kindLabel, next.occurredOn, next.title, next.detail, next.visibility, next.theme || null, next.moneyCents, next.moneyCurrency, JSON.stringify(next.locations), userId, this.now(), momentId],
       );
-      const after = publicMoment(updated.rows[0]);
+      const after = publicMoment(await this.nameMomentPeople(client, journeyId, updated.rows[0]));
       if (before.visibility !== 'shared-now') {
         await this.appendPrivateMomentEvent(client, {
           journeyId,
