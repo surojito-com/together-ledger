@@ -18,6 +18,7 @@ const apiOrigin = 'https://api.example.test';
 
 async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {}, billing, logger = false, now = () => new Date('2026-08-02T12:00:00.000Z'), beforeMigration029 } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
+  memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   memory.public.registerFunction({
     name: 'char_length',
     args: ['text'],
@@ -38,6 +39,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/012_bill-additional-moment-images.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/013_name-moment-image-attachments.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/014_hold-places-with-shared-moments.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/015_bill-additional-moment-places.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/016_make-extra-image-payments-one-time.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/017_keep-one-removed-photo-per-moment.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/018_allow-ninety-nine-paid-journey-places.sql', import.meta.url), 'utf8'));
@@ -49,6 +51,9 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/024_let-google-and-apple-open-an-account.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/026_remember-a-refused-apple-deletion.sql', import.meta.url), 'utf8'));
+  // 034 adds to the store purchase records, so they come first.
+  await pool.query(await readFile(new URL('../server/migrations/027_tie-every-store-purchase-to-an-account.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/028_turn-a-store-purchase-into-capacity.sql', import.meta.url), 'utf8'));
   if (beforeMigration029) await beforeMigration029(pool);
   await pool.query(await readFile(new URL('../server/migrations/029_rest-read-only-and-let-the-payer-ask-for-time.sql', import.meta.url), 'utf8'));
   // pg-mem cannot parse NOT VALID. Real PostgreSQL runs 030 as written, and
@@ -57,6 +62,7 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/031_let-a-lost-renewal-reply-be-asked-again.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/032_let-an-invitation-last-fourteen-days.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/033_let-a-moment-held-offline-arrive-once.sql', import.meta.url), 'utf8'));
+  await pool.query(await readFile(new URL('../server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,

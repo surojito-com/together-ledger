@@ -105,3 +105,15 @@ export function transactionPayload(overrides = {}) {
     ...overrides,
   };
 }
+
+// An App Store Server Notification, version 2 (responseBodyV2DecodedPayload), signed like a
+// transaction, with the transaction inside it signed on its own. `transaction` is a payload for
+// transactionPayload, or null for a notification that carries none (TEST).
+export function signNotification(chain, { notificationType, subtype, notificationUUID, transaction = null,
+  bundleId = 'com.togetherledger.ledger', environment = 'Sandbox', signedDate = Date.parse('2026-10-08T12:10:00Z') } = {}, options) {
+  const data = { appAppleId: 1234567890, bundleId, bundleVersion: '2', environment, status: 1 };
+  if (transaction) data.signedTransactionInfo = signTransaction(chain, transactionPayload(transaction));
+  const payload = { notificationType, notificationUUID, data, version: '2.0', signedDate };
+  if (subtype) payload.subtype = subtype;
+  return signTransaction(chain, payload, options);
+}
