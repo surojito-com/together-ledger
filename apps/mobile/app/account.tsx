@@ -3,10 +3,12 @@ import { useState } from 'react';
 import { accountMessage, ACCOUNT_NOTICES } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { ACCOUNT_WHILE_OFFLINE } from '../src/auth/session-state';
+import { accountEmailLabel } from '../src/auth/social-sign-in';
 import { useJourney } from '../src/journey/use-journey';
 import { useWaitingMoments } from '../src/journey/use-waiting-moments';
 import { signOutConsequence } from '../src/journey/waiting-moments';
 import { useShell } from '../src/shell/shell-provider';
+import { SocialSignIn } from '../src/components/social-sign-in';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
 
 /**
@@ -63,7 +65,8 @@ export default function AccountScreen() {
     const { user } = session;
     return (
       <Screen title="Account" lead="Passwords are never shared between journeyers.">
-        <Body>{user.displayName || user.username} · {user.email}</Body>
+        {/* An Apple account with no email shows plain words, not the placeholder it holds (#217). */}
+        <Body>{user.displayName || user.username} · {accountEmailLabel(user.email)}</Body>
         <Body>{user.emailVerified ? 'Email verified.' : 'Email not verified yet. Invitations can be accepted once it is.'}</Body>
         {/* The name journeyers see (#253). Each journey notes when it changes; the handle stays private. */}
         <Field label="Name journeyers see" value={name ?? user.displayName} onChangeText={setName} maxLength={80} autoComplete="name" textContentType="name" hint={`Everyone in your journeys sees this name, and each journey notes when it changes. Your handle, @${user.username}, stays private.`} />
@@ -106,6 +109,8 @@ export default function AccountScreen() {
 
   return (
     <Screen title="Sign in" lead="Passwords are never shared between journeyers.">
+      {/* Continue with Google and Apple (#217): only once the server says they work on this phone. */}
+      <SocialSignIn />
       <Field label="Email or username" value={identifier} onChangeText={setIdentifier} autoCapitalize="none" autoComplete="username" textContentType="username" />
       <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="current-password" textContentType="password" />
       <Notice message={notice} tone={problem ? 'problem' : 'info'} />

@@ -81,7 +81,7 @@ Encrypted backups are made daily and each is deleted 30 days after it is made; d
 
 ## Deletion
 
-You can delete your account in Settings after confirming your password. If you own a journey that other people are still in, you first hand it to one of them; the product will not strand it. If you pay on the web for room in a journey, or own a journey whose room is paid for on the web, that payment must end first. A subscription bought in the App Store or Google Play does not stop you deleting your account, and deleting your account does not cancel it.
+You can delete your account in Settings after confirming your password, or, for an account you opened with Apple or Google, by typing DELETE. If you own a journey that other people are still in, you first hand it to one of them; the product will not strand it. If you pay on the web for room in a journey, or own a journey whose room is paid for on the web, that payment must end first. A subscription bought in the App Store or Google Play does not stop you deleting your account, and deleting your account does not cancel it.
 
 Deleting your account revokes your sessions and tokens, removes any link to Apple or Google sign-in and asks Apple to end its token, and deletes: journeys only you were in; your private and share-later moments, with their places and photos; your private visibility history; and invitations you sent. Pending invitations to your email are revoked. Your account is pseudonymized: your email, username, and name are replaced, your password hash is removed, and the account shows as Deleted account.
 

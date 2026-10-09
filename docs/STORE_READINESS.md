@@ -114,7 +114,7 @@ is, so they are honest today and say which answer changes if a fix lands.
   (`PRIVACY.md:80`). The `member_deleted_account` event itself is without it
   (`server/platform.js:1890`); the invitation and proposal records are not.
 
-### 1.5 Apple and Google sign-in exist on the server (true; the web offers them once configured, the phone doesn't)
+### 1.5 Apple and Google sign-in: on the server, the web, and since #217 the phone, each once configured
 
 - **Verified in code.** `POST /api/v1/auth/google` and `/api/v1/auth/apple`, and the link route,
   exist (`server/app.js:191-209`), backed by `server/platform.js:528-680`, `server/identity.js` and
@@ -122,24 +122,41 @@ is, so they are honest today and say which answer changes if a fix lands.
   (or a placeholder for an Apple relay that is taken or missing), and the name it gives
   (`server/platform.js:607-645`). An Apple account also keeps an encrypted Apple refresh token,
   revoked with Apple when the account is deleted (`server/platform.js:1897-1914`, `:1928-1931`).
-- **Verified in code.** The phone offers neither: its client has no call to these routes
-  (`apps/mobile/src/api/client.ts:135-268`) and no Apple or Google sign-in dependency
-  (`apps/mobile/package.json:13-30`).
+- **Verified in code (#217).** The phone offers both too. Its client calls the same routes and
+  gets the same token pair a password sign-in gets (`apps/mobile/src/api/client.ts`,
+  `signInWithGoogle`, `signInWithApple`, `linkIdentity`). The iPhone signs in with Apple through
+  Apple's own sheet (`expo-apple-authentication`) and sends its one-time `authorizationCode` with
+  the ID token (TL-S-05); Google signs in through Google's own SDK on both phones
+  (`@react-native-google-signin/google-signin`). Buttons show only once
+  `GET /api/v1/auth/providers?platform=…` says they work on that phone: on an iPhone both or
+  neither (guideline 4.8), on Android Google alone. **Apple is not offered on Android yet**:
+  Android has no Apple sheet, and Apple's web flow can't finish there with the web's Return URL
+  (owner to decide on a Return URL for the phone, #217).
+- **Not verified, and the owner's call (#217).** Google's iOS SDK, `GoogleSignIn` 9.0, ships its
+  own privacy manifest declaring data it collects, some of it for Analytics (`docs/IOS_RELEASE.md`,
+  The privacy manifest). Google publishes no Data safety entry for its Android library,
+  `play-services-auth` 21.4.0; the Play services libraries it depends on "don't collect any
+  end-user data" ([Google: Prepare for Google Play's data disclosure requirements](https://developers.google.com/android/guides/play-data-disclosure)).
+  Whether either changes the answers in 3.1 and 3.2 is not decided here. The phone's own code
+  sends the ID token to our server and nowhere else.
 - **Verified in code (#216).** The web offers both together, or neither. It shows "Continue with
   Google" and "Continue with Apple" only when `GET /api/v1/auth/providers` says both are
   configured (`server/app.js:194-197`, `server/platform.js:644-651`), and it loads Google's and
   Apple's own scripts only when a signed-out person opens the account dialog
   (`src/app.js:1683-1715`). Until `GOOGLE_WEB_CLIENT_ID` is set on the server, it shows neither.
   The store answers in Part 3 are about the phone and don't change.
-- **What it means.** Nothing goes to Apple or Google for sign-in from the phone, and nothing from
-  the web until the owner sets `GOOGLE_WEB_CLIENT_ID`. Then, on the web, the person's browser
-  signs in with Apple or Google directly, and `PRIVACY.md` already names both (its "Signing in
-  with Apple or Google"). **App Store guideline 4.8 requires Sign in with Apple on the phone
-  whenever Google sign-in is offered there.**
-- **Verified in code.** The phone deletes an account only with a password
-  (`apps/mobile/app/delete-account.tsx:48-50`). A Google or Apple account has none
-  (`server/platform.js:642`, `:1842-1848`), so the phone's delete screen needs to change before
-  either sign-in reaches the phone. Apple requires in-app deletion for every account.
+- **What it means.** Nothing goes to Apple or Google for sign-in from the web until the owner
+  sets `GOOGLE_WEB_CLIENT_ID`, or from the phone until its build has a Google client ID
+  (`apps/mobile/eas.json`) that the server accepts. Then the person signs in with Apple or Google
+  directly, in their browser or in the provider's own sheet on the phone, and `PRIVACY.md`
+  already names both (its "Signing in with Apple or Google"). **App Store guideline 4.8 requires
+  Sign in with Apple on the phone whenever Google sign-in is offered there**, which is why the
+  iPhone shows both or neither.
+- **Verified in code (#217).** The phone deletes an account that has a password only with it, and
+  one opened with Google or Apple, which has none (`hasPassword: false`), by typing DELETE alone:
+  Settings → Delete account → Permanently delete account → the confirmation, three taps and no
+  password prompt (`apps/mobile/app/delete-account.tsx`). Apple requires in-app deletion for
+  every account.
 
 ### 1.6 Android template permissions (fixed; two added for store purchases)
 
@@ -163,12 +180,12 @@ is, so they are honest today and say which answer changes if a fix lands.
 
 | Field | Required | Where it comes from | Mark |
 |---|---|---|---|
-| Email address | Required | Typed at registration (`apps/mobile/src/api/client.ts:136-139`); normalized and stored (`server/platform.js:457`, `:466-468`) | Verified in code |
+| Email address | Required | Typed at registration (`apps/mobile/src/api/client.ts:136-139`); normalized and stored (`server/platform.js:457`, `:466-468`). For an account opened with Google or Apple, the one the provider's signed ID token carries, or a placeholder that is nobody's inbox when Apple gives none; the phone and the web then say "Apple didn’t share an email address." (#217) | Verified in code |
 | Username (private sign-in name) | Required | Typed at registration; 3–30 lowercase letters, numbers, hyphens (`server/platform.js:76-82`) | Verified in code |
 | Password | Required | Typed at registration, 12–128 characters, stored only as an Argon2id hash (`server/platform.js:89-91`, `server/security.js:17-27`) | Verified in code |
 | Display name (what journeyers see) | Optional | Starts as the username (`server/platform.js:459`); changed in the app (`client.ts:214-216`, `server/platform.js:1801-1815`). A change is written into every journey's history (`server/platform.js:1809-1812`) | Verified in code |
 | Email verified, created-at | Set by the server | `server/platform.js:99-108`, `:492` | Verified in code |
-| Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; the web, once configured, and not the phone (1.5) | Verified in code |
+| Google/Apple subject id, provider email and name, Apple refresh token | Only for a Google/Apple account | `server/platform.js:607-645`; the web and the phone, each once configured (1.5). The name Apple gives only on the first authorization is sent by the phone as the display name (#217) | Verified in code |
 | Store purchase tokens (random UUIDs per account and per journey) | Only when a purchase starts | `server/platform.js:1824-1839`; fetched by the phone before each purchase (`apps/mobile/src/api/client.ts:255`) and handed to Apple or Google (`apps/mobile/src/billing/store-purchase.ts:117`, `:121`) (#340) | Verified in code |
 | Store purchases (the Apple signed transaction, or the Google product and purchase token; the moment for an extra place) | Only when the person buys | Sent by the phone after each purchase (`apps/mobile/src/api/client.ts:264-268`, `apps/mobile/src/billing/store-purchase.ts:186`) and kept as a `billing_store_purchases` row (`docs/STORE_PURCHASES.md`) (#340) | Verified in code |
 | What Apple or Google says about a purchase afterwards (App Store Server Notifications, Google Play Real-time developer notifications: type, subtype, Apple's `transactionId` or a 16-character hash of Google's purchase token, when it was signed or happened and when it was received, and what changed) | Only when Apple or Google sends one, server to server; the phone is not involved | Kept as a `billing_store_notifications` row (`server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql`, `docs/STORE_PURCHASES.md`) (#273) | Verified in code |
@@ -198,6 +215,7 @@ What the phone can send, from `apps/mobile/src/api/client.ts`:
 | Held on the phone | Where | Leaves the phone? | Mark |
 |---|---|---|---|
 | Sign-in tokens (access and refresh) | Keychain / Keystore-backed storage, `WHEN_UNLOCKED_THIS_DEVICE_ONLY` (`apps/mobile/src/auth/token-storage.ts:9-10`) | Sent to our API only, as the bearer token (`client.ts:80`). Kept out of iOS backups by the accessibility class, and out of Android Auto Backup and device transfer (`apps/mobile/plugins/with-tokens-out-of-backup.js:5-42`) | Verified in code |
+| The name Apple gave on its first authorization (#217) | Keychain / Keystore-backed storage, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, beside the tokens (`apps/mobile/src/auth/kept-apple-name.ts`) | Sent to our API only, as the display name with that Apple sign-in. Kept only until a sign-in with Apple succeeds, so a first sign-in that didn't reach the server doesn't lose the name Apple won't give again; then removed. iPhone only | Verified in code |
 | Chosen theme, whether the ledger was begun | SQLite key-value store in the app sandbox (`apps/mobile/src/storage/phone-storage.ts:11-17`, `use-stored-preferences.ts:12-13`) | Included in normal Android Auto Backup and iOS backups (only tokens are excluded) | Verified in code |
 | A synthetic sample ledger | Written once when the ledger is begun (`apps/mobile/src/storage/ledger-store.ts:54-59`, `src/model.js:49`) | As above. It holds no personal data | Verified in code |
 | A moment held while the service can't be reached (#352): everything the form sends (kind, date, title, words, places as typed, visibility, theme, money context), the journey's id and name, when it was held, a random key chosen on the phone, and the service's words if it refused it | Same SQLite key-value store, one list per account id (`apps/mobile/src/journey/waiting-moments.ts`, `apps/mobile/src/storage/phone-storage.ts`) | Sent to our API, with its key, once the connection returns or the app opens; removed from the phone as soon as the API has it. Until then, included in normal Android Auto Backup and iOS backups like the rows above. Removed earlier if the person discards it after a refusal, signs out on purpose (asked first), or deletes the account. Kept through a sign-in that ends by itself, for the same account | Verified in code |
@@ -218,8 +236,8 @@ password, `server/platform.js:821-840`), the theme, and any moment still waiting
 | Cloudflare | Domain names, and serves the web app; sees request details for those hosts | DNS, web app hosting | Partly: the web app deploys through Wrangler (`wrangler.jsonc`); whether `api.together-ledger.com` is proxied through Cloudflare is not verified |
 | Email sender (Resend) | Destination address, message content (verification, recovery, invitation and proposal emails) | Sending account and journey emails | The code sends through any SMTP server (`server/mailer.js:41-43`, `server/config.js:23`); that it is Resend is **not verified** in code (`PRIVACY.md:46`) |
 | Stripe | Email, internal account/journey/moment references (`server/billing.js:185-186`, `:223-240`, `:272`, `:288`) | Web payments | Verified in code. **The phone never reaches Stripe** (`tests/mobile-no-stripe.test.js`) |
-| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: nothing from the phone; on the web, once configured, the person's browser signs in with Apple directly (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
-| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: nothing from the phone; on the web, once configured, the person's browser signs in with Google directly (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
+| Apple | For a purchase on iPhone: the purchase, with our journey token. For deletion of an Apple account: its refresh token, to revoke it (`server/apple.js:21`, `:71`). For sign-in: on the web, once configured, the person's browser signs in with Apple directly; on the iPhone, Apple's own sheet does (#217), and the phone sends what it returns to our server only (1.5). The server fetches Apple's public keys (`server/identity.js:20`, `:57`) | Store purchases, Sign in with Apple | Verified in code. The phone's purchase screen is #340: StoreKit 2 on the phone, our server verifies the transaction without calling Apple |
+| Google | For a purchase on Android: our server asks the Play Developer API about it (`server/store-google.js:33-35`, `:94`, `:115`). For sign-in: on the web, once configured, the person's browser signs in with Google directly; on the phone, Google's own SDK does (#217), and the phone sends the ID token to our server only (1.5). The server fetches Google's public keys (`server/identity.js:16`, `:57`) | Store purchases, Google sign-in | Verified in code. The phone's purchase screen is #340 |
 | Google, through Play Billing on the phone | Whatever the Play Billing library itself reports to Google. It depends on Google's datatransport libraries (`transport-runtime`, `transport-backend-cct`), which exist to upload Google's own diagnostics. Our code sends nothing through them | Google's purchase flow | **Not verified**: what Play Billing uploads was not captured (TL-C-03, #261). **Decision (owner, Oct 8, 2026)**: it stays *not verified*; Google Play's own guidance is checked before the Data safety form is filled in, and that decides whether it counts as our collection or Google's |
 | Expo (EAS) | Builds and submits the phone app. The app itself makes no call to Expo: there is no `expo-updates`, `expo-insights` or notifications dependency (`apps/mobile/package.json:13-30`) | Building | Not verified by captured traffic (TL-C-03, #261) |
 
@@ -248,6 +266,8 @@ row for one that is gone.
 | `@react-native-community/datetimepicker` | No | The system date picker |
 | `@react-native-community/netinfo` | No | Says whether the phone is connected, for the offline notice (#300). Its own check that the internet can be reached would ask `clients3.google.com` on iOS; it is switched off (`apps/mobile/src/shell/use-connection.ts`), so the library makes no request. On Android it declares `ACCESS_NETWORK_STATE`, already granted (2.4), and `ACCESS_WIFI_STATE`, which is blocked (`apps/mobile/app.json`): only connected or not is read, never the Wi-Fi network's name |
 | `expo` | No (not verified by traffic) | Core runtime. No update, analytics or notification module is installed |
+| `expo-apple-authentication` | Yes, to Apple, as the system | Sign in with Apple on the iPhone (#217): Apple's own sheet, run by iOS. The ID token and one-time code it returns go to our API only (`apps/mobile/src/components/social-sign-in.tsx`). Nothing on Android |
+| `@react-native-google-signin/google-signin` | Yes, to Google | Continue with Google on both phones (#217), through Google's own SDK: `GoogleSignIn` 9.x on iOS, `play-services-auth` 21.4.0 on Android, which declares no Android permission. The ID token goes to our API only. Google's iOS SDK declares data it collects in its own privacy manifest (1.5) |
 | `expo-application` | No | Reads the installed app's version and build number, shown at the foot of Settings and sent in the `x-together-build` header to our API only (#359, `apps/mobile/src/config/build.ts`) |
 | `expo-constants` | No | Reads build constants |
 | `expo-crypto` | No | Only `randomUUID()`, for the key each moment held on the phone carries so a resend is never a second moment (#352, `apps/mobile/src/journey/use-waiting-moments.ts`) |
@@ -399,7 +419,7 @@ date the owner confirmed it. All were confirmed on Oct 8, 2026.
 |---|---|---|
 | Does your app collect or share any of the required user data types? | **Yes** | Email, name, user id, user content, precise location (1.1), purchase history (#340) |
 | Is all of the user data collected by your app encrypted in transit? | **Yes** | 2.11 |
-| Which ways can users create an account? | **Username and password** (and "OAuth" only once Google or Apple sign-in reaches the phone, 1.5) | `client.ts:136-142` |
+| Which ways can users create an account? | **Username and password** and **OAuth** (#217: Continue with Google on Android; Google and Apple on the iPhone, 1.5) | `client.ts`, `register`, `signInWithGoogle`, `signInWithApple` |
 | Do you provide a way for users to request that their data is deleted? | **Yes** | 2.8 |
 | Delete account URL | **Decision (owner, Oct 8, 2026), for now:** `https://together-ledger.com/privacy`, whose Deletion section says how (Settings → Delete account, in the app or at `https://app.together-ledger.com/`). Play wants a page that explains the steps without the app; that section does once `PRIVACY.md` carries 1.3 and 1.4. The page has no per-section anchors (`scripts/render-privacy-page.mjs`), so the link lands at the top. A dedicated deletion page would be clearer; not built | 2.8 |
 | Can users request that some data be deleted without deleting their account? | **Yes**: moments, places, conversations and display name can be edited or deleted in the app | 2.2 |
@@ -484,6 +504,17 @@ tracking, collected for App Functionality. It declares no tracking and no tracki
 `tests/mobile-ios-release.test.js` reads this table, so a change here fails until the manifest
 changes with it. The required-reason APIs it declares, and why, are in `docs/IOS_RELEASE.md`
 (added Oct 9, 2026, after the commit named at the top of this file). **Verified in code.**
+
+**Continue with Google and Apple on the iPhone (#217) adds no type of our own.** The provider's
+identifier is kept as a User ID and the name and email it gives as Name and Email Address, all
+three already answered **Yes**, so the rows above and the manifest stay as they are. **Not
+decided, and the owner's call:** Google's own sign-in SDK, which the iPhone now carries, declares
+in its own privacy manifest that it collects Name, Email Address, Phone Number, Other Data Types,
+Coarse Location and User ID for App Functionality, and Other Data Types, User ID, Device ID and
+Other Usage Data for Analytics (`docs/IOS_RELEASE.md`, The privacy manifest). Whether those count
+as this app's answers (Apple asks for what "third-party partners" whose code is in the app collect)
+or Google's own, and so whether Phone Number, Coarse Location, Device ID, Other Usage Data and an
+Analytics purpose belong in the table above, is not settled here.
 
 **Privacy policy URL:** `https://app.together-ledger.com/privacy`, the same on both stores
 (**Decision (owner, Oct 8, 2026)**), built from `PRIVACY.md` by `scripts/build-public-site.mjs:33-34`.

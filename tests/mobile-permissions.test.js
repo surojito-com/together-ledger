@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import test from 'node:test';
@@ -17,6 +18,14 @@ import test from 'node:test';
 const mobile = new URL('../apps/mobile/', import.meta.url);
 const app = JSON.parse(await readFile(new URL('app.json', mobile), 'utf8')).expo;
 const require = createRequire(import.meta.url);
+// A file inside an installed package, wherever npm put it (the workspace or the root).
+function installed(path) {
+  for (const base of [new URL('node_modules/', mobile), new URL('../../node_modules/', mobile)]) {
+    const url = new URL(path, base);
+    if (existsSync(url)) return url;
+  }
+  return new URL(path, new URL('../../node_modules/', mobile));
+}
 
 // The phone talks to the API, and buys through Google Play (#272). Nothing else. BILLING is what
 // Play Billing's own library declares; it lets the app reach Play's purchase service, shows no
@@ -60,7 +69,30 @@ test('iOS asks for no permission either', () => {
 });
 
 test('no config plugin arrives unexamined, since a plugin can add permissions of its own', () => {
-  assert.deepEqual(app.plugins, ['expo-router', './plugins/with-scene-life-cycle', './plugins/with-tokens-out-of-backup', '@react-native-community/datetimepicker'], 'Check the generated manifest and Info.plist for what a new plugin adds, then update this list.');
+  // expo-apple-authentication (#217) adds the Sign in with Apple entitlement and
+  // CFBundleAllowMixedLocalizations on iOS, and nothing on Android.
+  assert.deepEqual(app.plugins, ['expo-router', './plugins/with-scene-life-cycle', './plugins/with-tokens-out-of-backup', '@react-native-community/datetimepicker', 'expo-apple-authentication'], 'Check the generated manifest and Info.plist for what a new plugin adds, then update this list.');
+  // Google's (#217) is added by app.config.js, only when the build has an iOS client ID: it adds
+  // that client's URL scheme to Info.plist and nothing on Android. Its Android library,
+  // play-services-auth 21.4.0, and the Play services libraries it depends on declare no
+  // permission (read Oct 9, 2026), so the granted list above is unchanged.
+  const withConfig = require('../apps/mobile/app.config.js');
+  const saved = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+  try {
+    delete process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+    assert.deepEqual(withConfig({ config: app }).plugins, app.plugins);
+    process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = '123-abc.apps.googleusercontent.com';
+    assert.deepEqual(withConfig({ config: app }).plugins, [...app.plugins, ['@react-native-google-signin/google-signin', { iosUrlScheme: 'com.googleusercontent.apps.123-abc' }]]);
+  } finally {
+    if (saved === undefined) delete process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+    else process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID = saved;
+  }
+  // The package's `exports` hide its native files, so they are read from where npm put it.
+  const google = (path) => readFileSync(installed(`@react-native-google-signin/google-signin/${path}`), 'utf8');
+  const manifest = google('android/src/main/AndroidManifest.xml');
+  assert.doesNotMatch(manifest, /uses-permission/);
+  const gradle = google('android/build.gradle');
+  assert.match(gradle, /play-services-auth:\$\{safeExtGet\('googlePlayServicesAuthVersion', '21\.4\.0'\)\}/, 'a new play-services-auth was not read for the permissions it declares');
 });
 
 test('sign-in tokens are kept out of Android cloud backup and device transfer, and nothing else is', async () => {

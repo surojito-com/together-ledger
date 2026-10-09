@@ -607,6 +607,45 @@ test('the web is told which sign-ins are ready, and only public identifiers', as
   assert.deepEqual(loaded.googleClientIds, ['phone.apps.googleusercontent.com', WEB_CLIENT]);
 });
 
+// A phone asks the same read about itself (#217): its platform, and the Google client its tokens
+// are issued to. The iPhone's Apple is the native sheet, issued to the bundle ID; Android is never
+// offered Apple until the web flow has a Return URL that can finish there.
+test('a phone is told which sign-ins are ready for it, and the web\'s answer does not change', async () => {
+  const IOS_CLIENT = 'ios-client.apps.googleusercontent.com';
+  const WEB_CLIENT = 'web-only-client.apps.googleusercontent.com';
+  const read = async (app, query, status = 200) => {
+    const response = await app.inject({ method: 'GET', url: `/api/v1/auth/providers${query}`, headers: { 'x-together-client': 'app' } });
+    assert.equal(response.statusCode, status, response.body);
+    if (status !== 200) return response.json().error;
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.equal(response.headers['set-cookie'], undefined);
+    return response.json().data;
+  };
+  const { app, platform } = await setup({ GOOGLE_CLIENT_IDS: IOS_CLIENT, GOOGLE_WEB_CLIENT_ID: WEB_CLIENT });
+  const web = { google: { clientId: WEB_CLIENT }, apple: { clientId: 'com.togetherledger.ledger.web', redirectUri: 'https://app.together-ledger.com/' } };
+  assert.deepEqual(await read(app, ''), web, 'no platform: the web\'s answer, exactly');
+
+  assert.deepEqual(await read(app, `?platform=ios&googleClientId=${IOS_CLIENT}`), { google: { clientId: IOS_CLIENT }, apple: { clientId: 'com.togetherledger.ledger' } });
+  // Google's Android library asks for a token issued to a web client, so that is what Android names.
+  assert.deepEqual(await read(app, `?platform=android&googleClientId=${WEB_CLIENT}`), { google: { clientId: WEB_CLIENT }, apple: null });
+  // A client this server doesn't accept, or none, is not ready; nothing else about the answer changes.
+  assert.deepEqual(await read(app, '?platform=ios&googleClientId=someone-else.apps.googleusercontent.com'), { google: null, apple: { clientId: 'com.togetherledger.ledger' } });
+  assert.deepEqual(await read(app, '?platform=ios'), { google: null, apple: { clientId: 'com.togetherledger.ledger' } });
+  assert.deepEqual(await read(app, '?platform=android'), { google: null, apple: null });
+  assert.equal((await read(app, '?platform=windows', 400)).code, 'invalid_input');
+
+  // A token the phone gets from either is accepted by the sign-in itself.
+  const ios = await app.inject({ method: 'POST', url: '/api/v1/auth/google', headers: { 'x-together-client': 'app' }, payload: { idToken: googleToken({ sub: 'g-ios', email: 'ios@example.com', aud: IOS_CLIENT }) } });
+  assert.equal(ios.statusCode, 200, ios.body);
+  assert.ok(ios.json().data.token);
+
+  // The bundle ID taken off the accepted audiences, or Apple's key missing: no Apple on the iPhone.
+  const { app: noBundle } = await setup({ GOOGLE_CLIENT_IDS: IOS_CLIENT, APPLE_CLIENT_IDS: 'com.togetherledger.ledger.web' });
+  assert.equal((await read(noBundle, `?platform=ios&googleClientId=${IOS_CLIENT}`)).apple, null);
+  platform.apple = new AppleSignIn({ teamId: '769MBW6826', keyId: '985BDXJP8S', privateKey: '', encryptionKey: '', fetch: async () => { throw new Error('must not be called'); } });
+  assert.deepEqual(await read(app, `?platform=ios&googleClientId=${IOS_CLIENT}`), { google: { clientId: IOS_CLIENT }, apple: null });
+});
+
 // The web's Delete account asks for a password only when the account has one (#216).
 test('a user says whether it has a password, on sign-in and on the session', async () => {
   const { app } = await setup();

@@ -317,3 +317,21 @@ test('an email held by an account without a password is refused in the server\'s
   await expect(page.locator('#status-banner')).toBeHidden();
   await expect(page.locator('#account-dialog')).toBeVisible();
 });
+
+// An Apple account that shared no usable email holds a placeholder made from its own id. Account
+// settings says so in words, not with an address that is nobody's (#217). A real address shows as is.
+test('an Apple account with no email says so in Account settings, instead of its placeholder', async ({ page, baseURL }) => {
+  await signedOutPage(page, baseURL);
+  const placeholder = 'apple-0f9e8d7c-1234-4abc-9def-001122334455@no-email.invalid';
+  await page.route(`${API}/auth/apple`, (route) => json(route, { data: { user: { ...USER, email: placeholder, emailVerified: false }, csrfToken: 'csrf-apple' } }));
+  await page.goto('/');
+  await openSignIn(page);
+  await page.evaluate(() => {
+    window.__appleAnswer = (config) => Promise.resolve({ authorization: { state: config.state, code: 'apple-code', id_token: 'apple-id-token' } });
+  });
+  await appleButton(page).click();
+  await expect(page.locator('#account-dialog')).toBeHidden();
+  await page.locator('#account-button').click();
+  await expect(page.locator('#account-email')).toHaveText('Apple didn’t share an email address.');
+  await expect(page.locator('#account-dialog')).not.toContainText('no-email.invalid');
+});

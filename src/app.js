@@ -341,6 +341,13 @@ async function refreshBillingState() {
   renderBillingState();
 }
 
+// An account opened with Apple that shared no usable email holds a placeholder the server made
+// from its own id (server/platform.js), which is nobody's address. It is said in words (#217).
+const APPLE_SHARED_NO_EMAIL = 'Apple didn’t share an email address.';
+function accountEmailLabel(email) {
+  return /^apple-[^@\s]+@no-email\.invalid$/i.test(email) ? APPLE_SHARED_NO_EMAIL : email;
+}
+
 function renderAccountState() {
   const signedIn = Boolean(accountUser);
   const accountsAvailable = api.accountsAvailable;
@@ -354,7 +361,7 @@ function renderAccountState() {
   const nameInput = $('#display-name-form [name=displayName]');
   if (document.activeElement !== nameInput) nameInput.value = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
-  $('#account-email').textContent = signedIn ? accountUser.email : '';
+  $('#account-email').textContent = signedIn ? accountEmailLabel(accountUser.email) : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
   $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
   // An account opened with Google or Apple has no password, so deleting it asks only for DELETE.

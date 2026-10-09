@@ -40,30 +40,41 @@ test('the build says it uses only exempt encryption, so App Store Connect does n
   assert.equal(app.plugins.some((plugin) => [plugin].flat()[0] === 'expo-sqlite'), false, 'expo-sqlite with useSQLCipher would be non-exempt encryption');
 });
 
-test('the iPhone asks for no permission and carries no usage description', () => {
+test('the iPhone asks for no permission, and its one capability is Sign in with Apple', async () => {
   const usage = Object.keys(app.ios.infoPlist).filter((key) => /UsageDescription$/.test(key));
   assert.deepEqual(usage, [], 'An iOS usage description is a permission prompt; it is a privacy decision.');
   assert.deepEqual(Object.keys(app.ios.infoPlist), ['ITSAppUsesNonExemptEncryption']);
-  assert.equal(app.ios.entitlements, undefined, 'no capability, so no push, no Sign in with Apple, no app groups');
-  assert.equal(app.ios.usesAppleSignIn, undefined);
+  // #217 changed this on purpose. Until then the app declared no capability at all (#370). Offering
+  // Continue with Google on the iPhone brings App Store guideline 4.8, and Sign in with Apple with
+  // it: `usesAppleSignIn`, and expo-apple-authentication's plugin, put the one entitlement
+  // `com.apple.developer.applesignin` in the app. Still no push, no app groups, nothing else.
+  assert.equal(app.ios.usesAppleSignIn, true);
+  assert.equal(app.ios.entitlements, undefined, 'nothing beyond what the plugin adds');
   assert.equal(app.notification, undefined);
+  const plugin = await readFile(installed('expo-apple-authentication/plugin/build/withAppleAuthIOS.js'), 'utf8');
+  assert.deepEqual([...plugin.matchAll(/modResults\['([\w.]+)'\] = (\[[^\]]*\])/g)].map(([, key, value]) => [key, value]), [['com.apple.developer.applesignin', "['Default']"]], 'a new expo-apple-authentication was not read for the entitlements it adds');
+  // The same plugin adds CFBundleAllowMixedLocalizations, so Apple's button follows the phone's language.
+  assert.match(plugin, /CFBundleAllowMixedLocalizations/);
 });
 
-test('the phone offers no social login, so App Store guideline 4.8 does not ask for Sign in with Apple', async () => {
+test('Sign in with Apple comes with Google on the iPhone, so App Store guideline 4.8 is met', async () => {
   const pkg = JSON.parse(await readFile(new URL('package.json', mobile), 'utf8'));
-  for (const name of ['expo-apple-authentication', 'expo-auth-session', '@react-native-google-signin/google-signin']) {
-    assert.equal(pkg.dependencies[name], undefined, `${name} would put a social login on the phone, and Sign in with Apple with it`);
-  }
+  assert.equal(pkg.dependencies['expo-apple-authentication'], '57.0.2');
+  assert.equal(pkg.dependencies['@react-native-google-signin/google-signin'], '16.1.5');
+  assert.equal(pkg.dependencies['expo-auth-session'], undefined, 'one Google library, the native one');
   const files = [];
   for (const directory of ['app', 'src']) {
     for (const entry of await readdir(new URL(directory, mobile), { recursive: true, withFileTypes: true })) {
       if (entry.isFile() && /\.tsx?$/.test(entry.name)) files.push(`${entry.parentPath ?? entry.path}/${entry.name}`);
     }
   }
-  assert.ok(files.some((file) => file.endsWith('src/api/client.ts')));
-  for (const file of files) {
-    assert.doesNotMatch(await readFile(file, 'utf8'), /\/auth\/(google|apple)\b/, `${file} calls a social sign-in route`);
-  }
+  // The routes are called from the API client alone.
+  const calling = [];
+  for (const file of files) if (/'\/auth\/(google|apple)'/.test(await readFile(file, 'utf8'))) calling.push(file.slice(file.indexOf('apps/mobile/') + 'apps/mobile/'.length));
+  assert.deepEqual(calling, ['src/api/client.ts']);
+  // And Google shows on an iPhone only with Apple beside it (src/auth/social-sign-in.ts).
+  const rules = await readFile(new URL('src/auth/social-sign-in.ts', mobile), 'utf8');
+  assert.match(rules, /return answer\.apple && appleSheet \? \{ google: true, apple: true \} : NOTHING_OFFERED;/);
 });
 
 test('the 1024px icon has no alpha channel, which App Store Connect refuses', async () => {
@@ -164,5 +175,14 @@ test('eas submit sends the iPhone build to the owner\'s App Store Connect app', 
   assert.equal(eas.submit.production.ios.ascAppId, '6820375940');
   assert.deepEqual(Object.keys(eas.submit.production.ios), ['ascAppId'], 'the API key lives in EAS, never here');
   assert.deepEqual(eas.submit.production.android, { track: 'internal', releaseStatus: 'draft' });
-  assert.deepEqual(eas.build.production, { channel: 'production', env: { EXPO_PUBLIC_API_ORIGIN: 'https://api.together-ledger.com' }, autoIncrement: true });
+  // The Google client IDs (#217) are public and the owner adds them here: only those two, only as
+  // Google client IDs, and nothing else beside the API origin.
+  const { env, ...production } = eas.build.production;
+  assert.deepEqual(production, { channel: 'production', autoIncrement: true });
+  assert.equal(env.EXPO_PUBLIC_API_ORIGIN, 'https://api.together-ledger.com');
+  for (const [name, value] of Object.entries(env)) {
+    if (name === 'EXPO_PUBLIC_API_ORIGIN') continue;
+    assert.ok(['EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID', 'EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID'].includes(name), `${name} is not expected in the production build`);
+    assert.match(value, /^[\w-]+\.apps\.googleusercontent\.com$/, `${name} is a Google client ID`);
+  }
 });

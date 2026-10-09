@@ -10,7 +10,9 @@ import { useShell } from '../src/shell/shell-provider';
 
 /**
  * Delete the account: say plainly what goes and what stays, ask for the password and the word
- * DELETE as the web does, then confirm once more in the consequence dialog (#243). The words are
+ * DELETE as the web does, then confirm once more in the consequence dialog (#243). An account
+ * opened with Apple or Google has no password, so it is asked only for DELETE (#217): still three
+ * taps from Settings, and no password prompt. The words are
  * the web's and the privacy policy's, with one addition the web has no need of: a subscription
  * bought in the App Store or Google Play carries on after the account is deleted, and only Apple or
  * Google can cancel it, so the phone says so before anything is deleted.
@@ -30,6 +32,8 @@ export default function DeleteAccountScreen() {
   const [password, setPassword] = useState('');
   const [typed, setTyped] = useState('');
   const [pending, setPending] = useState(false);
+  // Only an account that has a password is asked for it; the server says which (`hasPassword`).
+  const asksForPassword = session.status !== 'signed-in' || session.user.hasPassword !== false;
 
   async function confirm() {
     // A moment still waiting on this phone can never be sent once the account is gone (#352).
@@ -38,7 +42,7 @@ export default function DeleteAccountScreen() {
     setPending(true);
     shell.clearStatus('account-deletion');
     try {
-      await session.client.deleteAccount(password);
+      await session.client.deleteAccount(asksForPassword ? password : null);
       await waiting.clear();
       session.setUser(null);
       router.replace({ pathname: '/account', params: { notice: 'deleted' } });
@@ -66,9 +70,9 @@ export default function DeleteAccountScreen() {
       <Body>{DELETION_WAITS_ON_WEB_PAYMENT}</Body>
       {/* Owner, Oct 8, 2026 (docs/STORE_PURCHASES.md), and App Store guideline 5.1.1(v). */}
       <Body>{STORE_SUBSCRIPTION_NOT_CANCELLED}</Body>
-      <Field label="Current password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="current-password" textContentType="password" />
+      {asksForPassword ? <Field label="Current password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="current-password" textContentType="password" /> : null}
       <Field label="Type DELETE" value={typed} onChangeText={setTyped} autoCapitalize="characters" autoCorrect={false} />
-      <Button kind="destructive" label="Permanently delete account" pending={pending} pendingLabel="Deleting…" disabled={!password || typed !== 'DELETE'} onPress={confirm} />
+      <Button kind="destructive" label="Permanently delete account" pending={pending} pendingLabel="Deleting…" disabled={(asksForPassword && !password) || typed !== 'DELETE'} onPress={confirm} />
     </Screen>
   );
 }

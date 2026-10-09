@@ -62,7 +62,7 @@ If you find a security problem, report it privately through [the repository's se
 
 ## Ending things
 
-- You can delete your account any time in Settings, after confirming your password. The privacy policy explains what deletion removes and what stays.
+- You can delete your account any time in Settings, after confirming your password, or, for an account you opened with Apple or Google, by typing DELETE. The privacy policy explains what deletion removes and what stays.
 - We may suspend or close an account that breaks these terms, or to keep someone safe. Where it's safe and lawful, we'll tell you why and give you a chance to export your journeys first.
 - If we ever stop offering Together Ledger, we'll give at least 30 days' notice in the product, time to export your journeys, and a refund for any paid time you won't get to use.
 
