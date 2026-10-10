@@ -150,6 +150,8 @@ test('TC-10870, TC-10910 and TC-10930: account links return to the home that beg
   });
   assert.equal(invitation.statusCode, 202, invitation.body);
   assertReturnsToAppHome(lastOf(sent, 'journey-invitation@'), 'invite');
+  // Its own path, the one link the phone app claims (#266); the code stays after the #.
+  for (const url of linksIn(lastOf(sent, 'journey-invitation@'), 'invite')) assert.equal(url.pathname, '/invite');
 
   const recovery = await app.inject({
     method: 'POST', url: '/api/v1/recovery/request', headers: { origin: appOrigin },

@@ -44,11 +44,11 @@ provider's log instead of a mailbox. The key is never printed or recorded.
 
 The links file holds only what a mailbox reader found, for example:
   { "verification": "https://app.together-ledger.com/#verify=...",
-    "invitation":   "https://app.together-ledger.com/#invite=...",
+    "invitation":   "https://app.together-ledger.com/invite#invite=...",
     "recovery":     "https://app.together-ledger.com/#recovery=..." }
 
-A link carries its code after the # (#261). One sent by a server from before that carries it in
-the query (?verify=...), and is still read.
+A link carries its code after the # (#261), and an invitation's is at /invite (#266). One sent
+by a server from before that carries it in the query (?verify=...), and is still read.
 `);
     process.exit(0);
   }
@@ -254,7 +254,8 @@ function describeLink(url, kind) {
   const { code: token = '', shape = '#' } = linkCode(url, kind) || {};
   expect(url.origin === appOrigin, `the ${kind} link returned to ${url.origin}, not ${appOrigin}`);
   expect(token.length > 0, `the ${kind} link carried no ${QUERY_KEY[kind]} value`);
-  return { token, detail: `link returns to ${url.origin}/${shape}${QUERY_KEY[kind]}=<${token.length}-character token>` };
+  // The path is said as found: an invitation's is /invite since #266, the others /.
+  return { token, detail: `link returns to ${url.origin}${url.pathname}${shape}${QUERY_KEY[kind]}=<${token.length}-character token>` };
 }
 
 // --- the journey ----------------------------------------------------------

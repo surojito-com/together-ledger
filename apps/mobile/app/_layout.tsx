@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import { SessionProvider, useSession } from '../src/auth/session';
 import { StoreProvider } from '../src/billing/store-provider';
 import { ShellOverlays } from '../src/components/dialogs';
+import { PendingInvitationProvider, PendingInvitationWatch } from '../src/invitations/use-pending-invitation';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
 import { MomentViewProvider } from '../src/journey/use-moment-view';
@@ -52,6 +53,8 @@ function ThemedStack() {
       <Stack.Screen name="recovery" options={{ title: 'Account recovery' }} />
       <Stack.Screen name="recovery-confirm" options={{ title: 'Account recovery' }} />
       <Stack.Screen name="verify-email" options={{ title: 'Verify email' }} />
+      {/* An invitation, from a tapped link or pasted (#266). */}
+      <Stack.Screen name="invite" options={{ title: 'Invitation' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
       <Stack.Screen name="moment" options={{ title: 'Hold a moment', presentation: 'modal' }} />
       <Stack.Screen name="new-journey" options={{ title: 'New journey', presentation: 'modal' }} />
@@ -110,6 +113,8 @@ export default function RootLayout() {
     <ThemeProvider initialChoice={stored.theme} onChoiceChange={saveTheme}>
       <SessionProvider>
         <ShellProvider initialOnboardingComplete={stored.onboardingComplete} onOnboardingComplete={completeOnboarding}>
+          {/* An invitation tapped or pasted, kept on this phone until it is answered (#266). */}
+          <PendingInvitationProvider>
           <JourneyProvider>
             {/* Moments held without a connection, kept on this phone until they are sent (#352). */}
             <WaitingMomentsProvider>
@@ -121,8 +126,10 @@ export default function RootLayout() {
                 </MomentViewProvider>
               </StoreProvider>
               <ConnectionWatch />
+              <PendingInvitationWatch />
             </WaitingMomentsProvider>
           </JourneyProvider>
+          </PendingInvitationProvider>
           <ShellOverlays />
           <SaveFailureNotice failure={failure} />
         </ShellProvider>

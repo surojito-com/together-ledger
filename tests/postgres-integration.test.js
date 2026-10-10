@@ -653,3 +653,57 @@ test('real PostgreSQL lets a journeyer leave once, with what they held privately
   await platform.leaveJourney(stays.id, journey.id);
   assert.deepEqual((await platform.snapshot(owner.id, journey.id)).members.map((member) => member.id), [owner.id]);
 });
+
+// #266: reading an invitation before answering it writes nothing, and only the invited, verified
+// account learns the journey and who sent it; someone already in it, the owner included, spends nothing.
+test('real PostgreSQL reads an invitation for the person it was sent to, and looking spends nothing', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const verified = async (name) => {
+    const email = `${name}-${suffix}@example.test`;
+    const { user } = await platform.register({ email, username: `${name}-${suffix}`, password: 'correct horse battery staple' });
+    return { user, email, verify: () => platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token) };
+  };
+  const alice = await verified('preview-alice');
+  await alice.verify();
+  const journey = await platform.createJourney(alice.user.id, { name: 'Read before joining', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const bobEmail = `preview-bob-${suffix}@example.test`;
+  await platform.proposeInvitation(alice.user.id, journey.id, bobEmail, '', 'https://app.together-ledger.com');
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === bobEmail).token;
+  const state = async () => ({
+    invitation: (await pool.query('SELECT accepted_at,revoked_at,reservation_active,lapse_recorded_at FROM invitations WHERE journey_id=$1', [journey.id])).rows,
+    events: (await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journey.id])).rows[0].count,
+    members: (await pool.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [journey.id])).rows[0].count,
+  });
+  const before = await state();
+
+  const bob = await verified('preview-bob');
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, token), { state: 'verify_email' });
+  await bob.verify();
+  const open = await platform.previewInvitation(bob.user.id, token);
+  assert.equal(open.state, 'open');
+  assert.equal(open.journeyName, 'Read before joining');
+  assert.equal(open.invitedByDisplayName, `preview-alice-${suffix}`);
+  assert.deepEqual(await platform.previewInvitation(alice.user.id, token), { state: 'already_member', journeyId: journey.id, journeyName: 'Read before joining' });
+  const carol = await verified('preview-carol');
+  await carol.verify();
+  assert.deepEqual(await platform.previewInvitation(carol.user.id, token), { state: 'another_account' });
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, 'no-such-code-at-all-here'), { state: 'not_found' });
+  assert.deepEqual(await state(), before, 'nothing written by looking');
+
+  // The owner tapping their own link spends nothing either.
+  await assert.rejects(platform.acceptInvitation(alice.user.id, token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await state(), before);
+
+  assert.equal(await platform.acceptInvitation(bob.user.id, token), journey.id);
+  const joined = await state();
+  assert.equal(joined.members, before.members + 1);
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, token), { state: 'already_member', journeyId: journey.id, journeyName: 'Read before joining' });
+  await assert.rejects(platform.acceptInvitation(bob.user.id, token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await state(), joined, 'tapping again adds and spends nothing');
+});

@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["769MBW6826.com.togetherledger.ledger"],
+        "components": [
+          {
+            "/": "/invite",
+            "comment": "Invitation links only (#266). The code is after the #. Verification and recovery links stay on the web."
+          }
+        ]
+      }
+    ]
+  }
+}

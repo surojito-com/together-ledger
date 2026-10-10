@@ -173,6 +173,16 @@ eas build --platform ios --profile production
   **Push Notifications** off on the App ID, which the web's Apple setup shares. Keep setting it.
   Sign in with Apple is already on for `com.togetherledger.ledger`, and has to stay on: the
   iPhone's own sign-in now needs it as well as the web's.
+
+  **Since #266 it declares a second, Associated Domains** (`associatedDomains` in
+  `apps/mobile/app.json`: `applinks:app.together-ledger.com`), so a tapped invitation link opens
+  the app. With capability sync off, EAS will not turn it on, and a build whose entitlements ask for
+  a capability the App ID lacks fails to sign. **Before the first build that carries it**, in the
+  Apple Developer portal: Certificates, Identifiers & Profiles → Identifiers →
+  `com.togetherledger.ledger` → tick **Associated Domains** → Save. A distribution profile made
+  before that does not include it; if the build says so, let EAS make a new one when it offers to
+  (**not confirmed** whether it does so unasked). The website serves `/.well-known/apple-app-site-association` for Team ID
+  `769MBW6826`, claiming `/invite` only (`public/.well-known/`, `scripts/app-links.mjs`).
 - **The build number.** `eas.json` keeps the version and build number on EAS's servers
   (`"appVersionSource": "remote"`) and adds one to the build number on every production build
   (`"autoIncrement": true`). The first build is 1 unless EAS already holds one
@@ -404,7 +414,7 @@ Checked at this pull request's head. `tests/mobile-ios-release.test.js` fails if
 | `ITSAppUsesNonExemptEncryption` false | `apps/mobile/app.json:15` |
 | No usage description in `Info.plist`: no camera, photos, location, contacts, microphone or notifications | `apps/mobile/app.json` (`infoPlist` holds only the encryption flag); no notifications dependency (`apps/mobile/package.json`). A prebuild adds `CFBundleAllowMixedLocalizations` (expo-apple-authentication, so Apple's button follows the phone's language) and, when the build has an iOS Google client, that client's URL scheme (`apps/mobile/app.config.js`); neither is a permission |
 | No Google SDK in the iPhone app (owner, Oct 9, 2026, #217) | `expo.autolinking.ios.exclude` in `apps/mobile/package.json` keeps `@react-native-google-signin/google-signin`, and with it the `GoogleSignIn` pod and its privacy manifest, out of the iOS build; Google on the iPhone is the browser-based sign-in (`expo-auth-session`, `apps/mobile/src/auth/google-sheet.ts`). The Podfile's own autolinking commands, run by the test, link no Google pod |
-| One entitlement: Sign in with Apple (#217) | `usesAppleSignIn: true` and the `expo-apple-authentication` plugin in `apps/mobile/app.json`; the prebuilt entitlements file holds only `com.apple.developer.applesignin` = `Default`. Until #217 it was empty (#370) |
+| Two entitlements: Sign in with Apple (#217) and Associated Domains (#266) | `usesAppleSignIn: true` and the `expo-apple-authentication` plugin, and `associatedDomains` in `apps/mobile/app.json`; the prebuilt entitlements file holds `com.apple.developer.applesignin` = `Default` and `com.apple.developer.associated-domains` = `applinks:app.together-ledger.com`, nothing else. Until #217 it was empty (#370) |
 | The 1024 × 1024 icon has no alpha channel | `apps/mobile/assets/icon.png`: PNG colour type 2 (RGB), no `tRNS` chunk |
 | The StoreKit product IDs match the server's | `apps/mobile/src/billing/store-products.ts:29-38` and `server/store-products.js:19-28`, the same eight IDs; held by `tests/mobile-store-purchase.test.js:116-122` |
 | Guideline 4.8: Sign in with Apple comes with Google on the iPhone (#217) | The iPhone shows Continue with Google only beside Sign in with Apple, both or neither, and only once `GET /auth/providers?platform=ios` says both work (`apps/mobile/src/auth/social-sign-in.ts`, `offeredSignIns`). Until #217 the phone had no social login at all, and this row said so (#370) |

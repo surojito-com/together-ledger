@@ -1,10 +1,13 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appSiteAssociationProblems, APP_SITE_ASSOCIATION, ASSET_LINKS, assetLinksProblems } from './app-links.mjs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { renderPrivacyPage, renderSupportPage, renderTermsPage } from './render-privacy-page.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const output = join(root, '_site');
+// _site unless told otherwise; tests/app-links.test.js assembles into a folder of its own.
+const outIndex = process.argv.indexOf('--out');
+const output = outIndex > 0 && process.argv[outIndex + 1] ? resolve(process.argv[outIndex + 1]) : join(root, '_site');
 const releaseRevision = (process.env.TOGETHER_LEDGER_RELEASE_REVISION || 'local-development').trim();
 const publicFiles = [
   'index.html',
@@ -31,6 +34,17 @@ for (const relativePath of publicFiles) {
   cpSync(join(root, relativePath), join(output, relativePath));
 }
 cpSync(join(root, 'public'), output, { recursive: true });
+// The phone apps' link files (#266). Apple's must be right to ship at all. Android's waits on the
+// owner's certificate fingerprints: until they replace the placeholders it is left out, because an
+// empty or placeholder list would only tell Android the app may not open the link, and the release
+// gate refuses a bundle that carries one.
+const associationProblems = appSiteAssociationProblems(readFileSync(join(output, APP_SITE_ASSOCIATION), 'utf8'));
+if (associationProblems.length) throw new Error(associationProblems.join('; '));
+const linkProblems = assetLinksProblems(readFileSync(join(output, ASSET_LINKS), 'utf8'));
+if (linkProblems.length) {
+  rmSync(join(output, ASSET_LINKS));
+  console.log(`Left out ${ASSET_LINKS}: ${linkProblems.join('; ')}. Android opens invitation links in the browser until the owner adds the fingerprints (#266).`);
+}
 // Served at /privacy (html_handling resolves privacy.html) — the URL both stores ask for.
 writeFileSync(join(output, 'privacy.html'), renderPrivacyPage(readFileSync(join(root, 'PRIVACY.md'), 'utf8')));
 // Served at /terms the same way, from TERMS.md.
