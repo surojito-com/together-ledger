@@ -8,7 +8,7 @@
 // checkout, recovery, and deleting an account. Every request that leaves the browser is recorded:
 // host, method, path (ids and query values masked), what is sent, and why. So is everything the
 // API itself sends on to Stripe, Apple, Google and the email sender, all of which are stood in
-// for here. Nothing leaves this machine: Chromium resolves only our three hostnames, to this
+// for here. Nothing leaves this machine: Chromium resolves only our two hostnames, to this
 // process, and every other host is answered by a stand-in or refused.
 //
 //   DATABASE_URL=postgres://…/a-throwaway-database node scripts/capture-outbound.mjs
@@ -79,8 +79,7 @@ if (!options.phone && !process.env.DATABASE_URL) {
 // resolve, to this process.
 const APP = 'app.together-ledger.com';
 const API = 'api.together-ledger.com';
-const COMPANY = 'together-ledger.com';
-const OUR_HOSTS = new Set([APP, API, COMPANY]);
+const OUR_HOSTS = new Set([APP, API]);
 const APP_ORIGIN = `https://${APP}`;
 const API_ORIGIN = `https://${API}`;
 
@@ -234,7 +233,6 @@ function reasonFor(host, method, path) {
     if (path.startsWith('/src/')) return "The app's own script or stylesheet";
     return 'An app asset';
   }
-  if (host === COMPANY) return "The favicon and touch icon, linked from the app page to the company site's address";
   if (host === API) {
     const line = `${method} ${path.replace(/\?.*$/, '')}`;
     const found = API_REASONS.find(([pattern]) => pattern.test(line));
@@ -451,7 +449,7 @@ function certificate() {
   const cert = join(work, 'cert.pem');
   execFileSync('openssl', [
     'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=Together Ledger outbound capture',
-    '-addext', `subjectAltName=DNS:${APP},DNS:${API},DNS:${COMPANY}`, '-keyout', key, '-out', cert,
+    '-addext', `subjectAltName=DNS:${APP},DNS:${API}`, '-keyout', key, '-out', cert,
   ], { stdio: 'ignore' });
   return { key: readFileSync(key), cert: readFileSync(cert) };
 }
@@ -471,19 +469,6 @@ function serveSite(site, request, response) {
   if (pathname === '/release.json') headers['cache-control'] = 'no-store';
   response.writeHead(200, headers);
   response.end(readFileSync(file));
-}
-
-// together-ledger.com is the company site, a separate deployment. The app page links its favicon
-// and touch icon there; this answers with the same files, so the request can be seen.
-function serveCompany(request, response) {
-  const pathname = new URL(request.url, `https://${COMPANY}`).pathname;
-  const file = join(root, 'public', normalize(pathname).replace(/^[/\\]+/, ''));
-  if (file.startsWith(join(root, 'public')) && existsSync(file) && statSync(file).isFile()) {
-    response.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream' });
-    return response.end(readFileSync(file));
-  }
-  response.writeHead(404);
-  response.end();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -632,7 +617,6 @@ async function run() {
     frontLog.push({ step: currentStep, host, method: request.method, path: maskedPath(`https://${host}${request.url}`), referer: maskedReferer(request.headers.referer), rawReferer: request.headers.referer || '', rawUrl: `https://${host}${request.url}` });
     if (host === API) return app.routing(request, response);
     if (host === APP) return serveSite(site, request, response);
-    if (host === COMPANY) return serveCompany(request, response);
     response.writeHead(421);
     return response.end();
   });
@@ -941,7 +925,6 @@ function hostTable(entries, whoFor) {
 function who(host) {
   if (host === APP) return 'Us: the web app (Cloudflare)';
   if (host === API) return 'Us: the API (AWS)';
-  if (host === COMPANY) return 'Us: the company site (Cloudflare)';
   if (/google/.test(host)) return 'Google';
   if (/apple/.test(host)) return 'Apple';
   if (/stripe/.test(host)) return 'Stripe';

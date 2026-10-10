@@ -1,7 +1,8 @@
 name: Attribution
 
 # Fails a PR, or a push to main, whose commits, title or body carry AI-tool or vendor
-# attribution. See scripts/check-attribution.mjs and CLAUDE.md, "Branch naming and attribution".
+# attribution, or a closing keyword before an issue reference. See scripts/check-attribution.mjs
+# and CLAUDE.md, "Branch naming and attribution" and "Issues are the project journey".
 
 on:
   pull_request:
