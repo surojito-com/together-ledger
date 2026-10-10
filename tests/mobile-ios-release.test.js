@@ -42,7 +42,7 @@ test('the build says it uses only exempt encryption, so App Store Connect does n
   assert.equal(app.plugins.some((plugin) => [plugin].flat()[0] === 'expo-sqlite'), false, 'expo-sqlite with useSQLCipher would be non-exempt encryption');
 });
 
-test('the iPhone asks for no permission, and its one capability is Sign in with Apple', async () => {
+test('the iPhone asks for no permission, and its capabilities are Sign in with Apple and invitation links', async () => {
   const usage = Object.keys(app.ios.infoPlist).filter((key) => /UsageDescription$/.test(key));
   assert.deepEqual(usage, [], 'An iOS usage description is a permission prompt; it is a privacy decision.');
   assert.deepEqual(Object.keys(app.ios.infoPlist), ['ITSAppUsesNonExemptEncryption']);
@@ -52,6 +52,10 @@ test('the iPhone asks for no permission, and its one capability is Sign in with 
   // `com.apple.developer.applesignin` in the app. Still no push, no app groups, nothing else.
   assert.equal(app.ios.usesAppleSignIn, true);
   assert.equal(app.ios.entitlements, undefined, 'nothing beyond what the plugin adds');
+  // #266 added the second, also on purpose: Associated Domains, so a tapped invitation opens the
+  // app. It is the entitlement `com.apple.developer.associated-domains`, for this one domain only.
+  // Capability sync is off (EXPO_NO_CAPABILITY_SYNC=1), so the owner turns it on for the App ID.
+  assert.deepEqual(app.ios.associatedDomains, ['applinks:app.together-ledger.com']);
   assert.equal(app.notification, undefined);
   const plugin = await readFile(installed('expo-apple-authentication/plugin/build/withAppleAuthIOS.js'), 'utf8');
   assert.deepEqual([...plugin.matchAll(/modResults\['([\w.]+)'\] = (\[[^\]]*\])/g)].map(([, key, value]) => [key, value]), [['com.apple.developer.applesignin', "['Default']"]], 'a new expo-apple-authentication was not read for the entitlements it adds');

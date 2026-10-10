@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { appSiteAssociationProblems, APP_SITE_ASSOCIATION, ASSET_LINKS, assetLinksProblems } from './app-links.mjs';
 
 // Proves the bundle about to be uploaded is the reviewed revision, before it is uploaded.
 //
@@ -61,12 +62,33 @@ export async function verifyReleaseBundle({ directory, revision, requiredText, r
     throw new Error(`The bundle's page does not contain the required user-visible control ${JSON.stringify(requiredText)}.`);
   }
 
-  return { revision, requiredText };
+  // The phone apps' link files (#266), read from the bundle like the rest. Apple's must be there and
+  // claim only invitations. Android's may be absent while the owner's fingerprints are not yet in,
+  // but never shipped empty or with a placeholder.
+  let association;
+  try {
+    association = await readFileImpl(join(directory, APP_SITE_ASSOCIATION), 'utf8');
+  } catch {
+    throw new Error(`The bundle has no ${APP_SITE_ASSOCIATION}.`);
+  }
+  const associationProblems = appSiteAssociationProblems(association);
+  if (associationProblems.length) throw new Error(`The bundle's ${APP_SITE_ASSOCIATION} is wrong: ${associationProblems.join('; ')}.`);
+  let assetLinks = null;
+  try {
+    assetLinks = await readFileImpl(join(directory, ASSET_LINKS), 'utf8');
+  } catch {
+    // Absent until the owner adds the fingerprints: Android opens invitations in the browser.
+  }
+  const linkProblems = assetLinks === null ? [] : assetLinksProblems(assetLinks);
+  if (linkProblems.length) throw new Error(`The bundle's ${ASSET_LINKS} must not ship: ${linkProblems.join('; ')}.`);
+
+  return { revision, requiredText, androidAppLinks: assetLinks !== null };
 }
 
 async function main() {
   const result = await verifyReleaseBundle(parseArguments(process.argv.slice(2)));
   console.log(`✓ the assembled bundle carries revision ${result.revision} and the required user-visible control.`);
+  if (!result.androidAppLinks) console.log('  Note: no assetlinks.json yet, so Android opens invitation links in the browser until the owner adds the fingerprints (#266).');
 }
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href) {

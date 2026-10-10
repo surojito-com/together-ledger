@@ -1,6 +1,7 @@
 import { Redirect, router } from 'expo-router';
 import { StyleSheet, Text } from 'react-native';
 import { Body, Button, Screen } from '../src/components/ui';
+import { INVITATION_WORDS } from '../src/invitations/invitation-words';
 import { useShell } from '../src/shell/shell-provider';
 import { openingSurface } from '../src/shell/surface';
 import { fonts, useTheme } from '../src/theme';
@@ -25,6 +26,8 @@ export default function WelcomeScreen() {
         shell.completeOnboarding();
         router.replace('/ledger');
       }} />
+      {/* Someone who installed the app to join a journey: the iPhone carries no link through the store (#266). */}
+      <Button kind="quiet" label={INVITATION_WORDS.haveOne} onPress={() => router.push('/invite')} />
       <Button kind="quiet" label="Account" onPress={() => router.push('/account')} />
       <Button kind="quiet" label="Settings" onPress={() => router.push('/settings')} />
     </Screen>

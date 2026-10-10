@@ -39,6 +39,9 @@ import {
 // carries it in the query, and an invitation lasts 14 days, so that shape is still read. Either
 // way it is taken out of the address first, before the page does anything else.
 const EMAILED_CODES = ['verify', 'recovery', 'invite'];
+// An invitation's link has its own path, so the phone app can claim it and nothing else (#266).
+// It is this same page; once its code is taken, the address goes back to the app's home.
+const INVITATION_PATH = '/invite';
 
 function takeEmailedCodes() {
   const query = new URLSearchParams(window.location.search);
@@ -55,7 +58,8 @@ function takeEmailedCodes() {
   if (inFragment || inQuery) {
     const search = query.toString();
     const hash = inFragment ? fragment.toString() : window.location.hash.slice(1);
-    window.history.replaceState({}, '', `${window.location.pathname}${search ? `?${search}` : ''}${hash ? `#${hash}` : ''}`);
+    const pathname = codes.has('invite') && window.location.pathname === INVITATION_PATH ? '/' : window.location.pathname;
+    window.history.replaceState({}, '', `${pathname}${search ? `?${search}` : ''}${hash ? `#${hash}` : ''}`);
   }
   return codes;
 }

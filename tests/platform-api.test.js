@@ -2920,3 +2920,145 @@ test('a moment added by someone who then deleted their account is recorded under
   assert.equal(tombstone.before.updatedBy, 'Former journeyer');
   assert.equal(events.find((event) => event.action === 'moment_added').after.createdBy, 'name-bob', 'the entry written while they were here stays as it was');
 });
+
+// #266: the phone reads an invitation before it is answered, through the same client it accepts
+// with. Looking spends nothing, and only the account it was sent to learns the journey and who sent it.
+async function phoneAgainst(app) {
+  const url = new URL('../apps/mobile/src/api/client.ts', import.meta.url);
+  const { outputText } = ts.transpileModule(await readFile(url, 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+  const { createAccountClient } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  let held = null;
+  return createAccountClient({
+    base: () => '/api/v1',
+    tokens: { read: async () => held, write: async (value) => { held = value; }, clear: async () => { held = null; } },
+    fetch: async (path, init) => {
+      const response = await app.inject({ method: init.method, url: path, headers: init.headers, payload: init.body });
+      return { ok: response.statusCode >= 200 && response.statusCode < 300, status: response.statusCode, json: async () => response.json() };
+    },
+  });
+}
+
+async function invitationForPhone({ now } = {}) {
+  const lines = [];
+  const logger = { ...loggerOptions, level: 'info', stream: { write: (line) => lines.push(line) } };
+  const setup = await testPlatform({ logger, ...(now ? { now } : {}) });
+  const { app, mailer } = setup;
+  const alice = await register(app, mailer, { email: 'look-alice@example.test', username: 'look-alice' });
+  const created = await app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(alice), payload: { name: 'Sunday walks', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 } });
+  const journey = created.json().data.journey;
+  const invited = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/invitations`, headers: authHeaders(alice), payload: { email: 'look-bob@example.test' } });
+  assert.equal(invited.statusCode, 202, invited.body);
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === 'look-bob@example.test').token;
+  return { ...setup, lines, alice, journey, token };
+}
+
+const invitationRow = async (pool, journeyId) => (await pool.query('SELECT accepted_at,revoked_at,reservation_active,expires_at FROM invitations WHERE journey_id=$1', [journeyId])).rows;
+const eventCount = async (pool, journeyId) => (await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journeyId])).rows[0].count;
+
+test('an invitation read before it is answered says who sent it and to which journey, only to the account it was sent to', async (t) => {
+  const { app, mailer, pool, lines, alice, journey, token } = await invitationForPhone();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const before = { row: await invitationRow(pool, journey.id), events: await eventCount(pool, journey.id) };
+
+  // Signed out, it says nothing at all.
+  const signedOut = await app.inject({ method: 'POST', url: '/api/v1/invitations/preview', headers: { origin }, payload: { token } });
+  assert.equal(signedOut.statusCode, 401, signedOut.body);
+
+  // Signed in to another account: told it was sent elsewhere, and not what it is for.
+  const carol = await phoneAgainst(app);
+  await carol.register({ email: 'look-carol@example.test', username: 'look-carol', password: 'correct horse battery staple' });
+  await carol.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'look-carol@example.test').token);
+  assert.deepEqual(await carol.previewInvitation(token), { state: 'another_account' });
+
+  // The address it was sent to, not yet verified: asked to verify first, and still told nothing.
+  // Anyone can type an address when they register; only a verified one shows it is theirs.
+  const bob = await phoneAgainst(app);
+  await bob.register({ email: 'look-bob@example.test', username: 'look-bob', password: 'correct horse battery staple' });
+  assert.deepEqual(await bob.previewInvitation(token), { state: 'verify_email' });
+  await assert.rejects(bob.acceptInvitation(token), (error) => error.code === 'email_unverified');
+
+  // Verified, it is theirs to answer.
+  await bob.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'look-bob@example.test').token);
+  const open = await bob.previewInvitation(token);
+  assert.deepEqual(open, { state: 'open', journeyName: 'Sunday walks', invitedByDisplayName: 'look-alice', expiresAt: before.row[0].expires_at.toISOString() });
+
+  // A code that is not one, or none at all.
+  assert.deepEqual(await bob.previewInvitation('not-a-real-code'), { state: 'not_found' });
+  assert.deepEqual(await bob.previewInvitation(''), { state: 'not_found' });
+  assert.deepEqual(await bob.previewInvitation('x'.repeat(5000)), { state: 'not_found' });
+
+  // Nothing above wrote anything: no history, nothing spent, the place still held.
+  assert.deepEqual(await invitationRow(pool, journey.id), before.row);
+  assert.equal(await eventCount(pool, journey.id), before.events);
+  assert.equal(lines.some((line) => line.includes(token)), false, 'the code never reaches the log');
+  assert.ok(lines.some((line) => line.includes('/api/v1/invitations/preview')), 'the read was logged');
+
+  // The owner opening their own link (im-home#140): told they are already here, and nothing is spent.
+  const owner = await phoneAgainst(app);
+  await owner.login({ identifier: 'look-alice', password: 'correct horse battery staple' });
+  assert.deepEqual(await owner.previewInvitation(token), { state: 'already_member', journeyId: journey.id, journeyName: 'Sunday walks' });
+  await assert.rejects(owner.acceptInvitation(token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await invitationRow(pool, journey.id), before.row, 'the owner tapping it spent nothing');
+  assert.equal((await bob.previewInvitation(token)).state, 'open', 'and it still waits for the person it was sent to');
+
+  // Bob joins. Tapping the link again tells him he is in, and spends and adds nothing more.
+  assert.equal(await bob.acceptInvitation(token), journey.id);
+  const joined = { row: await invitationRow(pool, journey.id), events: await eventCount(pool, journey.id) };
+  assert.deepEqual(await bob.previewInvitation(token), { state: 'already_member', journeyId: journey.id, journeyName: 'Sunday walks' });
+  await assert.rejects(bob.acceptInvitation(token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await invitationRow(pool, journey.id), joined.row);
+  assert.equal(await eventCount(pool, journey.id), joined.events, 'no second "joined" in the history');
+  const members = await pool.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [journey.id]);
+  assert.equal(members.rows[0].count, 2);
+  assert.deepEqual((await bob.journeys()).map(({ id }) => id), [journey.id]);
+
+  // Removed later, the link is used, and says so rather than letting him back in.
+  const removed = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/members/${(await bob.session()).id}`, headers: authHeaders(alice), payload: {} });
+  assert.equal(removed.statusCode, 204, removed.body);
+  assert.equal((await bob.previewInvitation(token)).state, 'used');
+});
+
+test('an invitation that ran out or was withdrawn says so to the person it was sent to', async (t) => {
+  let clock = new Date('2026-08-02T12:00:00.000Z');
+  const ranOutSetup = await invitationForPhone({ now: () => clock });
+  const withdrawnSetup = await invitationForPhone();
+  t.after(async () => {
+    for (const { app, pool } of [ranOutSetup, withdrawnSetup]) { await app.close(); await pool.end(); }
+  });
+  const bobOn = async ({ app, mailer }) => {
+    const bob = await phoneAgainst(app);
+    await bob.register({ email: 'look-bob@example.test', username: 'look-bob', password: 'correct horse battery staple' });
+    await bob.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === 'look-bob@example.test').token);
+    return bob;
+  };
+
+  const late = await bobOn(ranOutSetup);
+  clock = new Date(clock.getTime() + 15 * 24 * 60 * 60 * 1000);
+  const ranOut = await late.previewInvitation(ranOutSetup.token);
+  assert.equal(ranOut.state, 'expired');
+  assert.equal(ranOut.invitedByDisplayName, 'look-alice', 'so they know whom to ask for another');
+  assert.equal(ranOut.journeyName, 'Sunday walks');
+  await assert.rejects(late.acceptInvitation(ranOutSetup.token), (error) => error.code === 'invalid_invitation');
+
+  const { app, pool, alice, journey, token } = withdrawnSetup;
+  const bob = await bobOn(withdrawnSetup);
+  assert.equal((await bob.previewInvitation(token)).state, 'open');
+  const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: alice.cookie } })).json().data;
+  const withdrawn = await app.inject({ method: 'DELETE', url: `/api/v1/journeys/${journey.id}/invitations/${snapshot.invitations[0].id}`, headers: authHeaders(alice), payload: {} });
+  assert.equal(withdrawn.statusCode, 204, withdrawn.body);
+  assert.equal((await bob.previewInvitation(token)).state, 'withdrawn');
+  await assert.rejects(bob.acceptInvitation(token), (error) => error.code === 'invalid_invitation');
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [journey.id])).rows[0].count, 1);
+});
+
+test('an invitation\'s own path, /invite, is the app page', async (t) => {
+  const { app, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const root = await app.inject({ method: 'GET', url: '/' });
+  const invite = await app.inject({ method: 'GET', url: '/invite' });
+  assert.equal(invite.statusCode, 200);
+  assert.match(invite.headers['content-type'], /^text\/html/);
+  assert.equal(invite.body, root.body);
+  // Its files are named relative to the page, so they load from /src/ at /invite too.
+  assert.match(invite.body, /src="\.\/src\/app\.js"/);
+});

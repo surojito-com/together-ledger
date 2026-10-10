@@ -132,3 +132,44 @@ function expectCodeOnlyWhereTheShapePutsIt(seen, shape) {
     expect(new URL(request.url).hostname).toBe('127.0.0.1');
   }
 }
+
+// #266: an invitation's link has its own path, /invite, so the phone app can claim that link and
+// nothing else. On the web it is the same page, the code still after the #, and the address goes
+// back to the app's home once the code is taken.
+test('an invitation link at /invite is accepted with the code in the body, and the address returns home', async ({ page }) => {
+  const seen = watchRequests(page);
+  await signedIn(page);
+  const accepted = [];
+  await page.route(`${API}/invitations/accept`, async (route) => {
+    accepted.push(route.request().postDataJSON());
+    await route.fulfill(json({ journeyId: 'journey-invited' }));
+  });
+
+  await page.goto(`/invite#invite=${CODE}`);
+  await expect.poll(() => accepted).toEqual([{ token: CODE }]);
+  await expectAddressClean(page, 'invite');
+  expect(new URL(page.url()).pathname).toBe('/');
+  expectCodeOnlyWhereTheShapePutsIt(seen, SHAPES[0]);
+  // Its files load from the app's own folder, as at /.
+  expect(seen.some((request) => new URL(request.url).pathname === '/src/app.js')).toBe(true);
+});
+
+test('a signed-out person opening an invitation at /invite is asked to sign in, and the code still leaves the address', async ({ page }) => {
+  await signedOut(page);
+  await page.goto(`/invite#invite=${CODE}`);
+  await expect(page.locator('#account-dialog')).toBeVisible();
+  await expect(page.locator('#toast')).toContainText('Sign in with the invited email, then reopen the invitation link.');
+  await expectAddressClean(page, 'invite');
+  expect(new URL(page.url()).pathname).toBe('/');
+});
+
+test('a verification link is never moved to /invite, and /invite with no code is left as it is', async ({ page }) => {
+  await signedOut(page);
+  await page.route(`${API}/auth/verify-email`, (route) => route.fulfill(json({ user: member })));
+  await page.goto(`/#verify=${CODE}`);
+  await expect(page.locator('#toast')).toContainText('Email verified.');
+  expect(new URL(page.url()).pathname).toBe('/');
+  await page.goto('/invite');
+  await expect(page.locator('#welcome-title')).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe('/invite');
+});

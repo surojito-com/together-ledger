@@ -1721,6 +1721,41 @@ export class PlatformService {
     });
   }
 
+  // What the person holding an invitation's code may know before they answer it (#266): the
+  // phone shows who invited them and to which journey, and says plainly why a code can't be used.
+  // It reads and never writes: nothing is spent, recorded or reserved by looking.
+  //
+  // The email itself names neither the journey nor who sent it, so holding the code alone tells
+  // nobody either. Only the account the invitation was sent to, once its address is verified (the
+  // same account that could accept it), sees the journey's name and the sender's. Someone already
+  // in the journey, such as its owner opening their own link, is told so and nothing more.
+  async previewInvitation(userId, rawToken) {
+    const user = await this.pool.query('SELECT id,email_normalized,email_verified_at FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    if (!user.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+    if (!token || token.length > 200) return { state: 'not_found' };
+    const found = await this.pool.query(
+      `SELECT i.*,j.name AS journey_name,u.display_name AS invited_by_display_name
+       FROM invitations i JOIN journeys j ON j.id=i.journey_id LEFT JOIN users u ON u.id=i.invited_by_user_id
+       WHERE i.token_hash=$1`,
+      [sha256(token)],
+    );
+    if (!found.rowCount) return { state: 'not_found' };
+    const invitation = found.rows[0];
+    const member = await this.pool.query('SELECT 1 FROM journey_members WHERE journey_id=$1 AND user_id=$2', [invitation.journey_id, userId]);
+    if (member.rowCount) return { state: 'already_member', journeyId: invitation.journey_id, journeyName: invitation.journey_name };
+    if (invitation.email_normalized !== user.rows[0].email_normalized) return { state: 'another_account' };
+    if (!user.rows[0].email_verified_at) return { state: 'verify_email' };
+    const status = invitationStatus(invitation, this.now());
+    const state = { pending: 'open', accepted: 'used', withdrawn: 'withdrawn', revoked: 'closed', expired: 'expired' }[status];
+    return {
+      state,
+      journeyName: invitation.journey_name,
+      invitedByDisplayName: invitation.invited_by_display_name || 'Journey member',
+      expiresAt: dateTime(invitation.expires_at),
+    };
+  }
+
   async removeMember(userId, journeyId, memberUserId) {
     if (userId === memberUserId) throw new PlatformError(400, 'invalid_member', 'The journey owner cannot remove themselves.');
     return withTransaction(this.pool, async (client) => {
