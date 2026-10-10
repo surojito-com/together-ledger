@@ -34,6 +34,8 @@ Contributions should:
 
 **A pull request that adds a dependency that makes a network request, a permission, or a new data field updates that file in the same pull request.** That includes a new field the phone sends, a new processor, a new Android permission or iOS usage description, and any change to what deletion removes or keeps. `tests/store-readiness.test.js` fails when `package.json` or `apps/mobile/package.json` gains a dependency the file doesn't account for.
 
+That file says what the code does; [`docs/OUTBOUND_CAPTURE.md`](docs/OUTBOUND_CAPTURE.md) checks it against what actually leaves the browser and the phone. Run it again (`scripts/capture-outbound.mjs`, both modes) on any release that adds a dependency, and the by-hand phone capture before a store submission.
+
 ## Pull request checklist
 
 - [ ] I used only synthetic data.
