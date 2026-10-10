@@ -5,10 +5,13 @@ browser and the phone, so `PRIVACY.md` and the store forms rest on evidence, not
 on any release that adds a dependency, and run the by-hand phone capture below before a store
 submission.
 
-- **Last run:** Oct 10, 2026 (00:54 UTC), against `102da5b` on `main` ("Capture what the website
-  and the phone send", #382) with emailed links carrying their code after the #, in a Linux cloud
-  session, with headless Chromium 141. The run before it (00:19 UTC, `144803c`) found the codes in
-  the query; that is Finding 1.
+- **Last run:** Oct 10, 2026 (15:56 UTC), against `36cb2be` (the branch that points the app's
+  icons and share card at `app.together-ledger.com`, relates to #36 and #39), in a Linux cloud
+  session, with headless Chromium 141. Every check passed and the browser reached five hosts:
+  our app and our API, Google's and Apple's sign-in scripts, and Stripe's checkout. `together-ledger.com`
+  is no longer among them (Finding 3). The run before it (00:54 UTC, `102da5b`, #382) was the
+  first with emailed links carrying their code after the #; the one before that (00:19 UTC,
+  `144803c`) found the codes in the query; that is Finding 1.
 - **Website:** captured, end to end, with stand-ins for every third party. **Phone:** inspected,
   not captured; a capture needs a device, which is the owner's by-hand step.
 
@@ -16,7 +19,7 @@ submission.
 
 Website: a throwaway PostgreSQL database, then the script. It builds `_site` exactly as the release
 does, serves it and the API at their production hostnames over TLS (a certificate made for the
-run), and drives Chromium through every flow. Chromium resolves only our three hostnames, to the
+run), and drives Chromium through every flow. Chromium resolves only our two hostnames, to the
 script, and uses no proxy, so nothing reaches the internet.
 
 ```bash
@@ -46,7 +49,6 @@ installed. Neither runs in CI or the release gate: the website needs a database 
 | Stripe's API | A local server the real Stripe SDK is pointed at | Exactly what the SDK would have sent `api.stripe.com` |
 | Stripe Checkout (`checkout.stripe.com`) | A page that sends the person back to `success_url` | The navigation to Stripe with its `Referer`, and the return leg |
 | The email sender (Resend) | The real mailer, with its transport replaced | Every message, its links, and where those links lead |
-| The company site (`together-ledger.com`) | This repository's `public/` files | That the page asks for its icons there |
 | Cloudflare and Caddy | Node's TLS server, mimicking `wrangler.jsonc`'s asset handling | — |
 
 ## What leaves the browser
@@ -59,9 +61,8 @@ deleting two accounts (a password one and an Apple one).
 
 | Host | Who | When | What is sent |
 |---|---|---|---|
-| `app.together-ledger.com` | Us (Cloudflare) | Every page load | Standard request details. Opening an emailed link sends none of its one-time code: the code is after the #, which the browser keeps (Finding 1) |
+| `app.together-ledger.com` | Us (Cloudflare) | Every page load | Standard request details, the favicon and touch icon included. Opening an emailed link sends none of its one-time code: the code is after the #, which the browser keeps (Finding 1) |
 | `api.together-ledger.com` | Us (AWS) | Every account action | JSON bodies (register, sign-in, moments, photo bytes, invitations, deletion), the `tl_session` cookie, the CSRF header, the photo's file name in `X-Together-Image-Name`. `Referer` is the origin only |
-| `together-ledger.com` | Us (Cloudflare, the company site) | Every page load | The favicon and touch icon `index.html` links there. `Referer` origin only, no cookie. The company site's Worker sets no cookie and has no analytics (`together-ledger.com` repo, `worker/index.ts`) |
 | `accounts.google.com` | Google | A signed-out person opens Sign in, for any reason, on a server with both providers configured | A script request; `Referer` origin only |
 | `appleid.cdn-apple.com` | Apple | The same moment | A script request; `Referer` origin only |
 | `checkout.stripe.com` | Stripe | Starting a checkout | A navigation; `Referer: https://app.together-ledger.com/`, no journey or moment id |
@@ -74,6 +75,9 @@ And from our server, because of what the browser did:
 | `api.stripe.com` | Checkout | Price check; a customer with the payer's email and our account id; a session with our account and journey ids, quantity and return addresses |
 | `www.googleapis.com` | Continue with Google | A request for Google's public keys, nothing about the person |
 | `appleid.apple.com` | Continue with Apple; deleting that account | Public keys; the one-time code exchanged for a refresh token; that token revoked on deletion |
+
+The company site, `together-ledger.com`, is reached by nothing: the capture no longer stands in for
+it, so a request there would fail as an undeclared host.
 
 Checks, all passing: no host beyond these; every request `https`; **no font request of any kind**
 (the web has no `@font-face` yet, so not even Gelasio is fetched); **Stripe's script loads on no
@@ -126,7 +130,6 @@ scope.
 |---|---|---|---|
 | `app.together-ledger.com` | Named (Cloudflare) | Web only | Web only |
 | `api.together-ledger.com` | Named (Amazon Web Services) | Every type declared is what reaches it | Same |
-| `together-ledger.com` | Cloudflare "runs our domain names"; the icon requests aren't said. STORE_READINESS 2.5 names them | Web only | Web only |
 | Google and Apple sign-in, web | Says the scripts load when a signed-out person opens Sign in, even to use a password (Oct 10) | Web only | Web only |
 | Google and Apple sign-in, phone | Named | OAuth sign-in; no new type | No new type (decided Oct 9) |
 | Stripe | Named, with the ids it receives | Phone never reaches Stripe | Same |
@@ -160,13 +163,16 @@ scope.
    including to use a password or to recover an account. `PRIVACY.md` now says so, in the words
    the owner approved on Oct 10, and STORE_READINESS 2.5 lists the two scripts. What their real
    scripts do next was stood in for, not captured.
-3. **The app's icons come from the company site. Now said; the request itself is unchanged.**
-   STORE_READINESS 2.5 used to say only that the web loads no script, font or stylesheet from
-   another origin; it now says the favicon and touch icon come from `together-ledger.com`. The
-   same files are in `_site`, so pointing `index.html` at `/favicon.svg` would keep every load on
-   the app's own host; that is the owner's call and is not made. The company site's source has no
-   `/favicon.svg` or `/apple-touch-icon.png` route, so in production those requests may not even
-   succeed. That is **not verified**: production isn't fetched, on purpose.
+3. **The app's icons came from the company site, which didn't have them. Fixed.** `index.html`
+   pointed its favicon, touch icon, canonical, `og:url`, `og:image` and `twitter:image` at
+   `together-ledger.com`, and the policy pages their favicon. Checked by hand on Oct 10 (the
+   capture itself still fetches nothing in production): `together-ledger.com/favicon.svg`,
+   `/apple-touch-icon.png` and `/social/together-ledger-card.png` each answered 404, and the same
+   three on `app.together-ledger.com` answered 200. So the tab icon, the home-screen icon and the
+   link preview were broken. Every one of those tags now names `app.together-ledger.com`, and the
+   15:56 run saw the icons requested there and nothing sent to `together-ledger.com`.
+   `scripts/check-public-safety.mjs` requires the new addresses, and
+   `tests/outbound-declarations.test.js` fails on a tag in any shipped page pointed elsewhere.
 
 ## The real phone capture, by hand
 

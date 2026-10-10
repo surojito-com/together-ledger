@@ -139,7 +139,9 @@ test('a themed card wears its theme without naming it; the form and History stil
 
 test('switching journey, or account, never shows one journey\'s moments under another', async () => {
   const hook = await read('src/journey/use-journey.ts');
-  assert.match(hook, /select: \(journeyId: string\) => \{\s*if \(!userId \|\| journeyId === activeId\) return;\s*setHeld\(\{ forUser: userId, state: \{ phase: 'loading' \} \}\);/);
+  // The open journey stays until the other has loaded (#352); its name and moments are one snapshot.
+  assert.match(hook, /select: \(journeyId: string\) => \{\s*if \(!userId\) return;\s*setHeld\(\(current\) => \(current\?\.forUser === userId \? \{ forUser: userId, state: opening\(current\.state, journeyId\) \} : current\)\);/);
+  assert.doesNotMatch(hook, /phase: 'loading' \} \}\)/, 'choosing a journey never blanks the ledger');
   assert.match(hook, /held\?\.forUser === userId \? held\.state : \{ phase: 'loading' \}/, 'what is held belongs to the account that loaded it');
   assert.match(hook, /if \(attempt !== latest\.current\) return;/, 'an answer that arrives late is dropped');
 });

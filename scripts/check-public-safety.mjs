@@ -53,9 +53,15 @@ export function findViolations() {
 
   const homepage = readFileSync(join(root, 'index.html'), 'utf8');
   const requiredShareMetadata = [
-    'rel="canonical" href="https://together-ledger.com/"',
+    // The app's own address. together-ledger.com is the company site, a separate deployment that
+    // has none of these files: pointed there, the tab icon, home-screen icon and link preview 404.
+    'rel="canonical" href="https://app.together-ledger.com/"',
+    'rel="icon" href="https://app.together-ledger.com/favicon.svg"',
+    'rel="apple-touch-icon" href="https://app.together-ledger.com/apple-touch-icon.png"',
     'property="og:title"',
-    'property="og:image" content="https://together-ledger.com/social/together-ledger-card.png"',
+    'property="og:url" content="https://app.together-ledger.com/"',
+    'property="og:image" content="https://app.together-ledger.com/social/together-ledger-card.png"',
+    'name="twitter:image" content="https://app.together-ledger.com/social/together-ledger-card.png"',
     'property="og:image:width" content="1200"',
     'property="og:image:height" content="630"',
     'property="og:image:alt"',

@@ -1,7 +1,7 @@
 Together Ledger is a private place for two people to hold what matters: the moments, plans and memories you want to come back to, without the noise of a feed.
 
 Hold a moment
-Write down what happened while it's still fresh: a promise, a memory, a heart-to-heart, a boundary, a repair request, a practical matter, or a kind of moment you name yourself. Give it a date, a place in your own words, a photo if you like, and as much detail as you want. You can edit or delete it later.
+Write down what happened while it's still fresh: a promise, a memory, a heart-to-heart, a boundary, a repair request, a practical matter, or a kind of moment you name yourself. Give it a date, a place in your own words, a photo if you like, and as much detail as you want. You can edit or delete it later. You can hold a moment without a connection; it's sent when you're back online.
 
 Choose who sees it
 Every moment carries its visibility, shown in a shape, a word and a border:

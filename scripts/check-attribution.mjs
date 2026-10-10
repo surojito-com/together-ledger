@@ -1,4 +1,5 @@
-// Fails a pull request, or a push to main, that carries AI-tool or vendor attribution.
+// Fails a pull request, or a push to main, that carries AI-tool or vendor attribution or a closing
+// keyword.
 //
 // The owner's rule (CLAUDE.md, "Branch naming and attribution"): commits and pull requests read
 // as Together Ledger's own work. No co-author trailer naming a tool, no "generated with" footer,
@@ -20,6 +21,13 @@
 // through that tooling, and so sticks — and the check then reads the cleaned body. Anything else
 // that names a tool, in the body or anywhere, still fails.
 //
+// It also fails on a closing keyword (CLAUDE.md, "Issues are the project journey"). GitHub closes
+// an issue when a merged PR's title or body, or a commit reaching main, puts close, fix or resolve
+// (in any of their forms, any casing) before a reference to it, and it reads no further back than
+// the keyword: "does not close #260" closed #260, and "Fixes #256" closed #256. So a keyword before
+// a reference fails whatever comes before it, a "not" included. "Relates to #N" and "part of #N"
+// carry no keyword and pass.
+//
 // Honest limits: the squash commit is written at merge time, after this has run, so merge with an
 // explicit message (the PR title as the subject, a clean body). The push check on main catches a
 // slip afterwards; it cannot prevent one. Issue and PR comments are not history and are not read.
@@ -39,18 +47,35 @@ const RULES = [
   { reason: 'a claude.ai/code session link', pattern: /claude\.ai\/code/i },
 ];
 
+// The line of `text` that holds `index`.
+function lineAt(text, index) {
+  const start = text.lastIndexOf('\n', index) + 1;
+  const end = text.indexOf('\n', index);
+  return text.slice(start, end === -1 ? undefined : end).trim();
+}
+
 // Every rule that matches `text`, with the line it matched on.
 export function findAttribution(text) {
   if (!text) return [];
   const found = [];
   for (const { reason, pattern } of RULES) {
     const match = pattern.exec(text);
-    if (!match) continue;
-    const start = text.lastIndexOf('\n', match.index) + 1;
-    const end = text.indexOf('\n', match.index);
-    found.push({ reason, line: text.slice(start, end === -1 ? undefined : end).trim() });
+    if (match) found.push({ reason, line: lineAt(text, match.index) });
   }
   return found;
+}
+
+// The keywords GitHub honours, then the references it closes: #12, GH-12, owner/repo#12, or the
+// issue's own address. A colon after the keyword still counts.
+const CLOSING_KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s*(?:[\w.-]+\/[\w.-]+#\d+|#\d+|gh-\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)\b/gi;
+
+// Every closing keyword before an issue reference in `text`, with the line it is on.
+export function findClosingKeywords(text) {
+  if (!text) return [];
+  return [...text.matchAll(CLOSING_KEYWORD)].map((match) => ({
+    reason: `a closing keyword, "${match[0]}": a merge would close that issue. Write "Relates to #N" (or "part of #N") instead`,
+    line: lineAt(text, match.index),
+  }));
 }
 
 const FOOTER_LINE = /^\s*_?Generated (?:with|by) \[Claude Code\]\(https:\/\/claude\.(?:ai|com)\/[^)]*\)_?\s*$/i;
@@ -127,7 +152,10 @@ export function subjects(eventName, event, readCommits = commitMessages, refExis
 }
 
 export function check(items) {
-  return items.flatMap(({ where, text }) => findAttribution(text).map((finding) => ({ where, ...finding })));
+  return items.flatMap(({ where, text }) => [
+    ...findAttribution(text).map((finding) => ({ where, kind: 'attribution', ...finding })),
+    ...findClosingKeywords(text).map((finding) => ({ where, kind: 'closing', ...finding })),
+  ]);
 }
 
 async function stripPrBody(event) {
@@ -162,13 +190,18 @@ async function main() {
   }
   const findings = check(subjects(eventName, event));
   if (findings.length === 0) {
-    console.log('No AI-tool or vendor attribution found.');
+    console.log('No AI-tool or vendor attribution and no closing keyword found.');
     return;
   }
   for (const { where, reason, line } of findings) {
     console.error(`${where}: ${reason}\n    ${line}`);
   }
-  console.error('\nCommits and pull requests read as Together Ledger\'s own work — see CLAUDE.md, "Branch naming and attribution".');
+  if (findings.some(({ kind }) => kind === 'attribution')) {
+    console.error('\nCommits and pull requests read as Together Ledger\'s own work — see CLAUDE.md, "Branch naming and attribution".');
+  }
+  if (findings.some(({ kind }) => kind === 'closing')) {
+    console.error('\nA merge must never close an issue: write "Relates to #N" instead, and the owner closes it — see CLAUDE.md, "Issues are the project journey". "Not" or "does not" before the keyword does not stop GitHub.');
+  }
   process.exitCode = 1;
 }
 

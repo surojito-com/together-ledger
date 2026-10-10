@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '../src/auth/session';
-import { LEDGER_WHILE_OFFLINE } from '../src/auth/session-state';
+import { LEDGER_WHILE_OFFLINE, type OfflineReason } from '../src/auth/session-state';
 import { Choices } from '../src/components/choices';
 import { EmptyState } from '../src/components/empty-state';
 import { GraceBanner } from '../src/components/grace-banner';
@@ -15,10 +15,9 @@ import { INVITATION_WORDS } from '../src/invitations/invitation-words';
 import { journeyPeriod, momentFilters, momentListHeading, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
+import { JOURNEYS_NOT_LOADED, nextJourneyWords } from '../src/journey/journey-state';
 import { useJourney } from '../src/journey/use-journey';
 import { useMomentView } from '../src/journey/use-moment-view';
-import { useWaitingMoments } from '../src/journey/use-waiting-moments';
-import { waitingWhileOffline } from '../src/journey/waiting-moments';
 import { WaitingMoments } from '../src/components/waiting-moments';
 import type { MomentView } from '../src/storage/ledger-store';
 import { fonts, useTheme } from '../src/theme';
@@ -31,7 +30,6 @@ export default function LedgerScreen() {
   const session = useSession();
   const journey = useJourney();
   const actions = useMomentActions();
-  const waiting = useWaitingMoments();
   const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState('all');
@@ -41,27 +39,24 @@ export default function LedgerScreen() {
   const { state } = journey;
 
   if (state.phase === 'loading') return <Screen title="Our ledger"><Body>Loading…</Body></Screen>;
-  // Signed in, but the service could not be asked (#352): never the sign-in prompt below.
-  if (state.phase === 'offline') {
-    return (
-      <Screen title="Our ledger">
-        <Body>{LEDGER_WHILE_OFFLINE[state.reason]}</Body>
-        {/* What this account held and the service doesn't have yet: kept, not lost (#352). */}
-        {waiting.moments.length ? <Body>{waitingWhileOffline(waiting.moments.length)}</Body> : null}
-        <Button kind="quiet" label="Try again" onPress={session.refresh} />
-      </Screen>
-    );
-  }
-  if (state.phase === 'signed-out' || state.phase === 'no-journeys') return <EmptyStart signedIn={state.phase === 'no-journeys'} />;
+  // Signed in, but the service could not be asked (#352): never the sign-in prompt below. A first
+  // load the connection stopped is drawn the same, and no failure is ever a bare Try again.
+  if (state.phase === 'offline') return <LedgerWhileOffline reason={state.reason} onRetry={session.refresh} />;
   if (state.phase === 'failed') {
+    if (state.reason) return <LedgerWhileOffline reason={state.reason} onRetry={journey.retry} />;
     return (
       <Screen title="Our ledger">
+        {/* Why is in the status region above, in the service's own words. */}
+        <Body>{JOURNEYS_NOT_LOADED}</Body>
+        <WaitingMoments activeJourneyId={null} />
         <Button kind="quiet" label="Try again" onPress={journey.retry} />
       </Screen>
     );
   }
+  if (state.phase === 'signed-out' || state.phase === 'no-journeys') return <EmptyStart signedIn={state.phase === 'no-journeys'} />;
 
-  const { snapshot, journeys, activeId } = state;
+  const { snapshot, journeys, activeId, next } = state;
+  const nextName = next ? journeys.find((item) => item.id === next.journeyId)?.name : null;
   const recent = recentMoments(snapshot);
   const filters = momentFilters(recent);
   const currentFilter = filters.some(([value]) => value === filter) ? filter : 'all';
@@ -107,6 +102,8 @@ export default function LedgerScreen() {
             </View>
             <GraceBanner journeyId={snapshot.journey.id} grace={snapshot.capacity?.grace} peopleHere={snapshot.capacity?.peopleHere ?? 0} />
             {journeys.length > 1 ? <JourneyPicker journeys={journeys} activeId={activeId} onSelect={(id) => { setExpanded(false); setFilter('all'); setOpened(new Set()); journey.select(id); }} /> : null}
+            {/* The open journey stays while another is asked for; offline, it opens once the connection is back (#352). */}
+            {next && nextName ? <Text accessibilityLiveRegion="polite" style={[styles.body, { color: colors.muted }]}>{nextJourneyWords(nextName, next.when)}</Text> : null}
             <Button kind="quiet" label="＋ New journey" onPress={() => router.push('/new-journey')} />
             <View style={styles.section}>
               <Text style={[styles.eyebrow, { color: colors.accent }]}>Our shared journey</Text>
@@ -130,6 +127,21 @@ export default function LedgerScreen() {
         ListFooterComponent={<Threads threads={threads} />}
       />
     </SafeAreaView>
+  );
+}
+
+/**
+ * Signed in, with no journey this phone can show (#352, #360): opened offline, or a first load the
+ * connection stopped. What was held here and not sent yet is still in sight, with Try sending now.
+ */
+function LedgerWhileOffline({ reason, onRetry }: { reason: OfflineReason; onRetry: () => void }) {
+  return (
+    <Screen title="Our ledger">
+      <Body>{LEDGER_WHILE_OFFLINE[reason]}</Body>
+      {/* What this account held and the service doesn't have yet: kept, not lost (#352). */}
+      <WaitingMoments activeJourneyId={null} />
+      <Button kind="quiet" label="Try again" onPress={onRetry} />
+    </Screen>
   );
 }
 

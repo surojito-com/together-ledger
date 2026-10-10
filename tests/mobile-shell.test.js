@@ -16,7 +16,7 @@ const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
 
 const { STATUS_TONES, CONNECTION_MESSAGES, showStatus, clearStatus, closeDialog } = await importMobile('src/shell/status.ts');
 const { OFFLINE_NOTICE, CONNECTION_SOURCE, connectionChange } = await importMobile('src/shell/connection.ts');
-const { OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
+const { OFFLINE_MESSAGE, UNREACHABLE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
 const { openingSurface } = await importMobile('src/shell/surface.ts');
 const { TOAST_MS, PENDING_LABEL, KEEP_LABEL } = await importMobile('src/shell/defaults.ts');
 
@@ -40,7 +40,8 @@ test('messages clear per source, so a returning connection never wipes a problem
 // #300, #352: offline, or the service out of reach, loses nothing, so it is never the
 // destructive colour. Every other message keeps its tone until #244 decides otherwise.
 test('being offline or out of reach is a caution, never a problem', () => {
-  assert.deepEqual([...CONNECTION_MESSAGES], [OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE], 'the account client\'s own words, held the same in both files');
+  assert.deepEqual([...CONNECTION_MESSAGES], [OFFLINE_MESSAGE, UNREACHABLE_MESSAGE, UNAVAILABLE_MESSAGE], 'the account client\'s own words, held the same in both files');
+  assert.equal(OFFLINE_MESSAGE, OFFLINE_NOTICE, 'offline is one message on the phone: the connection notice\'s (#352)');
   assert.equal(showStatus(OFFLINE_MESSAGE, { source: 'moment' }).tone, 'caution');
   assert.equal(showStatus(UNAVAILABLE_MESSAGE).tone, 'caution');
   assert.equal(showStatus('The service could not complete that request.').tone, 'problem', 'other problems are left as they are');

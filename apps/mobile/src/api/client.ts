@@ -20,7 +20,8 @@
  *
  * The two situations the web client keeps apart stay apart here: `offline` (the service could
  * not be reached) and `accounts_unavailable` (this build has no service to reach at all). A
- * renewal the service answered without a pair is `unreachable`, in the offline words.
+ * renewal the service answered without a pair is `unreachable`, in its own words: the phone has a
+ * connection then, so it is not told it is offline.
  *
  * Kept free of runtime imports so the tests can run it directly (tests/mobile-account.test.js).
  */
@@ -81,8 +82,16 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * On the phone, being offline is said once, in the connection notice's words (OFFLINE_NOTICE,
+ * src/shell/connection.ts), whichever noticed first: the connection watch or a request that could
+ * not be sent (#300, #352). Repeated because this file has no runtime imports; the tests hold the
+ * two copies the same. The web keeps its own words (src/api.js).
+ */
+export const OFFLINE_MESSAGE = 'You’re offline. A moment you hold now waits on this phone and is sent when you reconnect. Your journeys will be back then; until then, nothing else can be changed.';
+/** The service answered a renewal, but without a pair: the phone has a connection, so it is not "offline". */
+export const UNREACHABLE_MESSAGE = 'Together Ledger can’t be reached right now. You’re still signed in. Try again in a moment.';
 // The web client's own words (src/api.js), not new ones.
-export const OFFLINE_MESSAGE = 'Private sync is temporarily unreachable.';
 export const UNAVAILABLE_MESSAGE = 'Private accounts are being connected. No account details were sent.';
 export const FALLBACK_MESSAGE = 'The service could not complete that request.';
 const SIGN_IN_AGAIN_MESSAGE = 'Sign in to continue.';
@@ -153,7 +162,7 @@ export function createAccountClient({ base, fetch, tokens, build }: {
         await tokens.write({ token: fresh.token, tokenExpiresAt: fresh.tokenExpiresAt, refreshToken: fresh.refreshToken, refreshTokenExpiresAt: fresh.refreshTokenExpiresAt });
         return fresh;
       }
-      throw new ApiError(OFFLINE_MESSAGE, { code: 'unreachable', status: response.status });
+      throw new ApiError(UNREACHABLE_MESSAGE, { code: 'unreachable', status: response.status });
     })().finally(() => { refreshing = null; });
     return refreshing;
   }

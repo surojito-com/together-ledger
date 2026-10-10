@@ -48,7 +48,7 @@ test('the website asks for no font: no @font-face, no @import, no font host', as
   for (const [path, text] of files) assert.doesNotMatch(text, FONT_HOSTS, `${path} names a font host`);
 });
 
-test('the page loads from other addresses only its icons, and the scripts only Google and Apple sign-in', async () => {
+test('the page loads its icons from its own address, and the scripts only Google and Apple sign-in', async () => {
   const files = await shippedWebFiles();
   const page = files.get('index.html');
   // Every tag the browser fetches for: scripts, stylesheets and icons, preconnects and preloads.
@@ -56,7 +56,13 @@ test('the page loads from other addresses only its icons, and the scripts only G
     ...page.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g),
     ...page.matchAll(/<link\b(?=[^>]*\brel="(?:stylesheet|icon|apple-touch-icon|preconnect|dns-prefetch|preload|prefetch|modulepreload|manifest)")[^>]*\bhref="([^"]+)"/g),
   ].map(([, url]) => url).filter((url) => /^(?:https?:)?\/\//.test(url));
-  assert.deepEqual(loads.sort(), ['https://together-ledger.com/apple-touch-icon.png', 'https://together-ledger.com/favicon.svg']);
+  // The app's own address, not the company site's: together-ledger.com has none of these files.
+  assert.deepEqual(loads.sort(), ['https://app.together-ledger.com/apple-touch-icon.png', 'https://app.together-ledger.com/favicon.svg']);
+  for (const [path, text] of files) {
+    if (!path.endsWith('.html')) continue;
+    const absolute = [...text.matchAll(/<(?:link|meta)\b[^>]*\b(?:href|content)="(https:\/\/[^"]+)"/g)].map(([, url]) => new URL(url).host);
+    assert.deepEqual(absolute.filter((host) => host !== 'app.together-ledger.com' && host !== 'api.together-ledger.com'), [], `${path} points a tag at another address`);
+  }
 
   // The only addresses the scripts load a script from (src/app.js, PROVIDER_SCRIPTS), and nothing
   // from Stripe: checkout is Stripe's own page, reached by navigating, never by loading Stripe.js.
