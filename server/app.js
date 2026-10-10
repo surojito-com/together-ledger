@@ -125,6 +125,19 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   }
   const stripeSession = [protectMutation, keepStripeOffThePhone];
 
+  // Work a route starts once its answer has been sent. Closing the app waits for it, so a restart
+  // never drops a recovery email halfway; app.afterReplies() lets a test wait for it too.
+  const pendingAfterReplies = new Set();
+  function afterReply(request, label, work) {
+    const job = Promise.resolve()
+      .then(work)
+      .catch((error) => request.log.error({ err: { name: error?.name || 'Error' } }, `${label} failed after its reply`))
+      .finally(() => pendingAfterReplies.delete(job));
+    pendingAfterReplies.add(job);
+  }
+  app.decorate('afterReplies', async () => { await Promise.allSettled([...pendingAfterReplies]); });
+  app.addHook('onClose', async () => { await Promise.allSettled([...pendingAfterReplies]); });
+
   function setSession(reply, session) {
     reply.setCookie(SESSION_COOKIE, session.rawToken, cookieOptions());
   }
@@ -235,7 +248,9 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
 
   // Rotation, not renewal: the refresh token presented here is spent, and the reply carries a
   // fresh pair. Nothing is read from the URL, so neither token reaches a log or a history entry.
-  app.post('/api/v1/auth/refresh', { config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => ({
+  // Limited for load alone, so it is generous: a refresh token cannot be guessed, and phones on
+  // one carrier often share an address (owner, Oct 10, 2026, #259).
+  app.post('/api/v1/auth/refresh', { config: { rateLimit: { max: 120, timeWindow: '15 minutes' } } }, async (request) => ({
     data: await platform.refreshTokens(request.body?.refreshToken),
   }));
 
@@ -312,8 +327,21 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   // Someone who has forgotten their password has no token yet, so a phone asking for a recovery
   // link is one of the places a credential is still to come, like registering. The link it sends
   // goes to the account origin, never to an address the caller chose.
-  app.post('/api/v1/recovery/request', { config: { rateLimit: { max: 5, timeWindow: '30 minutes' } } }, async (request, reply) => {
-    await platform.requestRecovery(request.body?.email, accountOriginFor(request, { issuingToken: asksForToken(request) }));
+  //
+  // It answers before the address is even looked up (#259). Waiting for the email made a real
+  // address take tens of milliseconds longer than an unknown one, which told anyone which
+  // addresses have accounts. Now every address gets the same 202 down the same path, and the
+  // lookup and the email follow once it has been sent. A failed send is never shown to the caller:
+  // deliver() reports it by kind, never by address, and anything else that fails is logged by name.
+  app.decorateRequest('recoveryAsked', null);
+  app.post('/api/v1/recovery/request', {
+    config: { rateLimit: { max: 5, timeWindow: '30 minutes' } },
+    onResponse: async (request) => {
+      const asked = request.recoveryAsked;
+      if (asked) afterReply(request, 'recovery request', () => platform.requestRecovery(asked.email, asked.accountOrigin));
+    },
+  }, async (request, reply) => {
+    request.recoveryAsked = { email: request.body?.email, accountOrigin: accountOriginFor(request, { issuingToken: asksForToken(request) }) };
     return reply.code(202).send({ data: { accepted: true } });
   });
 
@@ -332,7 +360,8 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     data: { user: await platform.changeDisplayName(request.auth.userId, request.body || {}) },
   }));
 
-  app.delete('/api/v1/account', { preHandler: protectMutation }, async (request, reply) => {
+  // Limited because it checks the password (owner, Oct 10, 2026, #259).
+  app.delete('/api/v1/account', { preHandler: protectMutation, config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
     if (request.body?.confirmation !== 'DELETE') throw new PlatformError(400, 'confirmation_required', 'Type DELETE to confirm account deletion.');
     await billing.assertAccountDeletable(request.auth.userId);
     // deleteAccount logs the `account deleted` line a restore from backup relies on.

@@ -35,7 +35,7 @@ A refresh token that was already spent is answered by what has happened to the p
 
 Each token records when it was first presented (`used_at`) and each pair which refresh token issued it (`issued_by`). A refresh token spent before migration 031 has no pair recorded against it, so presenting it again retires its family, as before.
 
-Only `401 invalid_token` means the refresh token was refused and the sign-in is over. A client keeps its tokens on anything else — no connection, a `5xx`, a `429` from the rate limit (30 per 15 minutes), or a reply that is not this API's JSON — and tries again later.
+Only `401 invalid_token` means the refresh token was refused and the sign-in is over. A client keeps its tokens on anything else — no connection, a `5xx`, a `429` from the rate limit (120 per 15 minutes per address), or a reply that is not this API's JSON — and tries again later.
 
 `DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
 

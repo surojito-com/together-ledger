@@ -9,6 +9,9 @@
 // - It is a count, not a lockout: nothing is kept against an account, and another address is
 //   never refused because of what this one did.
 //
+// Asking for a recovery link answers before the address is looked up, so a real address and an
+// unknown one take the same path to the same 202, and the email follows (owner, Oct 10, 2026).
+//
 // The last test runs the Caddyfile that ships, in front of the app, when CADDY_BIN points to a
 // caddy binary (the production image is caddy:2.10). Without one it is skipped.
 import test from 'node:test';
@@ -54,7 +57,7 @@ const identity = {
 };
 const apple = { configured: () => false };
 
-async function setup({ trustProxy = false, logger = false } = {}) {
+async function setup({ trustProxy = false, logger = false, mailer = new MemoryMailer(), onDeliveryFailure } = {}) {
   const memory = newDb({ autoCreateForeignKeyIndices: true });
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
   memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
@@ -64,10 +67,9 @@ async function setup({ trustProxy = false, logger = false } = {}) {
     NODE_ENV: 'test', PUBLIC_ORIGIN: origin, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32),
     TRUST_PROXY: trustProxy ? 'true' : 'false',
   });
-  const mailer = new MemoryMailer();
-  const platform = new PlatformService({ pool, config, mailer, now: () => NOW, identity, apple });
+  const platform = new PlatformService({ pool, config, mailer, now: () => NOW, identity, apple, ...(onDeliveryFailure ? { onDeliveryFailure } : {}) });
   const app = await buildApp({ platform, config, logger });
-  return { app, pool, mailer };
+  return { app, pool, mailer, platform };
 }
 
 const post = (app, url, payload, { from = '203.0.113.10', headers = {} } = {}) => (
@@ -126,6 +128,7 @@ test('asking for a recovery link is refused on the 6th try in 30 minutes', async
   const { allowed, refused } = await tripLimit(() => post(app, '/api/v1/recovery/request', { email: 'asha@example.test' }));
   assert.equal(allowed, 5);
   assert.ok(Number(refused.headers['retry-after']) > 15 * 60, 'the recovery window is 30 minutes');
+  await app.afterReplies();
   assert.equal(mailer.messages.filter((message) => message.type === 'recovery').length, 5);
 });
 
@@ -164,12 +167,30 @@ test('the rest of the account routes trip at their own numbers too', async (t) =
   const resend = await tripLimit(() => post(app, '/api/v1/auth/resend-verification', {}, { headers: { cookie, 'x-together-csrf': csrf } }));
   assert.equal(resend.allowed, 3);
   const refresh = await tripLimit((i) => post(app, '/api/v1/auth/refresh', { refreshToken: `guess-${i}` }));
-  assert.equal(refresh.allowed, 30);
+  assert.equal(refresh.allowed, 120);
   const notifications = await tripLimit(() => post(app, '/api/v1/auth/apple/notifications', { payload: 'not-signed' }));
   assert.equal(notifications.allowed, 120);
   // A route with no limit of its own falls under the global one: 300 a minute.
   const providers = await tripLimit(() => app.inject({ method: 'GET', url: '/api/v1/auth/providers', remoteAddress: '203.0.113.10' }));
   assert.equal(providers.allowed, 300);
+});
+
+test('deleting an account is refused on the 6th try in 15 minutes, the right password included', async (t) => {
+  const { app, pool } = await setup();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const session = await registered(app, 'asha@example.test', '203.0.113.10');
+  const headers = { cookie: session.headers['set-cookie'].split(';')[0], 'x-together-csrf': session.json().data.csrfToken };
+  const remove = (password) => app.inject({ method: 'DELETE', url: '/api/v1/account', remoteAddress: '203.0.113.10', headers: { origin, ...headers }, payload: { confirmation: 'DELETE', password } });
+  const statuses = [];
+  const { allowed } = await tripLimit(async () => {
+    const response = await remove('not the password at all');
+    statuses.push(response.statusCode);
+    return response;
+  });
+  assert.equal(allowed, 5);
+  assert.deepEqual(statuses, [401, 401, 401, 401, 401, 429]);
+  assert.equal((await remove(PASSWORD)).statusCode, 429);
+  assert.equal((await pool.query('SELECT 1 FROM users WHERE email_normalized=$1 AND deleted_at IS NULL', ['asha@example.test'])).rowCount, 1, 'the account is still there');
 });
 
 test('the window is fixed: it starts at the first request and resets whole, so its edge allows nearly twice the limit', async (t) => {
@@ -252,7 +273,64 @@ test('asking for a recovery link answers the same for a real address, an unknown
   }
   for (const answer of answers) assert.deepEqual(answer, answers[0]);
   assert.equal(answers[0].status, 202);
+  await app.afterReplies();
   assert.deepEqual(mailer.messages.filter((message) => message.type === 'recovery').map((message) => message.to), ['asha@example.test']);
+});
+
+// A mailer that holds each recovery email until the test lets it go, the way a slow SMTP
+// server would.
+class HeldMailer extends MemoryMailer {
+  constructor() { super(); this.held = []; }
+  async sendRecovery(message) {
+    await new Promise((release) => this.held.push(release));
+    return super.sendRecovery(message);
+  }
+}
+
+test('a recovery request is answered before its email is sent, and closing waits for the email', async (t) => {
+  const mailer = new HeldMailer();
+  const { app, pool } = await setup({ mailer });
+  t.after(async () => { await pool.end(); });
+  await registered(app, 'asha@example.test');
+  const answered = await post(app, '/api/v1/recovery/request', { email: 'asha@example.test' });
+  assert.equal(answered.statusCode, 202);
+  assert.deepEqual(answered.json(), { data: { accepted: true } });
+  // The answer is out while the email is still on its way.
+  while (!mailer.held.length) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mailer.messages.filter((message) => message.type === 'recovery').length, 0);
+  // A restart waits for it rather than dropping it.
+  let closed = false;
+  const closing = app.close().then(() => { closed = true; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(closed, false, 'closing waits for the email');
+  mailer.held.shift()();
+  await closing;
+  assert.deepEqual(mailer.messages.filter((message) => message.type === 'recovery').map((message) => message.to), ['asha@example.test']);
+});
+
+test('a recovery email that fails to send is never told to the caller, and its address is never logged', async (t) => {
+  const lines = [];
+  const stream = new Writable({ write(chunk, _encoding, done) { lines.push(String(chunk)); done(); } });
+  const failures = [];
+  const mailer = new MemoryMailer();
+  mailer.sendRecovery = async ({ to }) => { throw new Error(`550 mailbox ${to} unavailable`); };
+  const { app, pool, platform } = await setup({ mailer, logger: { level: 'info', stream }, onDeliveryFailure: (failure) => failures.push(failure) });
+  t.after(async () => { await app.close(); await pool.end(); });
+  await registered(app, 'asha@example.test');
+  const failed = await post(app, '/api/v1/recovery/request', { email: 'asha@example.test' }, { from: '198.51.100.60' });
+  const unknown = await post(app, '/api/v1/recovery/request', { email: 'nobody@example.test' }, { from: '198.51.100.61' });
+  await app.afterReplies();
+  assert.equal(failed.statusCode, 202);
+  assert.equal(failed.body, unknown.body);
+  assert.deepEqual(failures, [{ kind: 'recovery', errorName: 'Error' }]);
+  // Anything else that fails after the answer, the lookup itself included, is logged by name.
+  platform.requestRecovery = async (email) => { throw new TypeError(`lost the database while reading ${email}`); };
+  const broken = await post(app, '/api/v1/recovery/request', { email: 'asha@example.test' }, { from: '198.51.100.62' });
+  await app.afterReplies();
+  assert.equal(broken.body, unknown.body);
+  const logged = lines.map((line) => JSON.parse(line)).filter((entry) => entry.level >= 50);
+  assert.deepEqual(logged.map((entry) => [entry.msg, entry.err]), [['recovery request failed after its reply', { name: 'TypeError' }]]);
+  assert.equal(lines.join('').includes('asha@'), false, 'no address in any log line');
 });
 
 test('linking answers the same for an unknown email, a Google-only account and a wrong password', async (t) => {
