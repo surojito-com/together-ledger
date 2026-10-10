@@ -431,6 +431,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     await platform.removeMember(request.auth.userId, request.params.journeyId, request.params.userId);
     return reply.code(204).send();
   });
+  // The person signed in leaves, and nobody else: nothing in the request names who (#96). Typed
+  // LEAVE, as an account's deletion is typed DELETE, so no single tap does it. Limited as a change
+  // to the account is: generous enough for people sharing one carrier's address, since nothing here
+  // can be guessed. A web payment for this journey's room ends first, the rule for deleting the account.
+  app.post('/api/v1/journeys/:journeyId/leave', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    if (request.body?.confirmation !== 'LEAVE') throw new PlatformError(400, 'confirmation_required', 'Type LEAVE to confirm leaving this journey.');
+    await billing.assertJourneyLeavable(request.auth.userId, request.params.journeyId);
+    await platform.leaveJourney(request.auth.userId, request.params.journeyId);
+    return reply.code(204).send();
+  });
   app.post('/api/v1/journeys/:journeyId/ownership', { preHandler: protectMutation }, async (request, reply) => {
     await platform.transferOwnership(request.auth.userId, request.params.journeyId, request.body?.userId);
     return reply.code(204).send();

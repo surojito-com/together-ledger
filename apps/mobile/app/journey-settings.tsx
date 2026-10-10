@@ -1,6 +1,23 @@
 import { router } from 'expo-router';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  LEAVE_CONFIRM_LABEL,
+  LEAVE_FIELD_HINT,
+  LEAVE_FIELD_LABEL,
+  LEAVE_OWNER_FIRST,
+  LEAVE_PENDING_LABEL,
+  LEAVE_SAFETY,
+  LEAVE_START_LABEL,
+  LEAVE_STAY_LABEL,
+  LEAVE_WORD,
+  LEAVE_ZONE_NOTE,
+  LEAVE_ZONE_TITLE,
+  leaveConsequence,
+  leaveOffer,
+  leaveRefusalTone,
+  leftJourney,
+} from '../../../src/leave-journey.js';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
 import { RoomForMorePeople } from '../src/components/store-offers';
@@ -44,9 +61,11 @@ import {
   type SharingSnapshot,
 } from '../src/journey/sharing-view';
 import { useJourney, useReloadWhenShown } from '../src/journey/use-journey';
+import { useWaitingMoments } from '../src/journey/use-waiting-moments';
+import { unsentWhenLeaving } from '../src/journey/waiting-moments';
 import { useShell } from '../src/shell/shell-provider';
 import { targetSize } from '../src/theme/metrics';
-import { useTheme } from '../src/theme';
+import { fonts, useTheme } from '../src/theme';
 
 /**
  * Journey sharing (TL-M-09, #184): who is here, proposing someone, the questions being decided,
@@ -287,7 +306,79 @@ function Sharing({ snapshot, viewerId }: { snapshot: SharingSnapshot; viewerId: 
       {snapshot.capacity?.mode === 'billing' ? <RoomForMorePeople journeyId={journeyId} isOwner={role === 'owner'} /> : null}
 
       <Button kind="quiet" label="History and conversations" onPress={() => router.push('/history')} />
+
+      <LeaveJourney snapshot={snapshot} />
     </Screen>
+  );
+}
+
+/**
+ * Leaving (#96), set apart in its own danger zone like Delete moment, in the destructive colour
+ * because it can't be undone. Two deliberate steps, as deleting the account takes: the button opens
+ * the consequence dialog, and only after it does the last step ask for LEAVE in full. Not offered
+ * in a journey of one, and the owner is told to hand the journey over first. The others learn of it
+ * from History, never from a message. Anything this phone still holds for the journey is named in
+ * the dialog, because it can't be sent once the person has left.
+ */
+function LeaveJourney({ snapshot }: { snapshot: SharingSnapshot }) {
+  const { client } = useSession();
+  const { reload } = useJourney();
+  const waiting = useWaitingMoments();
+  const { confirmConsequence, showStatus, clearStatus, showToast } = useShell();
+  const { theme } = useTheme();
+  const colors = theme.colors;
+  const [asked, setAsked] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [pending, setPending] = useState(false);
+  const journeyId = snapshot.journey.id;
+  const journeyName = snapshot.journey.name;
+  const offer = leaveOffer({ role: snapshot.journey.role, peopleHere: snapshot.members.length });
+  if (offer === 'none') return null;
+
+  const start = async () => {
+    const unsent = unsentWhenLeaving(waiting.moments.filter((moment) => moment.journeyId === journeyId).length);
+    const dialog = leaveConsequence(journeyName);
+    if (!await confirmConsequence({ ...dialog, consequence: `${dialog.consequence}${unsent ? ` ${unsent}` : ''}` })) return;
+    setTyped('');
+    setAsked(true);
+  };
+
+  const leave = async () => {
+    if (typed !== LEAVE_WORD) return;
+    setPending(true);
+    clearStatus('leave-journey');
+    try {
+      await client.leaveJourney(journeyId);
+    } catch (error) {
+      setPending(false);
+      showStatus(accountMessage(error), { source: 'leave-journey', tone: leaveRefusalTone((error as { code?: string }).code) });
+      return;
+    }
+    // Gone on the server: what waited for it here could never be sent, and the person was told.
+    await waiting.leftJourney(journeyId).catch(() => undefined);
+    // The next read has the journey no more, so the ledger opens on the next one or the empty start.
+    await reload();
+    router.dismissTo('/ledger');
+    showToast(leftJourney(journeyName));
+  };
+
+  return (
+    <View style={[styles.dangerZone, { borderColor: colors.destructive, borderRadius: theme.radius.l, backgroundColor: colors.surface }]}>
+      <Text accessibilityRole="header" style={[styles.dangerTitle, fonts.serif, { color: colors.fg }]}>{LEAVE_ZONE_TITLE}</Text>
+      {offer === 'hand-over-first' ? <Text style={[styles.help, { color: colors.muted }]}>{LEAVE_OWNER_FIRST}</Text> : (
+        <>
+          <Text style={[styles.help, { color: colors.muted }]}>{LEAVE_ZONE_NOTE}</Text>
+          {asked ? (
+            <>
+              <Field label={LEAVE_FIELD_LABEL} hint={LEAVE_FIELD_HINT} value={typed} onChangeText={setTyped} autoCapitalize="characters" autoCorrect={false} autoComplete="off" />
+              <Button kind="destructive" label={LEAVE_CONFIRM_LABEL} pending={pending} pendingLabel={LEAVE_PENDING_LABEL} disabled={typed !== LEAVE_WORD} onPress={leave} />
+              <Button kind="quiet" label={LEAVE_STAY_LABEL} disabled={pending} onPress={() => { setAsked(false); setTyped(''); }} />
+            </>
+          ) : <Button kind="destructive" label={LEAVE_START_LABEL} onPress={start} />}
+        </>
+      )}
+      <Text selectable style={[styles.help, { color: colors.muted }]}>{LEAVE_SAFETY}</Text>
+    </View>
   );
 }
 
@@ -392,4 +483,7 @@ const styles = StyleSheet.create({
   foldToggle: { fontSize: 16, fontWeight: '700' },
   foldBody: { gap: 10 },
   body: { fontSize: 16, lineHeight: 23 },
+  dangerZone: { gap: 10, marginTop: 40, borderWidth: 1, padding: 16 },
+  dangerTitle: { fontSize: 20, lineHeight: 26 },
+  help: { fontSize: 14, lineHeight: 20 },
 });

@@ -27,6 +27,10 @@ import {
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
 import { ApiError, TogetherApi } from './api.js';
+import {
+  LEAVE_CONFIRM_LABEL, LEAVE_FIELD_HINT, LEAVE_FIELD_LABEL, LEAVE_OWNER_FIRST, LEAVE_PENDING_LABEL, LEAVE_SAFETY, LEAVE_START_LABEL,
+  LEAVE_STAY_LABEL, LEAVE_WORD, LEAVE_ZONE_NOTE, LEAVE_ZONE_TITLE, leaveConsequence, leaveOffer, leaveRefusalTone, leftJourney,
+} from './leave-journey.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from './moment-themes.js';
 import { PHOTO_METADATA_REMOVED, stripPhotoMetadata } from './photo-metadata.js';
 import {
@@ -256,8 +260,12 @@ function snapshotToState(snapshots) {
 async function refreshCloudState({ announce = false } = {}) {
   if (!accountUser) return;
   const { journeys } = await api.request('/journeys');
+  const heldCloudJourneys = state.trips.some((trip) => cloudJourneyIds.has(trip.id));
   cloudJourneyIds = new Set(journeys.map((journey) => journey.id));
   if (!journeys.length) {
+    // The last private journey is gone, by leaving it (#96) or otherwise: what was read from the
+    // service leaves the page, and this browser's own ledger comes back, as after signing out.
+    if (heldCloudJourneys) state = loadState();
     renderAccountState();
     render();
     if (announce) showToast('Account ready. Create your first private journey.');
@@ -464,7 +472,9 @@ function renderAccountState() {
     renderUnpaidCapacityRest(trip, members);
     $('#invitation-history').hidden = !invitations.length;
     $('#invitation-list').innerHTML = invitations.map(invitationHistoryRow).join('');
+    renderLeaveJourney(trip);
   } else {
+    renderLeaveJourney(null);
     $('#member-list').innerHTML = '';
     $('#reserved-places').hidden = true;
     $('#reserved-place-list').innerHTML = '';
@@ -2033,6 +2043,84 @@ $('#invite-form').addEventListener('submit', async (event) => {
   } finally {
     setButtonPending(button, false);
   }
+});
+
+// Leaving (#96): its own danger zone, two deliberate steps as deleting the account takes. The
+// button opens the consequence dialog; only then is LEAVE asked for, in full. Not offered in a
+// journey of one, and the owner hands the journey over first. The words are the phone's too.
+let leaveAskedFor = '';
+
+function renderLeaveJourney(trip) {
+  const zone = $('#leave-journey');
+  const offer = trip ? leaveOffer({ role: trip.role, peopleHere: (trip.memberRecords || []).length }) : 'none';
+  zone.hidden = offer === 'none';
+  if (offer === 'none') {
+    leaveAskedFor = '';
+    return;
+  }
+  if (leaveAskedFor && leaveAskedFor !== trip.id) leaveAskedFor = '';
+  $('#leave-journey-title').textContent = LEAVE_ZONE_TITLE;
+  $('#leave-journey-note').textContent = offer === 'hand-over-first' ? LEAVE_OWNER_FIRST : LEAVE_ZONE_NOTE;
+  $('#leave-journey-safety').textContent = LEAVE_SAFETY;
+  const button = $('#leave-journey-button');
+  button.textContent = LEAVE_START_LABEL;
+  const asked = offer === 'leave' && leaveAskedFor === trip.id;
+  button.hidden = offer !== 'leave' || asked;
+  const form = $('#leave-journey-form');
+  if (form.hidden === asked) form.reset();
+  form.hidden = !asked;
+  $('#leave-journey-field-label').textContent = LEAVE_FIELD_LABEL;
+  $('#leave-journey-hint').textContent = LEAVE_FIELD_HINT;
+  $('#leave-journey-stay').textContent = LEAVE_STAY_LABEL;
+  const confirm = $('#leave-journey-confirm');
+  if (confirm.getAttribute('aria-busy') !== 'true') {
+    confirm.textContent = LEAVE_CONFIRM_LABEL;
+    confirm.disabled = form.elements.confirmation.value !== LEAVE_WORD;
+  }
+}
+
+$('#leave-journey-button').addEventListener('click', async () => {
+  const trip = activeTrip(state);
+  if (!isCloudJourney(trip)) return;
+  if (!await confirmConsequence(leaveConsequence(trip.name))) return;
+  leaveAskedFor = trip.id;
+  renderLeaveJourney(trip);
+  $('#leave-journey-form [name=confirmation]').focus();
+});
+
+$('#leave-journey-stay').addEventListener('click', () => {
+  leaveAskedFor = '';
+  renderLeaveJourney(activeTrip(state));
+  $('#leave-journey-button').focus();
+});
+
+$('#leave-journey-form').addEventListener('input', (event) => {
+  $('#leave-journey-confirm').disabled = event.currentTarget.elements.confirmation.value !== LEAVE_WORD;
+});
+
+$('#leave-journey-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const trip = activeTrip(state);
+  if (!isCloudJourney(trip) || leaveAskedFor !== trip.id || event.currentTarget.elements.confirmation.value !== LEAVE_WORD) return;
+  const button = $('#leave-journey-confirm');
+  setButtonPending(button, true, LEAVE_PENDING_LABEL);
+  try {
+    await api.mutate(`/journeys/${trip.id}/leave`, 'POST', { confirmation: LEAVE_WORD });
+  } catch (error) {
+    setButtonPending(button, false);
+    showStatus(accountMessage(error), { tone: leaveRefusalTone(error?.code) });
+    return;
+  }
+  leaveAskedFor = '';
+  setButtonPending(button, false);
+  $('#settings-dialog').close();
+  // The next read no longer has it: the page opens on the next journey, or the empty start.
+  try {
+    await refreshCloudState();
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
+  showToast(leftJourney(trip.name));
 });
 
 $('#member-list').addEventListener('click', async (event) => {
