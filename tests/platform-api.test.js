@@ -684,6 +684,8 @@ test('accounts share an authorized journey with conflicts, events, recovery, and
   assert.equal(recoveryRequest.statusCode, 202);
   assert.equal(enumerationSafe.statusCode, 202);
   assert.equal(recoveryRequest.body, enumerationSafe.body);
+  // The email follows the answer (#259).
+  await app.afterReplies();
   const recoveryMessage = mailer.messages.findLast((message) => message.type === 'recovery');
   assert.equal(recoveryMessage.accountOrigin, origin);
   const recoveryToken = recoveryMessage.token;
@@ -1948,6 +1950,8 @@ test('a phone verifies its email and recovers its password without a browser ori
 
   const requested = await app.inject({ method: 'POST', url: '/api/v1/recovery/request', headers: app_, payload: { email: 'recover@example.test' } });
   assert.equal(requested.statusCode, 202, requested.body);
+  // The email follows the answer (#259).
+  await app.afterReplies();
   const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === 'recover@example.test');
   assert.ok(recovery, 'the recovery email was sent');
 
@@ -2005,6 +2009,8 @@ test('the phone app\'s own client carries a whole account journey against this s
   assert.equal((await phone.login({ identifier: email, password: 'correct horse battery staple' })).email, email);
 
   await phone.requestRecovery(email);
+  // The email follows the answer (#259).
+  await app.afterReplies();
   const recovery = mailer.messages.findLast((message) => message.type === 'recovery' && message.to === email);
   await phone.confirmRecovery(recovery.token, 'a brand new horse battery staple');
   assert.equal(held, null, 'a new password signs this phone out too');

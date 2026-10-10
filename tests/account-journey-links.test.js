@@ -156,6 +156,8 @@ test('TC-10870, TC-10910 and TC-10930: account links return to the home that beg
     payload: { email: 'owner@synthetic.test' },
   });
   assert.equal(recovery.statusCode, 202, recovery.body);
+  // The email follows the answer (#259).
+  await app.afterReplies();
   const recoveryToken = assertReturnsToAppHome(lastOf(sent, 'account-recovery@'), 'recovery');
 
   const restored = await app.inject({
