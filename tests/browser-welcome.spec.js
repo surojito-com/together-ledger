@@ -385,17 +385,17 @@ test('representative light, dark, and high-chroma surfaces keep their visual con
   }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
-  await expect(page).toHaveScreenshot('welcome-light-desktop.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('welcome-light-desktop.png', { fullPage: true, animations: 'disabled' });
 
   await page.locator('#theme-select').selectOption('green');
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 4_000 });
-  await expect(page).toHaveScreenshot('welcome-green-desktop.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('welcome-green-desktop.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 320, height: 568 });
   await page.locator('.welcome-menu > summary').click();
   await page.locator('#mobile-theme-select').selectOption('dark');
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 4_000 });
-  await expect(page).toHaveScreenshot('welcome-dark-mobile.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('welcome-dark-mobile.png', { fullPage: true, animations: 'disabled' });
 
   await page.locator('.welcome-menu > summary').click();
   await page.getByRole('button', { name: /Begin your ledger/ }).first().click();
@@ -404,17 +404,17 @@ test('representative light, dark, and high-chroma surfaces keep their visual con
   // so the steps between were never actually synchronised — only slowed down. With the comparison
   // skipped in CI those waits disappeared, and the next click landed on a dialog still closing.
   await expect(page.locator('#moment-dialog')).toBeVisible();
-  await expect(page).toHaveScreenshot('moment-dark-mobile.png', { animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-dark-mobile.png', { animations: 'disabled' });
   await page.keyboard.press('Escape');
   await expect(page.locator('#moment-dialog')).not.toBeVisible();
-  await expect(page).toHaveScreenshot('ledger-dark-mobile.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('ledger-dark-mobile.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.locator('#workspace-theme-select').selectOption('green');
   await expect(page.locator('#toast')).not.toHaveClass(/show/, { timeout: 4_000 });
   await page.getByRole('button', { name: 'Journey settings' }).click();
   await expect(page.locator('#settings-dialog')).toBeVisible();
-  await expect(page).toHaveScreenshot('settings-green-desktop.png', { animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('settings-green-desktop.png', { animations: 'disabled' });
 });
 
 test('the small screen keeps one primary action and its own section navigation', async ({ page }) => {
