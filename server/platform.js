@@ -3,6 +3,7 @@ import { paidEnvironments } from './billing-environments.js';
 import { withTransaction } from './db.js';
 import { identityVerifierFor } from './identity.js';
 import { appleEventFrom, appleSignInFor } from './apple.js';
+import { cleanDisplayText, clipToLimit, fitsLimit } from '../src/display-text.js';
 import { normalizeMomentTheme } from '../src/moment-themes.js';
 import { PhotoMetadataError, stripPhotoMetadata } from '../src/photo-metadata.js';
 import {
@@ -73,6 +74,22 @@ function cleanText(value, label, max) {
 
 function cleanOptionalText(value, max) {
   return String(value ?? '').trim().slice(0, max);
+}
+
+// A name someone gives (owner, Oct 10, 2026): a person's, a journey's and its place or season, a
+// moment's title, a kind of moment, a typed place. Any language, symbol or emoji, counted in the
+// characters a person sees, with controls and direction overrides taken out (src/display-text.js).
+// A name that is empty once they are gone is refused in the same words as an empty one.
+function cleanName(value, label, max) {
+  const text = cleanDisplayText(value);
+  if (!text || !fitsLimit(text, max)) throw new PlatformError(400, 'invalid_input', `${label} is required and must be ${max} characters or fewer.`);
+  return text;
+}
+
+// The same, for a name that may be left out and is kept to its limit rather than refused, whole
+// characters only.
+function cleanOptionalName(value, max) {
+  return clipToLimit(cleanDisplayText(value), max);
 }
 
 function cleanEmail(value) {
@@ -340,7 +357,7 @@ function cleanMoment(input, existing = null) {
   const kind = input.kind ?? existing?.kind;
   if (!MOMENT_KINDS.has(kind)) throw new PlatformError(400, 'invalid_input', 'Choose a valid kind of moment.');
   const kindLabel = kind === 'other'
-    ? cleanText(input.kindLabel ?? existing?.kindLabel, 'A name for this kind of moment', 60)
+    ? cleanName(input.kindLabel ?? existing?.kindLabel, 'A name for this kind of moment', 60)
     : '';
   const occurredOn = input.occurredOn ?? existing?.occurredOn;
   if (!isCalendarDate(occurredOn)) throw new PlatformError(400, 'invalid_input', 'Choose a valid moment date.');
@@ -357,7 +374,7 @@ function cleanMoment(input, existing = null) {
   const rawLocations = Object.hasOwn(input, 'locations') ? input.locations : existing?.locations || [];
   if (!Array.isArray(rawLocations) || rawLocations.length > 12) throw new PlatformError(400, 'invalid_input', 'A moment can hold up to 12 places.');
   const locations = rawLocations.map((location) => {
-    const label = cleanText(location?.label, 'Location', 120);
+    const label = cleanName(location?.label, 'Location', 120);
     const latitude = location?.latitude == null ? null : Number(location.latitude);
     const longitude = location?.longitude == null ? null : Number(location.longitude);
     const accuracyMeters = location?.accuracyMeters == null ? null : Math.round(Number(location.accuracyMeters));
@@ -368,7 +385,7 @@ function cleanMoment(input, existing = null) {
     kind,
     kindLabel,
     occurredOn,
-    title: cleanText(input.title ?? existing?.title, 'Moment title', 120),
+    title: cleanName(input.title ?? existing?.title, 'Moment title', 120),
     detail: String(input.detail ?? existing?.detail ?? '').slice(0, 1200),
     moneyCents,
     moneyCurrency,
@@ -714,7 +731,7 @@ export class PlatformService {
       // opened without one still carries its fallback name, the same as its username; if a name
       // turns up now (a client resending the one it kept), it is saved, and never over a name
       // the account already has (decided Sep 30, 2026).
-      const offered = cleanOptionalText(displayName, 80);
+      const offered = cleanOptionalName(displayName, 80);
       if (offered && known.display_name === known.username && known.username.startsWith('journeyer-')) {
         const renamed = await this.pool.query('UPDATE users SET display_name=$1 WHERE id=$2 RETURNING *', [offered, known.id]);
         known = { ...renamed.rows[0], apple_refresh_token: known.apple_refresh_token };
@@ -764,7 +781,7 @@ export class PlatformService {
       // also the display name only as a fallback: the name Apple sends on the first sign-in (the
       // client passes it as displayName; Apple never sends it again), or Google's, comes first.
       const username = `journeyer-${userId.slice(0, 8)}`;
-      const name = cleanOptionalText(displayName || identity.name, 80) || username;
+      const name = cleanOptionalName(displayName || identity.name, 80) || username;
       const created = await client.query(
         `INSERT INTO users (id,email_normalized,username,display_name,password_hash,email_verified_at)
          VALUES ($1,$2,$3,$4,NULL,$5) RETURNING *`,
@@ -1364,8 +1381,8 @@ export class PlatformService {
   }
 
   async createJourney(userId, input) {
-    const name = cleanText(input.name, 'Journey name', 80);
-    const location = cleanOptionalText(input.location, 80);
+    const name = cleanName(input.name, 'Journey name', 80);
+    const location = cleanOptionalName(input.location, 80);
     const budgetCents = Number(input.budgetCents);
     if (!Number.isSafeInteger(budgetCents) || budgetCents < 0 || budgetCents > 100000000) throw new PlatformError(400, 'invalid_input', 'Enter a valid budget.');
     const dates = cleanJourneyDetails(input);
@@ -1390,8 +1407,8 @@ export class PlatformService {
       await this.lockJourney(client, journeyId);
       if (Number(input.version) !== existing.version) throw new PlatformError(409, 'conflict', 'This journey changed on another device. Refresh before saving.');
       const next = {
-        name: cleanText(input.name ?? existing.name, 'Journey name', 80),
-        location: cleanOptionalText(input.location ?? existing.location, 80),
+        name: cleanName(input.name ?? existing.name, 'Journey name', 80),
+        location: cleanOptionalName(input.location ?? existing.location, 80),
         budgetCents: input.budgetCents ?? existing.budget_cents,
       };
       const dates = cleanJourneyDetails(input, { startDateStatus: existing.start_date_status, endDateStatus: existing.end_date_status, startDate: dateOnly(existing.start_date), endDate: dateOnly(existing.end_date) });
@@ -2281,7 +2298,7 @@ export class PlatformService {
   // is written into every journey the person is in, in the product's words: nobody can quietly
   // take another journeyer's name. The private username never changes here.
   async changeDisplayName(userId, input) {
-    const displayName = cleanText(input?.displayName, 'Your name', 80);
+    const displayName = cleanName(input?.displayName, 'Your name', 80);
     return withTransaction(this.pool, async (client) => {
       const current = await client.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [userId]);
       if (!current.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');

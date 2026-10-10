@@ -5,7 +5,7 @@ import { newDb } from 'pg-mem';
 import ts from 'typescript';
 import { buildApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
-import { MemoryMailer } from '../server/mailer.js';
+import { MemoryMailer, SmtpMailer } from '../server/mailer.js';
 import { PlatformError, PlatformService } from '../server/platform.js';
 import { cleanBuild, loggerOptions, redactUrl } from '../server/log-options.js';
 import { maskEmail } from '../server/security.js';
@@ -23,7 +23,8 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
     name: 'char_length',
     args: ['text'],
     returns: 'integer',
-    implementation: (value) => value.length,
+    // Code points, as Postgres counts them, so a check on a name holding emoji counts as it would there.
+    implementation: (value) => Array.from(value).length,
   });
   const adapter = memory.adapters.createPg();
   const pool = new adapter.Pool();
@@ -64,6 +65,11 @@ async function testPlatform({ mailer = new MemoryMailer(), configOverrides = {},
   await pool.query(await readFile(new URL('../server/migrations/033_let-a-moment-held-offline-arrive-once.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/034_hear-refunds-and-renewals-from-the-stores.sql', import.meta.url), 'utf8'));
   await pool.query(await readFile(new URL('../server/migrations/035_hear-reversed-refunds-and-refunded-extras.sql', import.meta.url), 'utf8'));
+  // pg-mem names the checks 036 widens differently from Postgres, so its own names go first.
+  for (const [table, check] of [['users', 'users_constraint_1'], ['journeys', 'journeys_constraint_1'], ['journey_moments', 'journey_moments_constraint_2'], ['journey_moments', 'journey_moments_constraint_3'], ['journey_moments', 'journey_moments_constraint_7']]) {
+    await pool.query(`ALTER TABLE ${table} DROP CONSTRAINT ${check}`);
+  }
+  await pool.query(await readFile(new URL('../server/migrations/036_let-names-hold-any-language-symbol-and-emoji.sql', import.meta.url), 'utf8'));
   const config = loadConfig({
     NODE_ENV: 'test',
     PUBLIC_ORIGIN: origin,
@@ -3061,4 +3067,145 @@ test('an invitation\'s own path, /invite, is the app page', async (t) => {
   assert.equal(invite.body, root.body);
   // Its files are named relative to the page, so they load from /src/ at /invite too.
   assert.match(invite.body, /src="\.\/src\/app\.js"/);
+});
+
+// Names hold any language, symbol and emoji (owner, Oct 10, 2026). The owner's samples, with
+// escapes so what each is made of stays in plain sight.
+const FAMILY = '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}';
+const NAME_SAMPLES = [
+  'Saanvi & Ravi ❤️',
+  '家族の旅',
+  'רות ודני',
+  'सान्वी',
+  "Zoë's \u{1F1EE}\u{1F1F3} summer",
+  `${FAMILY} weekend`,
+  "O'Brien – <b>bold</b>",
+];
+
+// Records every message as MemoryMailer does, and also renders it through the real SMTP mailer,
+// so a test can read what a person's inbox would show.
+class RenderingMailer extends MemoryMailer {
+  constructor() {
+    super();
+    this.rendered = [];
+    this.smtp = new SmtpMailer({ transport: { sendMail: async (message) => { this.rendered.push(message); return { accepted: [message.to] }; } }, from: 'Together Ledger <no-reply@example.test>', accountOrigin: origin });
+  }
+
+  async sendInvitation(message) { await super.sendInvitation(message); await this.smtp.sendInvitation(message); }
+  async sendInviteProposal(message) { await super.sendInviteProposal(message); await this.smtp.sendInviteProposal(message); }
+  async sendVerification(message) { await super.sendVerification(message); await this.smtp.sendVerification(message); }
+}
+
+test('a person\'s name holds any language, symbol and emoji, in History, the journey and the emails', async (t) => {
+  const mailer = new RenderingMailer();
+  const { app, pool, owner, second, third, journeyId } = await groupOfThree({ mailer });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const rename = (client, displayName) => app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(client), payload: { displayName } });
+
+  let previous = 'consent-owner';
+  for (const name of NAME_SAMPLES) {
+    const renamed = await rename(owner, name);
+    assert.equal(renamed.statusCode, 200, renamed.body);
+    assert.equal(renamed.json().data.user.displayName, name);
+    assert.equal((await pool.query('SELECT display_name FROM users WHERE id=$1', [owner.user.id])).rows[0].display_name, name);
+    const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journeyId}/snapshot`, headers: { cookie: third.cookie } })).json().data;
+    assert.equal(snapshot.members.find((member) => member.id === owner.user.id).displayName, name, 'the journey shows it as written');
+    const event = snapshot.events.at(-1);
+    assert.equal(event.summary, `Changed their name from ${previous} to ${name}`);
+    assert.deepEqual([event.before, event.after], [{ displayName: previous }, { displayName: name }]);
+    assert.equal(snapshot.eventChainValid, true, 'History\'s hash chain holds it');
+    previous = name;
+  }
+
+  // The proposal email carries the proposer's name, as written: plain text, so nothing in it is markup.
+  const bold = "O'Brien – <b>bold</b>";
+  assert.equal((await rename(second, bold)).statusCode, 200);
+  const before = mailer.rendered.length;
+  const proposed = await app.inject({ method: 'POST', url: `/api/v1/journeys/${journeyId}/invitations`, headers: authHeaders(second), payload: { email: 'fourth@example.test' } });
+  assert.equal(proposed.statusCode, 202, proposed.body);
+  const proposals = mailer.rendered.slice(before);
+  assert.deepEqual(proposals.map((message) => message.to).sort(), ['consent-owner@example.test', 'consent-third@example.test']);
+  for (const message of proposals) {
+    assert.equal(message.subject, 'Someone has been proposed for your Together Ledger journey', 'no name in the subject');
+    assert.ok(message.text.startsWith(`${bold} has proposed adding ${maskEmail('fourth@example.test')} to your journey.`), message.text);
+    assert.equal(message.html, undefined);
+  }
+  // The emails with markup carry no name at all, so none can be read as markup.
+  for (const message of mailer.rendered.filter((sent) => sent.html)) {
+    for (const name of [...NAME_SAMPLES, bold]) assert.ok(!message.html.includes(name) && !message.subject.includes(name));
+  }
+
+  // Counted in what a person sees: eighty families fit, eighty-one do not.
+  const eighty = await rename(third, FAMILY.repeat(80));
+  assert.equal(eighty.statusCode, 200, eighty.body);
+  assert.equal(eighty.json().data.user.displayName, FAMILY.repeat(80));
+  const eightyOne = await rename(third, FAMILY.repeat(81));
+  assert.equal(eightyOne.statusCode, 400);
+  assert.equal(eightyOne.json().error.message, 'Your name is required and must be 80 characters or fewer.');
+});
+
+test('a name never keeps a direction override, and journeys, places and moments hold every sample', async (t) => {
+  const { app, mailer, pool } = await testPlatform();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const person = await register(app, mailer, { email: 'names@example.test', username: 'names' });
+  const rename = (displayName) => app.inject({ method: 'PATCH', url: '/api/v1/account', headers: authHeaders(person), payload: { displayName } });
+
+  // U+202E would make the rest of the name read backwards in History. It is stored without it.
+  const overridden = await rename('Ravi‮odnap');
+  assert.equal(overridden.statusCode, 200, overridden.body);
+  assert.equal(overridden.json().data.user.displayName, 'Raviodnap');
+  assert.equal((await pool.query('SELECT display_name FROM users WHERE id=$1', [person.user.id])).rows[0].display_name, 'Raviodnap');
+  const empty = await rename('‮⁦ \u0007');
+  assert.equal(empty.statusCode, 400);
+  assert.equal(empty.json().error.message, 'Your name is required and must be 80 characters or fewer.', 'nothing left is refused in the words an empty name gets');
+  const decomposed = await rename("Zoë's \u{1F1EE}\u{1F1F3} summer");
+  assert.equal(decomposed.json().data.user.displayName, "Zoë's \u{1F1EE}\u{1F1F3} summer", 'stored composed (NFC)');
+
+  const startJourney = (name, location = '') => app.inject({ method: 'POST', url: '/api/v1/journeys', headers: authHeaders(person), payload: { name, location, startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 } });
+  const journeys = [];
+  for (const name of NAME_SAMPLES) {
+    const created = await startJourney(name, name);
+    assert.equal(created.statusCode, 201, created.body);
+    assert.equal(created.json().data.journey.name, name);
+    assert.equal(created.json().data.journey.location, name);
+    journeys.push(created.json().data.journey);
+  }
+  assert.equal((await startJourney(FAMILY.repeat(80))).statusCode, 201);
+  const tooLong = await startJourney(FAMILY.repeat(81));
+  assert.equal(tooLong.statusCode, 400);
+  assert.equal(tooLong.json().error.message, 'Journey name is required and must be 80 characters or fewer.');
+  const place = await startJourney('A long season', FAMILY.repeat(81));
+  assert.equal(place.json().data.journey.location, FAMILY.repeat(80), 'a place or season past the limit keeps whole characters');
+  assert.equal((await startJourney('A ‮quiet⁩ weekend')).json().data.journey.name, 'A quiet weekend');
+
+  const journey = journeys[0];
+  const renamedJourney = await app.inject({ method: 'PATCH', url: `/api/v1/journeys/${journey.id}`, headers: authHeaders(person), payload: { version: journey.version, name: NAME_SAMPLES[1], location: NAME_SAMPLES[4] } });
+  assert.equal(renamedJourney.statusCode, 200, renamedJourney.body);
+  assert.deepEqual([renamedJourney.json().data.journey.name, renamedJourney.json().data.journey.location], [NAME_SAMPLES[1], NAME_SAMPLES[4]]);
+
+  const hold = (payload) => app.inject({ method: 'POST', url: `/api/v1/journeys/${journey.id}/moments`, headers: authHeaders(person), payload: { kind: 'other', kindLabel: 'Ours', title: 'A moment', detail: '', occurredOn: '2026-10-10', visibility: 'shared-now', moneyCents: null, moneyCurrency: '', locations: [], ...payload } });
+  for (const name of NAME_SAMPLES) {
+    const held = await hold({ kindLabel: name, title: name, locations: [{ label: name }] });
+    assert.equal(held.statusCode, 201, held.body);
+    const { moment } = held.json().data;
+    assert.deepEqual([moment.kindLabel, moment.title, moment.locations[0].label], [name, name, name]);
+  }
+  assert.equal((await hold({ title: '\u{1F600}'.repeat(120), kindLabel: '❤️'.repeat(60), locations: [{ label: '\u{1F1EE}\u{1F1F3}'.repeat(120) }] })).statusCode, 201);
+  for (const [payload, message] of [
+    [{ title: '\u{1F600}'.repeat(121) }, 'Moment title is required and must be 120 characters or fewer.'],
+    [{ kindLabel: '❤️'.repeat(61) }, 'A name for this kind of moment is required and must be 60 characters or fewer.'],
+    [{ locations: [{ label: '\u{1F1EE}\u{1F1F3}'.repeat(121) }] }, 'Location is required and must be 120 characters or fewer.'],
+    [{ title: '‮' }, 'Moment title is required and must be 120 characters or fewer.'],
+  ]) {
+    const refused = await hold(payload);
+    assert.equal(refused.statusCode, 400, JSON.stringify(payload));
+    assert.equal(refused.json().error.message, message);
+  }
+
+  const snapshot = (await app.inject({ method: 'GET', url: `/api/v1/journeys/${journey.id}/snapshot`, headers: { cookie: person.cookie } })).json().data;
+  assert.equal(snapshot.journey.name, NAME_SAMPLES[1]);
+  for (const name of NAME_SAMPLES) assert.ok(snapshot.moments.some((moment) => moment.title === name && moment.kindLabel === name && moment.locations[0].label === name), name);
+  assert.equal(snapshot.events[0].summary, `Created journey: ${NAME_SAMPLES[0]}`);
+  assert.ok(snapshot.events.some((event) => event.summary === `Updated journey: ${NAME_SAMPLES[1]}`));
+  assert.equal(snapshot.eventChainValid, true);
 });

@@ -13,6 +13,7 @@ const publicFiles = [
   'index.html',
   'src/api.js',
   'src/app.js',
+  'src/display-text.js',
   'src/history-guide.js',
   'src/leave-journey.js',
   'src/model.js',

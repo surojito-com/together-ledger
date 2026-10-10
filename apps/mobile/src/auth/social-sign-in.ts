@@ -114,7 +114,10 @@ export type KeptAppleNameStore = {
 };
 
 export function appleDisplayName(fullName: AppleCredential['fullName']): string {
-  return [fullName?.givenName, fullName?.familyName].map((part) => part?.trim()).filter(Boolean).join(' ').slice(0, 80);
+  // Sent whole: the server keeps the first 80 characters a person sees, and never half of one
+  // (cleanOptionalName() in server/platform.js), where cutting it here by length could split an
+  // emoji or an accent.
+  return [fullName?.givenName, fullName?.familyName].map((part) => part?.trim()).filter(Boolean).join(' ');
 }
 
 /**
