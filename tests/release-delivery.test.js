@@ -233,6 +233,7 @@ test('the release bundle verifier proves the revision and the visible control be
   const bundle = {
     '_site/release.json': JSON.stringify({ revision }),
     '_site/index.html': '<h1>Keep what matters, together.</h1>',
+    '_site/.well-known/apple-app-site-association': readFileSync(new URL('../public/.well-known/apple-app-site-association', import.meta.url), 'utf8'),
   };
   const readFileImpl = async (path) => {
     const key = String(path).replaceAll('\\', '/');
@@ -260,6 +261,29 @@ test('the release bundle verifier proves the revision and the visible control be
     verifyReleaseBundle({ directory: '_site', revision, requiredText: 'Keep what matters,', readFileImpl: async () => { throw new Error('missing'); } }),
     /has no release marker/,
   );
+
+  // The phone apps' link files (#266): Apple's must ship, and claim only invitations; Android's may
+  // wait for the owner's fingerprints, but never ships with a placeholder.
+  const without = (path) => async (file) => {
+    if (String(file).replaceAll('\\', '/') === path) throw new Error('missing');
+    return readFileImpl(file);
+  };
+  await assert.rejects(
+    verifyReleaseBundle({ directory: '_site', revision, requiredText: 'Keep what matters,', readFileImpl: without('_site/.well-known/apple-app-site-association') }),
+    /has no \.well-known\/apple-app-site-association/,
+  );
+  const withFile = (path, text) => async (file) => (String(file).replaceAll('\\', '/') === path ? text : readFileImpl(file));
+  const claimingEverything = JSON.stringify({ applinks: { details: [{ appIDs: ['769MBW6826.com.togetherledger.ledger'], components: [{ '/': '*' }] }] } });
+  await assert.rejects(
+    verifyReleaseBundle({ directory: '_site', revision, requiredText: 'Keep what matters,', readFileImpl: withFile('_site/.well-known/apple-app-site-association', claimingEverything) }),
+    /must claim \/invite and nothing else/,
+  );
+  const placeholder = readFileSync(new URL('../public/.well-known/assetlinks.json', import.meta.url), 'utf8');
+  await assert.rejects(
+    verifyReleaseBundle({ directory: '_site', revision, requiredText: 'Keep what matters,', readFileImpl: withFile('_site/.well-known/assetlinks.json', placeholder) }),
+    /assetlinks\.json must not ship: .*placeholder/,
+  );
+  assert.equal(result.androidAppLinks, false, 'absent until the owner adds the fingerprints');
 });
 
 test('the availability check separates refused from down from drift', async () => {

@@ -13,7 +13,7 @@ test('SMTP messages contain only the intended single-use application links', asy
 
   assert.equal(messages.length, 3);
   assert.match(messages[0].text, /https:\/\/accounts\.example\.test\/#verify=verify_token/);
-  assert.match(messages[1].text, /https:\/\/accounts\.example\.test\/#invite=invite_token/);
+  assert.match(messages[1].text, /https:\/\/accounts\.example\.test\/invite#invite=invite_token/);
   assert.match(messages[2].text, /https:\/\/accounts\.example\.test\/#recovery=recovery_token/);
   assert.ok(messages.every((message) => message.from.includes('Together Ledger') && message.to === 'alex@example.test'));
 });
@@ -28,7 +28,7 @@ test('each account email can stay with the allowed origin that requested it', as
   await mailer.sendRecovery({ to: 'alex@example.test', token: 'public_recovery', accountOrigin: 'https://together.example.test' });
 
   assert.match(messages[0].text, /https:\/\/together\.example\.test\/#verify=public_verify/);
-  assert.match(messages[1].text, /https:\/\/api\.together\.example\.test\/#invite=api_invite/);
+  assert.match(messages[1].text, /https:\/\/api\.together\.example\.test\/invite#invite=api_invite/);
   assert.match(messages[2].text, /https:\/\/together\.example\.test\/#recovery=public_recovery/);
   assert.ok(messages.every((message) => !message.text.includes('fallback.example.test')));
 });
@@ -45,7 +45,7 @@ test('Email-0010 invitation provides a polished HTML message and accessible text
   assert.match(message.text, /You have been invited to a shared journey\./);
   assert.match(message.text, /private place for people/);
   assert.doesNotMatch(message.text, /private place for two people/);
-  assert.match(message.text, /https:\/\/accounts\.example\.test\/#invite=invite_token/);
+  assert.match(message.text, /https:\/\/accounts\.example\.test\/invite#invite=invite_token/);
   assert.match(message.html, /Open your invitation/);
   assert.match(message.html, /private place for people/);
   // An invitation lasts 14 days (#347), so its link says so rather than calling itself short-lived.
@@ -54,7 +54,7 @@ test('Email-0010 invitation provides a polished HTML message and accessible text
   assert.doesNotMatch(`${message.text}${message.html}`, /short-lived/);
   await mailer.sendInvitation({ to: 'alex@example.test', token: 'invite_token', days: 1 });
   assert.match(messages[1].text, /This link works once, for 1 day\./);
-  assert.match(message.html, /https:\/\/accounts\.example\.test\/#invite=invite_token/);
+  assert.match(message.html, /https:\/\/accounts\.example\.test\/invite#invite=invite_token/);
 });
 
 test('EMail-0020 verification provides a polished HTML message and accessible text alternative', async () => {
@@ -154,7 +154,8 @@ test('every emailed link carries its code after the #, never in the query', asyn
     assert.ok(links.length >= 2, `the ${key} email carries its link in both parts`);
     for (const url of links) {
       assert.equal(url.search, '', `the ${key} link has a query: ${url.href}`);
-      assert.equal(url.pathname, '/');
+      // An invitation has its own path, so the phone can claim it alone (#266); the others stay at /.
+      assert.equal(url.pathname, key === 'invite' ? '/invite' : '/');
       assert.equal(new URLSearchParams(url.hash.slice(1)).get(key), token, `the ${key} link carries its code after the #`);
       assert.ok(!url.href.split('#')[0].includes(token), `the ${key} code is before the #`);
     }

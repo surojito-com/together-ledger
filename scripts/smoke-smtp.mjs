@@ -30,7 +30,7 @@ try {
   assert.equal(received.length, 3);
   const decoded = received.map((message) => message.replace(/=\r\n/g, '').replace(/=3D/g, '='));
   assert.match(decoded[0], /https:\/\/together\.example\.test\/#verify=qa-verify/);
-  assert.match(decoded[1], /https:\/\/together\.example\.test\/#invite=qa-invite/);
+  assert.match(decoded[1], /https:\/\/together\.example\.test\/invite#invite=qa-invite/);
   assert.match(decoded[2], /https:\/\/together\.example\.test\/#recovery=qa-recovery/);
   console.log('✓ SMTP smoke check passed — verification, invitation, and recovery messages delivered locally.');
 } finally {

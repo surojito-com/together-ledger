@@ -10,6 +10,7 @@ import { signOutConsequence } from '../src/journey/waiting-moments';
 import { useShell } from '../src/shell/shell-provider';
 import { SocialSignIn } from '../src/components/social-sign-in';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
+import { INVITATION_WORDS } from '../src/invitations/invitation-words';
 
 /**
  * Sign in, or, once signed in, the account itself: who you are, whether your email is verified,
@@ -123,6 +124,8 @@ export default function AccountScreen() {
       })} />
       <Button kind="quiet" label="I forgot my password" onPress={() => router.push('/recovery')} />
       <Button kind="quiet" label="Create account" onPress={() => router.push('/register')} />
+      {/* Kept through signing in: once signed in, the invitation opens again by itself (#266). */}
+      <Button kind="quiet" label={INVITATION_WORDS.haveOne} onPress={() => router.push('/invite')} />
     </Screen>
   );
 }

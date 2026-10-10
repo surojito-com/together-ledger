@@ -8,6 +8,7 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import rawBody from 'fastify-raw-body';
 import { DisabledBillingService } from './billing.js';
+import { INVITATION_PATH } from './mailer.js';
 import { PlatformError } from './platform.js';
 import { bearerTokenFrom } from './security.js';
 
@@ -152,6 +153,8 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     }
   });
   app.get('/', async (_request, reply) => reply.type('text/html; charset=utf-8').send(hostedIndexMarkup));
+  // An invitation's link has its own path (#266), and is the same page; its code is after the #.
+  app.get(INVITATION_PATH, async (_request, reply) => reply.type('text/html; charset=utf-8').send(hostedIndexMarkup));
 
   app.post('/api/v1/auth/register', { config: { rateLimit: { max: 5, timeWindow: '15 minutes' } } }, async (request, reply) => {
     const wantsToken = asksForToken(request);
@@ -418,6 +421,11 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     const token = typeof request.body?.token === 'string' ? request.body.token : '';
     return { data: { journeyId: await platform.acceptInvitation(request.auth.userId, token) } };
   });
+  // What the code's holder may know before answering (#266), the token in the body as above. It
+  // reads and never writes, so nothing is spent by looking (server/platform.js, previewInvitation).
+  app.post('/api/v1/invitations/preview', { preHandler: protectMutation, config: { rateLimit: { max: 30, timeWindow: '15 minutes' } } }, async (request) => (
+    { data: { invitation: await platform.previewInvitation(request.auth.userId, request.body?.token) } }
+  ));
   app.post('/api/v1/invitations/:token/accept', { preHandler: protectMutation }, async (request) => ({ data: { journeyId: await platform.acceptInvitation(request.auth.userId, request.params.token) } }));
   app.delete('/api/v1/journeys/:journeyId/members/:userId', { preHandler: protectMutation }, async (request, reply) => {
     await platform.removeMember(request.auth.userId, request.params.journeyId, request.params.userId);
