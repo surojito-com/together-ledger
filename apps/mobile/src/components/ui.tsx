@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode, type Ref, type RefObject } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
+import { fitTyping } from '../../../../src/display-text.js';
 import { PENDING_LABEL } from '../shell/defaults';
 import { STATUS_TONES } from '../shell/status';
 import { useShell } from '../shell/shell-provider';
@@ -53,9 +54,15 @@ export function Screen({ title, lead, children, edges = ['bottom', 'left', 'righ
 /**
  * A labelled text box. `problem` marks the box itself, by a shape and words under it as well as
  * its border, so what needs the person is told where they are looking, not only at the top.
+ *
+ * `limit` is for a name (owner, Oct 10, 2026): it counts the characters a person sees, the way the
+ * server and the web do (src/display-text.js), where maxLength counts UTF-16 units and could cut
+ * an emoji in half. An edit that would go past it keeps as much of what was typed as fits.
  */
-export function Field({ label, hint, problem, style, ref, ...input }: { label: string; hint?: string; problem?: string | null; ref?: Ref<TextInput> } & TextInputProps) {
+export function Field({ label, hint, problem, style, ref, limit, ...input }: { label: string; hint?: string; problem?: string | null; ref?: Ref<TextInput>; limit?: number } & TextInputProps) {
   const { theme } = useTheme();
+  const { onChangeText, value } = input;
+  const changeText = limit && onChangeText ? (next: string) => onChangeText(fitTyping(value ?? '', next, limit).value) : onChangeText;
   return (
     <View style={styles.field}>
       <Text style={[styles.label, { color: theme.colors.fg }]}>{label}</Text>
@@ -66,6 +73,7 @@ export function Field({ label, hint, problem, style, ref, ...input }: { label: s
         placeholderTextColor={theme.colors.muted}
         style={[styles.input, targetSize, { color: theme.colors.fg, borderColor: problem ? theme.colors.caution : theme.colors.border, borderWidth: problem ? 2 : 1, backgroundColor: theme.colors.surfaceElevated, borderRadius: theme.radius.m }, style]}
         {...input}
+        onChangeText={changeText}
       />
       {problem ? (
         <View accessibilityLiveRegion="polite" style={styles.problem}>

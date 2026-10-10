@@ -193,3 +193,30 @@ test('the password-changed notice is one plain message that carries no link, cod
   const phone = await readFile(new URL('../apps/mobile/app/account.tsx', import.meta.url), 'utf8');
   assert.ok(signIn.includes('>I forgot my password<') && phone.includes('label="I forgot my password"'), 'the button the email names is the one both clients show');
 });
+
+// A name can hold any language, symbol or emoji (owner, Oct 10, 2026). The one email that carries
+// a name says it in plain text, and it reaches the inbox as written, encoded as UTF-8.
+test('a proposer\'s name in any language or emoji reaches the inbox as written', async () => {
+  const nodemailer = (await import('nodemailer')).default;
+  const built = [];
+  const stream = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: 'unix' });
+  const transport = { sendMail: async (message) => { built.push(await stream.sendMail(message)); return { accepted: [message.to] }; } };
+  const mailer = new SmtpMailer({ transport, from: 'Together Ledger <no-reply@example.test>', accountOrigin: 'https://accounts.example.test' });
+  const names = ['Saanvi & Ravi ❤️', '家族の旅', 'רות ודני', 'सान्वी', "Zoë's \u{1F1EE}\u{1F1F3} summer", '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466} weekend', "O'Brien – <b>bold</b>"];
+  for (const name of names) await mailer.sendInviteProposal({ to: 'alex@example.test', proposedByDisplayName: name, email: 'm••a@example.test' });
+  const decode = (raw) => {
+    const [head, ...rest] = raw.split('\n\n');
+    const body = rest.join('\n\n');
+    assert.match(head, /Content-Type: text\/plain; charset=utf-8/i);
+    if (/Content-Transfer-Encoding: base64/i.test(head)) return Buffer.from(body, 'base64').toString('utf8');
+    if (/Content-Transfer-Encoding: quoted-printable/i.test(head)) {
+      return Buffer.from(body.replace(/=\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))), 'latin1').toString('utf8');
+    }
+    return body;
+  };
+  names.forEach((name, index) => {
+    const raw = built[index].message.toString('utf8');
+    assert.match(raw, /^Subject: Someone has been proposed for your Together Ledger journey$/m);
+    assert.ok(decode(raw).startsWith(`${name} has proposed adding m••a@example.test to your journey.`), name);
+  });
+});

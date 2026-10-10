@@ -8,6 +8,7 @@
  * trip, in the server's own words.
  */
 
+import { characterCount } from '../../../../src/display-text.js';
 import { localDay } from '../../../../src/model.js';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -36,6 +37,7 @@ export type JourneyDraft = {
 export const START_DATE_CHOICES: [string, string][] = [['exact', 'I know the date'], ['unknown', 'I don’t remember exactly']];
 export const END_DATE_CHOICES: [string, string][] = [['forever', 'Forever — no end date planned'], ['unsure', 'Not sure yet'], ['date', 'Choose an end date']];
 
+// Counted in the characters a person sees, as the server counts them (src/display-text.js).
 export const NAME_LIMIT = 80;
 export const LOCATION_LIMIT = 80;
 
@@ -56,7 +58,7 @@ export function dateFieldsShown(draft: JourneyDraft) {
 /** The first problem with a draft, in the server's own words, or null when it can be sent. */
 export function journeyProblem(draft: JourneyDraft): string | null {
   const name = draft.name.trim();
-  if (!name || name.length > NAME_LIMIT) return `Journey name is required and must be ${NAME_LIMIT} characters or fewer.`;
+  if (!name || characterCount(name) > NAME_LIMIT) return `Journey name is required and must be ${NAME_LIMIT} characters or fewer.`;
   // A place longer than the limit is not refused: the server keeps its first 80 characters, and
   // the field never takes more.
   const shown = dateFieldsShown(draft);

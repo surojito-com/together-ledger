@@ -70,7 +70,7 @@ export default function AccountScreen() {
         <Body>{user.displayName || user.username} · {accountEmailLabel(user.email)}</Body>
         <Body>{user.emailVerified ? 'Email verified.' : 'Email not verified yet. Invitations can be accepted once it is.'}</Body>
         {/* The name journeyers see (#253). Each journey notes when it changes; the handle stays private. */}
-        <Field label="Name journeyers see" value={name ?? user.displayName} onChangeText={setName} maxLength={80} autoComplete="name" textContentType="name" hint={`Everyone in your journeys sees this name, and each journey notes when it changes. Your handle, @${user.username}, stays private.`} />
+        <Field label="Name journeyers see" value={name ?? user.displayName} onChangeText={setName} limit={80} autoComplete="name" textContentType="name" hint={`Everyone in your journeys sees this name, and each journey notes when it changes. Your handle, @${user.username}, stays private.`} />
         <Button kind="quiet" label="Save name" pending={pending === 'name'} pendingLabel="Saving…" disabled={!(name ?? user.displayName).trim() || (name ?? user.displayName).trim() === user.displayName} onPress={() => run('name', async () => {
           session.setUser(await session.client.changeDisplayName((name ?? user.displayName).trim()));
           setName(null);

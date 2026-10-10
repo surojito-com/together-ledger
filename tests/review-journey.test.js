@@ -22,6 +22,7 @@ const MIGRATIONS = [
   '020_let-entitlements-hold-ninety-nine-places', '021_let-unpaid-capacity-rest-without-losing-history', '022_agree-together-before-adding-someone',
   '023_let-a-phone-carry-its-own-key', '024_let-google-and-apple-open-an-account', '025_revoke-sign-in-with-apple-when-an-account-is-deleted',
   '026_remember-a-refused-apple-deletion', '027_tie-every-store-purchase-to-an-account', '028_turn-a-store-purchase-into-capacity', '031_let-a-lost-renewal-reply-be-asked-again', '032_let-an-invitation-last-fourteen-days', '033_let-a-moment-held-offline-arrive-once', '034_hear-refunds-and-renewals-from-the-stores', '035_hear-reversed-refunds-and-refunded-extras',
+  '036_let-names-hold-any-language-symbol-and-emoji',
 ];
 
 async function database() {
@@ -29,7 +30,13 @@ async function database() {
   memory.public.registerFunction({ name: 'char_length', args: ['text'], returns: 'integer', implementation: (value) => value.length });
   memory.public.registerFunction({ name: 'jsonb_array_length', args: ['jsonb'], returns: 'integer', implementation: (value) => (Array.isArray(value) ? value.length : 0) });
   const pool = new (memory.adapters.createPg().Pool)();
-  for (const name of MIGRATIONS) await pool.query(await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8'));
+  for (const name of MIGRATIONS) {
+    // pg-mem names the checks 036 widens differently from Postgres; see tests/platform-api.test.js.
+    if (name.startsWith('036_')) {
+      for (const [table, check] of [['users', 'users_constraint_1'], ['journeys', 'journeys_constraint_1'], ['journey_moments', 'journey_moments_constraint_2'], ['journey_moments', 'journey_moments_constraint_3'], ['journey_moments', 'journey_moments_constraint_7']]) await pool.query(`ALTER TABLE ${table} DROP CONSTRAINT ${check}`);
+    }
+    await pool.query(await readFile(new URL(`../server/migrations/${name}.sql`, import.meta.url), 'utf8'));
+  }
   const config = loadConfig({ NODE_ENV: 'test', PUBLIC_ORIGIN: 'http://127.0.0.1:4174', SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
   const platform = new PlatformService({ pool, config, mailer: new MemoryMailer(), now });
   return { pool, config, platform };

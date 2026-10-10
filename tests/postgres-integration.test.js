@@ -33,7 +33,7 @@ test('real PostgreSQL enforces migrations, event immutability, and deletion purg
   assert.deepEqual((await runMigrations(pool)).applied, []);
 
   const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name');
-  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql', '034_hear-refunds-and-renewals-from-the-stores.sql', '035_hear-reversed-refunds-and-refunded-extras.sql']);
+  assert.deepEqual(migrations.rows.map((row) => row.name), ['001_platform.sql', '002_append_only_events.sql', '003_private_usernames.sql', '004_shared_moments.sql', '005_make-shared-journeys-more-humane.sql', '006_expand-shared-moment-vocabulary.sql', '007_person_specific_moment_visibility.sql', '008_stripe_web_billing.sql', '009_reserve-group-places.sql', '010_stripe_reconciliation_runs.sql', '011_hold-one-image-with-each-moment.sql', '012_bill-additional-moment-images.sql', '013_name-moment-image-attachments.sql', '014_hold-places-with-shared-moments.sql', '015_bill-additional-moment-places.sql', '016_make-extra-image-payments-one-time.sql', '017_keep-one-removed-photo-per-moment.sql', '018_allow-ninety-nine-paid-journey-places.sql', '019_let-moments-carry-their-own-atmosphere.sql', '020_let-entitlements-hold-ninety-nine-places.sql', '021_let-unpaid-capacity-rest-without-losing-history.sql', '022_agree-together-before-adding-someone.sql', '023_let-a-phone-carry-its-own-key.sql', '024_let-google-and-apple-open-an-account.sql', '025_revoke-sign-in-with-apple-when-an-account-is-deleted.sql', '026_remember-a-refused-apple-deletion.sql', '027_tie-every-store-purchase-to-an-account.sql', '028_turn-a-store-purchase-into-capacity.sql', '029_rest-read-only-and-let-the-payer-ask-for-time.sql', '030_ask-for-six-weeks-a-year.sql', '031_let-a-lost-renewal-reply-be-asked-again.sql', '032_let-an-invitation-last-fourteen-days.sql', '033_let-a-moment-held-offline-arrive-once.sql', '034_hear-refunds-and-renewals-from-the-stores.sql', '035_hear-reversed-refunds-and-refunded-extras.sql', '036_let-names-hold-any-language-symbol-and-emoji.sql']);
 
   const firstLockClient = await pool.connect();
   const secondLockClient = await pool.connect();
@@ -821,4 +821,54 @@ test('real PostgreSQL reads an invitation for the person it was sent to, and loo
   assert.deepEqual(await platform.previewInvitation(bob.user.id, token), { state: 'already_member', journeyId: journey.id, journeyName: 'Read before joining' });
   await assert.rejects(platform.acceptInvitation(bob.user.id, token), (error) => error.code === 'invalid_invitation');
   assert.deepEqual(await state(), joined, 'tapping again adds and spends nothing');
+});
+
+// Names hold any language, symbol and emoji (owner, Oct 10, 2026), through the routes, stored in
+// real PostgreSQL and written into History, whose hash chain still holds. Escapes keep what each
+// sample is made of in plain sight.
+test('real PostgreSQL holds a name in any language, symbol or emoji, and History\'s chain holds it', { skip: !databaseUrl }, async (t) => {
+  const { pool, register, browser, send } = await signInsAgainstPostgres(t);
+  const family = '\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}';
+  const samples = ['Saanvi & Ravi ❤️', '家族の旅', 'רות ודני', 'सान्वी', "Zoë's \u{1F1EE}\u{1F1F3} summer", `${family} weekend`, "O'Brien – <b>bold</b>"];
+  const password = 'correct horse battery staple';
+  const user = await register('names-pg', password);
+  const session = await browser(user, password);
+
+  const created = await send('POST', '/api/v1/journeys', session, { name: samples[1], location: samples[4], startDateStatus: 'unknown', endDateStatus: 'forever', budgetCents: 0 });
+  assert.equal(created.statusCode, 201, created.body);
+  const journeyId = created.json().data.journey.id;
+  for (const name of samples) {
+    const held = await send('POST', `/api/v1/journeys/${journeyId}/moments`, session, { kind: 'other', kindLabel: name, title: name, detail: '', occurredOn: '2026-10-10', visibility: 'shared-now', moneyCents: null, moneyCurrency: '', locations: [{ label: name }] });
+    assert.equal(held.statusCode, 201, held.body);
+  }
+  const stored = await pool.query('SELECT kind_label,title,locations FROM journey_moments WHERE journey_id=$1 ORDER BY created_at,id', [journeyId]);
+  assert.deepEqual(stored.rows.map((row) => [row.kind_label, row.title, row.locations[0].label]), samples.map((name) => [name, name, name]));
+  assert.deepEqual((await pool.query('SELECT name,location FROM journeys WHERE id=$1', [journeyId])).rows[0], { name: samples[1], location: samples[4] });
+
+  for (const name of samples) {
+    const renamed = await send('PATCH', '/api/v1/account', session, { displayName: name });
+    assert.equal(renamed.statusCode, 200, renamed.body);
+  }
+  const eighty = await send('PATCH', '/api/v1/account', session, { displayName: family.repeat(80) });
+  assert.equal(eighty.statusCode, 200, eighty.body);
+  const row = (await pool.query('SELECT display_name,char_length(display_name) AS points FROM users WHERE id=$1', [user.id])).rows[0];
+  assert.deepEqual(row, { display_name: family.repeat(80), points: 560 }, 'eighty characters a person sees, 560 code points to Postgres');
+  const eightyOne = await send('PATCH', '/api/v1/account', session, { displayName: family.repeat(81) });
+  assert.equal(eightyOne.statusCode, 400);
+  assert.equal(eightyOne.json().error.message, 'Your name is required and must be 80 characters or fewer.');
+  const overridden = await send('PATCH', '/api/v1/account', session, { displayName: 'Ravi‮odnap' });
+  assert.equal(overridden.json().data.user.displayName, 'Raviodnap');
+  assert.equal((await pool.query('SELECT display_name FROM users WHERE id=$1', [user.id])).rows[0].display_name, 'Raviodnap');
+
+  const snapshot = (await send('GET', `/api/v1/journeys/${journeyId}/snapshot`, session)).json().data;
+  assert.equal(snapshot.eventChainValid, true, 'every name, read back from Postgres, still hashes to what was signed');
+  const renames = snapshot.events.filter((event) => event.action === 'member_renamed').map((event) => event.after.displayName);
+  assert.deepEqual(renames, [...samples, family.repeat(80), 'Raviodnap']);
+  const summaries = (await pool.query("SELECT summary FROM journey_events WHERE journey_id=$1 AND action='member_renamed' ORDER BY sequence", [journeyId])).rows.map((event) => event.summary);
+  assert.equal(summaries[1], `Changed their name from ${samples[0]} to ${samples[1]}`);
+  assert.ok(summaries.every((summary) => !/[‪-‮⁦-⁩]/.test(summary)));
+
+  // The database's own check is a backstop on size: ten code points for each character allowed.
+  await assert.rejects(pool.query("UPDATE users SET display_name=repeat('x', 801) WHERE id=$1", [user.id]), { code: '23514', constraint: 'users_display_name_check' });
+  await assert.rejects(pool.query("UPDATE journey_moments SET title=repeat('x', 1201) WHERE journey_id=$1", [journeyId]), { code: '23514', constraint: 'journey_moments_title_check' });
 });

@@ -50,8 +50,8 @@ export default function NewJourneyScreen() {
 
   return (
     <Screen title="Begin a shared journey" lead="Begin with a name. The optional details can wait until they feel useful.">
-      <Field label="Journey name" value={draft.name} onChangeText={(name) => change({ name })} maxLength={NAME_LIMIT} placeholder="e.g. Mountain weekend" />
-      <Field label="Place or season (optional)" value={draft.location} onChangeText={(location) => change({ location })} maxLength={LOCATION_LIMIT} placeholder="Add this only if it helps you recognize the journey" />
+      <Field label="Journey name" value={draft.name} onChangeText={(name) => change({ name })} limit={NAME_LIMIT} placeholder="e.g. Mountain weekend" />
+      <Field label="Place or season (optional)" value={draft.location} onChangeText={(location) => change({ location })} limit={LOCATION_LIMIT} placeholder="Add this only if it helps you recognize the journey" />
       <Choices label="When it began" options={START_DATE_CHOICES} selected={draft.startDateStatus} onSelect={(startDateStatus) => change({ startDateStatus })} />
       {shown.startDate ? <DateField label="Exact start date" hint="Year, month and day, such as 2026-09-30." value={draft.startDate} onChange={(startDate) => change({ startDate })} /> : null}
       <Choices label="How long it lasts" options={END_DATE_CHOICES} selected={draft.endDateStatus} onSelect={(endDateStatus) => change({ endDateStatus })} />

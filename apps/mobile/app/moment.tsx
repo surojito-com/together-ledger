@@ -121,7 +121,7 @@ export default function MomentScreen() {
       <Section title="Kind of moment" help="Choose a suggestion, or make one your own.">
         <Choices label="Kind of moment" options={MOMENT_TYPES as [string, string][]} selected={draft.kind} onSelect={(value) => set({ kind: value })} />
       </Section>
-      {draft.kind === 'other' ? <Field label="Name this kind of moment" value={draft.kindLabel} onChangeText={(value) => set({ kindLabel: value })} maxLength={60} placeholder="e.g. A small win" /> : null}
+      {draft.kind === 'other' ? <Field label="Name this kind of moment" value={draft.kindLabel} onChangeText={(value) => set({ kindLabel: value })} limit={60} placeholder="e.g. A small win" /> : null}
       <DateField label="When" hint="Year, month and day, such as 2026-09-30." value={draft.occurredOn} onChange={(value) => set({ occurredOn: value })} />
       <View onLayout={(event) => { titleTop.current = event.nativeEvent.layout.y; }}>
         <Field
@@ -132,7 +132,7 @@ export default function MomentScreen() {
             set({ title: value });
             if (value.trim()) setTitleProblem(null);
           }}
-          maxLength={120}
+          limit={120}
           placeholder="e.g. A quiet apology after dinner"
           problem={titleProblem}
         />
@@ -165,7 +165,7 @@ export default function MomentScreen() {
       {/* No web price and no web add-on here, unlike the web's form (#268). If a moment has no
           room for another place, the save says so in the phone's own words. */}
       <Section title="Places (Optional)" help="Add only what helps tell the story.">
-        <Field label="Enter a place" value={place} onChangeText={setPlace} maxLength={120} placeholder="Enter a place in your own words" onSubmitEditing={() => addTyped()} returnKeyType="done" />
+        <Field label="Enter a place" value={place} onChangeText={setPlace} limit={120} placeholder="Enter a place in your own words" onSubmitEditing={() => addTyped()} returnKeyType="done" />
         <Button kind="quiet" label="Add place" onPress={addTyped} />
         {draft.locations.map((location, index) => (
           <View key={`${index}-${location.label}`} style={[styles.place, { borderColor: colors.border, borderRadius: theme.radius.s }]}>

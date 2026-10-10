@@ -5,6 +5,7 @@
  * Every limit here is also the server's (cleanMoment() in server/platform.js), and the server
  * stays the authority: these checks only save a round trip, in the server's own words.
  */
+import { characterCount } from '../../../../src/display-text.js';
 import { localDay, MOMENT_NAME_MISSING } from '../../../../src/model.js';
 import { normalizeMomentTheme } from '../../../../src/moment-themes.js';
 import type { Moment } from './journey-view';
@@ -98,12 +99,12 @@ function realDate(value: string) {
 
 /** The first problem with a draft, in the server's own words, or null when it can be sent. */
 export function draftProblem(draft: Draft): string | null {
-  if (draft.kind === 'other' && (!draft.kindLabel.trim() || draft.kindLabel.trim().length > 60)) return 'A name for this kind of moment is required and must be 60 characters or fewer.';
+  if (draft.kind === 'other' && (!draft.kindLabel.trim() || characterCount(draft.kindLabel.trim()) > 60)) return 'A name for this kind of moment is required and must be 60 characters or fewer.';
   if (!realDate(draft.occurredOn)) return 'Choose a valid moment date.';
   // Named as the form names the field (#354). The field stops at 120, so only an empty name can
   // reach the second check from the form; the server's words stay for anything longer.
   if (!draft.title.trim()) return MOMENT_NAME_MISSING;
-  if (draft.title.trim().length > 120) return 'Moment title is required and must be 120 characters or fewer.';
+  if (characterCount(draft.title.trim()) > 120) return 'Moment title is required and must be 120 characters or fewer.';
   if (draft.money.trim() !== '') {
     const amount = Number(draft.money);
     if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return 'Enter a valid optional money context.';

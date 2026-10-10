@@ -72,12 +72,14 @@ test('a draft the server would refuse is stopped first, in the server\'s own wor
     draft.journeyProblem({ ...fresh, endDateStatus: 'date', endDate: '2026-10-07' }),
   ];
   assert.equal(problems[0], 'Journey name is required and must be 80 characters or fewer.');
-  assert.ok(server.includes("cleanText(input.name, 'Journey name', 80)") && server.includes('is required and must be ${max} characters or fewer.'));
+  assert.ok(server.includes("cleanName(input.name, 'Journey name', 80)") && server.includes('is required and must be ${max} characters or fewer.'));
   for (const problem of problems.slice(1)) assert.ok(server.includes(problem), `the server says "${problem}" too`);
   assert.equal(draft.journeyProblem({ ...fresh, startDateStatus: 'unknown', startDate: 'not a date' }), null, 'a hidden date is not checked');
   assert.equal(draft.NAME_LIMIT, 80);
   assert.equal(draft.LOCATION_LIMIT, 80);
-  assert.ok(html.includes('<input name="name" required maxlength="80"') && html.includes('<input name="location" maxlength="80"'));
+  // Counted in characters a person sees on both, never by maxlength, which counts UTF-16 units.
+  assert.ok(html.includes('<input name="name" required data-character-limit="80"') && html.includes('<input name="location" data-character-limit="80"'));
+  assert.ok(screen.includes('limit={NAME_LIMIT}') && screen.includes('limit={LOCATION_LIMIT}') && !screen.includes('maxLength={NAME_LIMIT}'));
 });
 
 test('the screen uses the web\'s words, and the journey it begins is the one that opens', () => {

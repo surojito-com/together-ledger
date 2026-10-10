@@ -27,6 +27,7 @@ import {
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
 import { ApiError, TogetherApi } from './api.js';
+import { fitTyping } from './display-text.js';
 import {
   LEAVE_CONFIRM_LABEL, LEAVE_FIELD_HINT, LEAVE_FIELD_LABEL, LEAVE_OWNER_FIRST, LEAVE_PENDING_LABEL, LEAVE_SAFETY, LEAVE_START_LABEL,
   LEAVE_STAY_LABEL, LEAVE_WORD, LEAVE_ZONE_NOTE, LEAVE_ZONE_TITLE, leaveConsequence, leaveOffer, leaveRefusalTone, leftJourney,
@@ -1455,6 +1456,37 @@ $$('[data-open-moment]').forEach((button) => button.addEventListener('click', ()
   if (accountUser && !isCloudJourney()) { openJourney(); return; }
   openMoment();
 }));
+// A name's box counts its limit in the characters a person sees (src/display-text.js), not in the
+// UTF-16 units a browser's maxlength counts, which could take half of an emoji (owner, Oct 10,
+// 2026). An edit that would go past the limit keeps as much of what was typed or pasted as fits,
+// and what was there already stays. While an input method is still composing, nothing is touched
+// until the word is done.
+const textBeforeEdit = new WeakMap();
+const limitedBox = (target) => ((target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) && target.dataset.characterLimit ? target : null);
+function holdCharacterLimit(box) {
+  const { value, caret } = fitTyping(textBeforeEdit.get(box) ?? '', box.value, Number(box.dataset.characterLimit));
+  if (value !== box.value) {
+    box.value = value;
+    box.setSelectionRange(caret, caret);
+  }
+  textBeforeEdit.set(box, box.value);
+}
+document.addEventListener('beforeinput', (event) => {
+  const box = limitedBox(event.target);
+  if (box && !event.isComposing) textBeforeEdit.set(box, box.value);
+}, true);
+document.addEventListener('compositionstart', (event) => {
+  const box = limitedBox(event.target);
+  if (box) textBeforeEdit.set(box, box.value);
+}, true);
+document.addEventListener('compositionend', (event) => {
+  const box = limitedBox(event.target);
+  if (box) holdCharacterLimit(box);
+}, true);
+document.addEventListener('input', (event) => {
+  const box = limitedBox(event.target);
+  if (box && !event.isComposing) holdCharacterLimit(box);
+}, true);
 $('#add-manual-location').addEventListener('click', () => {
   const input = $('#manual-location');
   if (!input.value.trim()) { input.focus(); return; }

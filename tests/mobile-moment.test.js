@@ -58,7 +58,7 @@ test('a problem is caught before sending, in the server\'s own words', () => {
   ];
   for (const [input, message] of cases) assert.equal(draft.draftProblem(input), message);
   assert.match(server, /\$\{label\} is required and must be \$\{max\} characters or fewer\./);
-  assert.match(server, /cleanText\(input\.title \?\? existing\?\.title, 'Moment title', 120\)/);
+  assert.match(server, /cleanName\(input\.title \?\? existing\?\.title, 'Moment title', 120\)/);
   assert.match(server, /'A name for this kind of moment', 60\)/);
   for (const message of ['Choose a valid moment date.', 'Enter a valid optional money context.', 'A moment can hold up to 12 places.']) assert.ok(server.includes(message), message);
 });

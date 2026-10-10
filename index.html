@@ -197,9 +197,9 @@
         <input name="id" type="hidden" />
         <div class="form-grid">
           <label class="field"><span>Kind of moment</span><select name="kind" required aria-describedby="moment-kind-help"></select><small id="moment-kind-help">Choose a suggestion from the menu, or make one your own.</small></label>
-          <label class="field" id="moment-kind-label-field" hidden><span>Name this kind of moment</span><input name="kindLabel" maxlength="60" placeholder="e.g. A small win" /></label>
+          <label class="field" id="moment-kind-label-field" hidden><span>Name this kind of moment</span><input name="kindLabel" data-character-limit="60" placeholder="e.g. A small win" /></label>
           <label class="field"><span>When</span><input name="occurredOn" type="date" required /></label>
-          <label class="field full"><span>A short name</span><input name="title" required maxlength="120" placeholder="e.g. A quiet apology after dinner" /></label>
+          <label class="field full"><span>A short name</span><input name="title" required data-character-limit="120" placeholder="e.g. A quiet apology after dinner" /></label>
           <label class="field full"><span>What would you like to hold? <small>Optional</small></span><textarea name="detail" maxlength="1200" rows="5" placeholder="Use your own words. Keep it simple and kind."></textarea></label>
           <fieldset class="field full moment-theme-field" aria-describedby="moment-theme-help"><legend>Moment theme <small>Optional</small></legend><p class="field-help" id="moment-theme-help">Use your theme, or choose one calm card treatment that every journeyer will see.</p><div class="moment-theme-options" id="moment-theme-options"></div><article class="moment-card moment-theme-preview" id="moment-theme-preview" aria-live="polite"><div class="moment-meta"><span class="moment-kind">Live preview</span><span id="moment-theme-preview-name">Use my theme</span></div><strong>A moment worth holding</strong><p>The theme stays with this card. The page around it stays yours.</p></article></fieldset>
           <label class="field full moment-image-field" id="moment-image-field"><span>Photo <small>One image is included with every hosted moment</small></span><input name="image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="moment-image-help moment-image-privacy" /><small id="moment-image-help">JPEG, PNG, or WebP, up to 25 MB. Another image will be available as a $1/month add-on.</small><small class="moment-image-privacy" id="moment-image-privacy" aria-live="polite" hidden></small></label>
@@ -208,7 +208,7 @@
           <section class="field full location-field" aria-labelledby="moment-location-label">
             <div class="location-heading"><span id="moment-location-label">Places <small>Optional</small></span><small>First place included · each additional place is $1/month</small></div>
             <p class="field-help">Add only what helps tell the story. Your device location is requested only when you choose it—never in the background.</p>
-            <div class="location-actions"><button class="button quiet" type="button" id="use-device-location">Use my device location</button><label><span class="sr-only">Enter a place</span><input id="manual-location" maxlength="120" placeholder="Enter a place in your own words" /></label><button class="button quiet" type="button" id="add-manual-location">Add place</button></div>
+            <div class="location-actions"><button class="button quiet" type="button" id="use-device-location">Use my device location</button><label><span class="sr-only">Enter a place</span><input id="manual-location" data-character-limit="120" placeholder="Enter a place in your own words" /></label><button class="button quiet" type="button" id="add-manual-location">Add place</button></div>
             <ul id="moment-locations" class="location-list" aria-live="polite"></ul>
           </section>
           <button class="button quiet" type="button" id="buy-location-slot-button" hidden>Add another place · $1/month</button>
@@ -234,8 +234,8 @@
         </div>
         <div class="form-grid">
           <input name="id" type="hidden" />
-          <label class="field full"><span>Journey name</span><input name="name" required maxlength="80" placeholder="e.g. Mountain weekend" /></label>
-          <label class="field full"><span>Place or season <small>Optional</small></span><input name="location" maxlength="80" placeholder="Add this only if it helps you recognize the journey" /></label>
+          <label class="field full"><span>Journey name</span><input name="name" required data-character-limit="80" placeholder="e.g. Mountain weekend" /></label>
+          <label class="field full"><span>Place or season <small>Optional</small></span><input name="location" data-character-limit="80" placeholder="Add this only if it helps you recognize the journey" /></label>
           <label class="field"><span>When it began</span><select name="startDateStatus"><option value="exact">I know the date</option><option value="unknown">I don’t remember exactly</option></select></label>
           <label class="field" id="start-date-field"><span>Exact start date</span><input name="startDate" type="date" /></label>
           <label class="field"><span>How long it lasts</span><select name="endDateStatus"><option value="forever">Forever — no end date planned</option><option value="unsure">Not sure yet</option><option value="date">Choose an end date</option></select></label>
@@ -315,7 +315,7 @@
       </div>
       <div id="signed-in-account" class="account-panel" hidden>
         <dl class="account-identity"><div><dt>Account name</dt><dd id="account-name"></dd></div><div><dt>Handle</dt><dd id="account-username"></dd></div><div><dt>Email address</dt><dd id="account-email"></dd></div><div><dt>Email status</dt><dd id="verification-status"></dd></div></dl>
-        <form id="display-name-form" class="display-name-form"><label class="field"><span>Name journeyers see</span><input name="displayName" autocomplete="name" maxlength="80" required /></label><small>Everyone in your journeys sees this name, and each journey notes when it changes. Your handle stays private.</small><button class="button quiet">Save name</button></form>
+        <form id="display-name-form" class="display-name-form"><label class="field"><span>Name journeyers see</span><input name="displayName" autocomplete="name" data-character-limit="80" required /></label><small>Everyone in your journeys sees this name, and each journey notes when it changes. Your handle stays private.</small><button class="button quiet">Save name</button></form>
         <button class="button quiet" type="button" id="resend-verification-button" hidden>Resend verification email</button>
         <p id="no-email-support" hidden></p>
         <p id="account-sync-copy">Your account is ready for a private journey.</p>
