@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.togetherledger.ledger",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
@@ -101,7 +102,8 @@
       "expo-router",
       "./plugins/with-scene-life-cycle",
       "./plugins/with-tokens-out-of-backup",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

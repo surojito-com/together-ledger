@@ -7,6 +7,7 @@
  */
 import { countOf, dateLabel, money, MOMENT_TYPES, RECENT_MOMENTS_SHOWN, seeAllShown } from '../../../../src/model.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from '../../../../src/moment-themes.js';
+import type { MomentView } from '../storage/ledger-store';
 import type { Grace } from './sharing-view';
 
 export { dateLabel, money, MOMENT_THEMES, MOMENT_TYPES, momentThemeLabel, normalizeMomentTheme, seeAllShown };
@@ -86,6 +87,23 @@ export function momentLabel(kind: string, kindLabel?: string | null) {
   return momentTypes.find(([value]) => value === kind)?.[1] || 'Moment';
 }
 
+/** The choice above the moment list (Oct 9), in the words the owner approves. */
+export const MOMENT_VIEW_LABEL = 'Show moments';
+export const MOMENT_VIEWS: [MomentView, string][] = [['full', 'In full'], ['compact', 'Compact']];
+
+/**
+ * The heading over the moment list (Oct 10). In full shows the recent three first, as the web
+ * does, so it keeps "Recent moments"; Compact holds every moment, so it says so.
+ */
+export function momentListHeading(compact: boolean) {
+  return compact ? 'All moments' : 'Recent moments';
+}
+
+/** What a screen reader hears for a compact row: its title, its date and its visibility. */
+export function compactRowLabel(moment: Moment) {
+  return `${moment.title}, ${dateLabel(moment.occurredOn)}, Visibility: ${visibilityCue(moment.visibility).label}`;
+}
+
 export function journeyPeriod(journey: Journey) {
   const pieces: string[] = [];
   if (journey.location) pieces.push(journey.location);
@@ -121,6 +139,22 @@ export function seeAllLabel(count: number) {
 export function shownMoments(recent: ShownMoment[], { expanded, filter }: { expanded: boolean; filter: string }) {
   if (!expanded) return recent.slice(0, RECENT_MOMENTS_SHOWN);
   return recent.filter((moment) => filter === 'all' || moment.kind === filter);
+}
+
+/**
+ * What the moment list holds in each view (Oct 9, #379). In full is the web's ledger, unchanged:
+ * three recent moments until "See all", and the "Moment types" filter only after it. Compact
+ * fits ten or so to a screen, so it holds every moment from the start: no "See all" or "Show
+ * recent", and the filter always there. The filter is the same one in both, so switching views
+ * keeps it.
+ */
+export function momentListing(recent: ShownMoment[], { compact, expanded, filter }: { compact: boolean; expanded: boolean; filter: string }) {
+  const everyMoment = compact || expanded;
+  return {
+    shown: shownMoments(recent, { expanded: everyMoment, filter }),
+    seeAll: !compact && seeAllShown(recent.length, expanded),
+    filter: everyMoment && recent.length > 0,
+  };
 }
 
 export function openThreads(snapshot: Snapshot) {

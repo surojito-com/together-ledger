@@ -341,6 +341,18 @@ async function refreshBillingState() {
   renderBillingState();
 }
 
+// An account opened with Apple that shared no usable email holds a placeholder the server made
+// from its own id (server/platform.js), which is nobody's address. It is said in words (#217).
+// Such an account can't be sent a verification email, so it is told where to write instead.
+const APPLE_SHARED_NO_EMAIL = 'Apple didn’t share an email address.';
+const NO_EMAIL_SUPPORT = 'For help with this account, write to ledger-support@together-ledger.com.';
+function appleSharedNoEmail(email) {
+  return /^apple-[^@\s]+@no-email\.invalid$/i.test(email);
+}
+function accountEmailLabel(email) {
+  return appleSharedNoEmail(email) ? APPLE_SHARED_NO_EMAIL : email;
+}
+
 function renderAccountState() {
   const signedIn = Boolean(accountUser);
   const accountsAvailable = api.accountsAvailable;
@@ -354,9 +366,12 @@ function renderAccountState() {
   const nameInput = $('#display-name-form [name=displayName]');
   if (document.activeElement !== nameInput) nameInput.value = signedIn ? accountUser.displayName : '';
   $('#account-username').textContent = signedIn ? `@${accountUser.username}` : '';
-  $('#account-email').textContent = signedIn ? accountUser.email : '';
+  $('#account-email').textContent = signedIn ? accountEmailLabel(accountUser.email) : '';
   $('#verification-status').textContent = signedIn ? (accountUser.emailVerified ? 'Email verified' : 'Email verification is still required before accepting an invitation.') : '';
-  $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified;
+  const noEmail = signedIn && appleSharedNoEmail(accountUser.email);
+  $('#resend-verification-button').hidden = !signedIn || accountUser.emailVerified || noEmail;
+  $('#no-email-support').hidden = !noEmail;
+  $('#no-email-support').textContent = noEmail ? NO_EMAIL_SUPPORT : '';
   // An account opened with Google or Apple has no password, so deleting it asks only for DELETE.
   const deleteAsksForPassword = !signedIn || accountUser.hasPassword !== false;
   $('#delete-account-password').hidden = !deleteAsksForPassword;

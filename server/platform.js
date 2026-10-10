@@ -650,6 +650,21 @@ export class PlatformService {
     };
   }
 
+  // Which ways of signing in a phone can offer (#217), asked by the phone about itself. Google is
+  // ready when the client the phone's tokens are issued to is one this server accepts: the iOS
+  // client on an iPhone, and on Android the web client Google's library asks its token for. Apple
+  // on an iPhone is the native sheet, whose token is issued to the bundle ID, and needs the same
+  // key and encryption key the web's does, since without them no Apple account can open. Android
+  // has no Apple sheet, and the web flow can't finish there without a Return URL of its own, so
+  // Apple is never offered to it until there is one.
+  phoneSignInProviders(phone, googleClientId) {
+    if (phone !== 'ios' && phone !== 'android') throw new PlatformError(400, 'invalid_input', 'Choose iOS or Android.');
+    const google = typeof googleClientId === 'string' && this.identity.accepts('google', googleClientId) ? { clientId: googleClientId } : null;
+    const bundleId = this.config.APPLE_BUNDLE_ID;
+    const apple = phone === 'ios' && this.identity.accepts('apple', bundleId) && this.apple.configured() ? { clientId: bundleId } : null;
+    return { google, apple };
+  }
+
   async userForIdentity(client, identity) {
     const found = await client.query(
       `SELECT u.*, i.apple_refresh_token FROM user_identities i JOIN users u ON u.id=i.user_id

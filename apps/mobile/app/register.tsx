@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { SocialSignIn } from '../src/components/social-sign-in';
 import { Button, Field, Notice, Screen } from '../src/components/ui';
 
 /** Create an account from the phone. The hints are the web form's, word for word. */
@@ -29,6 +30,8 @@ export default function RegisterScreen() {
 
   return (
     <Screen title="Create account">
+      {/* The same buttons as Sign in (#217): a Google or Apple account opens here as well as there. */}
+      <SocialSignIn onSignedIn={() => router.replace('/account')} />
       <Field label="Choose a username" hint="3–30 lowercase letters, numbers, or single hyphens. It is for signing in and is not shown to your journeyer. You can choose the names used together when a journey calls for them." value={username} onChangeText={setUsername} autoCapitalize="none" autoComplete="username-new" textContentType="username" />
       <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
       <Field label="Password" hint="Use at least 12 characters. We send a verification link before invitations can be accepted." value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" textContentType="newPassword" />
