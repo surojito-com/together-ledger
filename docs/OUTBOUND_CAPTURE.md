@@ -141,7 +141,8 @@ scope.
    and invitation (14 days) links carried their one-time code in the query (`?verify=…`). The
    00:19 run saw each one sent to `app.together-ledger.com` in the address, and again in the
    `Referer` of the page's first three files (`src/themes.js`, `src/styles.css`, `src/app.js`),
-   before the page removed it: 16 times across the four links opened. No other host received one.
+   before the page removed it: 16 times across the four links opened. No other host received one;
+   the API gets it only in a body.
    The mailer now puts the code after the # (`/#verify=…`), which no browser sends to any server
    or puts in a `Referer`, and the 00:54 run saw it in no address and no `Referer` on any host.
    The page reads the code from the # first and takes it out of the address before it does
@@ -152,7 +153,8 @@ scope.
    three `Referer`s, as before; nothing the page does can take those back. Until the server
    release, the server keeps sending that shape. The app Worker has Workers Logs on at full
    sampling (`wrangler.jsonc`); whether asset requests are logged there is still **not
-   verified**. `tests/browser-emailed-links.spec.js` holds both shapes.
+   verified**. `PRIVACY.md`'s promise that one-time codes are removed from logs is about our
+   API's logs. `tests/browser-emailed-links.spec.js` holds both shapes.
 2. **Google and Apple hear about every signed-out Sign in. Now said.** Once
    `GOOGLE_WEB_CLIENT_ID` is set, their scripts load when a signed-out person opens Sign in,
    including to use a password or to recover an account. `PRIVACY.md` now says so, in the words
