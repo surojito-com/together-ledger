@@ -47,6 +47,7 @@ Payment credentials remain isolated in Stripe-hosted Checkout and Customer Porta
 14. Checkout accepts only internal offer names resolved to server-controlled Price IDs. Customer and Price IDs are not browser authority.
 15. Stripe webhook signatures are verified over the raw request bytes. Event IDs are idempotency boundaries, and the success redirect never grants an entitlement.
 16. Portal Session creation rechecks the named Stripe configuration against a fail-closed feature allowlist. It requires the verified journey owner, their mapped Stripe Customer, and that journey's non-terminal subscription; browser-supplied Customer, subscription, or configuration IDs are never accepted.
+17. A person can end every session and phone sign-in their account holds, their own included (`POST /auth/logout-everywhere`), and change their password while signed in (`POST /account/password`, #194). A password change checks the current password exactly as login does — one Argon2id verification, the same answer, and the same padding hash for an account with no password — and ends every other session and token family while the device that asked stays signed in, unchanged: its session or token family is kept, not re-issued. Keeping it means a copy of that one device's own cookie or tokens, if one had been stolen, would also carry on; Sign out everywhere is what ends that. The change is followed by a plain notice to the account's address that carries no link or code, so a stolen inbox gains nothing from it and the person learns of a change they did not make. Both routes are rate limited on their own counts, and both take the account only from the credential, never from the request body.
 
 ## Explicit limitations
 
@@ -63,5 +64,6 @@ Payment credentials remain isolated in Stripe-hosted Checkout and Customer Porta
 - Journey-ID guessing, cross-journey expense access, role escalation, invitation reuse, and capacity races.
 - Concurrent edits, duplicate event sequences, partial transaction failure, and stale optimistic versions.
 - Deleted-account access, revoked-session reuse, recovery-token reuse, and export after deletion.
+- A session or phone token used after Sign out everywhere or a password change on another device (`tests/account-sessions.test.js`, `tests/postgres-integration.test.js`); a wrong current password told apart from login's answer by its words or its time; one account's request ending another's sign-ins.
 - Database outage, email outage, backup corruption, failed restore, and AWS-to-GCP recovery.
 - Forged or replayed Stripe events, test/live crossover, arbitrary browser Price IDs, duplicate Checkout requests, missed billing events, and stale entitlements.

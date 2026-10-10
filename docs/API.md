@@ -17,9 +17,11 @@ A request may authenticate in one of two ways. A browser sends the `tl_session` 
 | GET | `/auth/providers` | Say which of Google and Apple the web, or a phone asking about itself, can offer, with the public identifiers it needs. No account data and no session. |
 | POST | `/auth/refresh` | Spend a refresh token and return a rotated access and refresh pair. Bearer clients only. |
 | POST | `/auth/logout` | Revoke the current session, or the presented bearer token and everything issued with it. |
+| POST | `/auth/logout-everywhere` | Revoke every session and every bearer token family the signed-in account holds, the caller's own included. |
 | GET | `/session` | Return the current account, and the session CSRF token on the cookie path. The account says `hasPassword`, so a client knows whether deleting it asks for one. |
 | POST | `/recovery/request` | Queue a single-use recovery link without account enumeration. |
 | POST | `/recovery/confirm` | Consume the token, replace the password, and revoke every session and bearer token. |
+| POST | `/account/password` | Check the current password as login does, set a new one, and revoke every other session and bearer token family. The caller stays signed in. |
 | DELETE | `/account` | Reconfirm the password (an account opened with Google or Apple has none, so the typed `DELETE` is the whole confirmation) and permanently delete/pseudonymize the account. |
 
 ### Bearer tokens for a client without a browser
@@ -37,7 +39,20 @@ Each token records when it was first presented (`used_at`) and each pair which r
 
 Only `401 invalid_token` means the refresh token was refused and the sign-in is over. A client keeps its tokens on anything else — no connection, a `5xx`, a `429` from the rate limit (120 per 15 minutes per address), or a reply that is not this API's JSON — and tries again later.
 
-`DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
+`DELETE /account` deletes every token the account holds, as it already deletes every session. Confirming a password recovery does the same. `POST /auth/logout-everywhere` retires every family, and `POST /account/password` every family but the caller's. Only the SHA-256 hash of a token is stored, exactly as for verification, invitation, and recovery tokens; the raw value exists only in the reply that issued it. A token is read from the `Authorization` header and nowhere else, so it never reaches a URL, a proxy log, a browser history entry, or a referrer, and a refusal says only that the request was refused — it never repeats the token back.
+
+### Signing out everywhere, and changing the password while signed in
+
+Both are signed-in mutations (#194): a browser sends its cookie, the allowed `Origin` and `x-together-csrf`; a phone sends its bearer token. Nothing in either request says whose account it is. Each has its own rate limit of 10 per 15 minutes per address, counted apart from every other route's, and counted before the session or password is looked at (`tests/sign-in-limits.test.js`).
+
+`POST /auth/logout-everywhere` takes no body and answers `204`. It deletes every session row the account has and retires every token family, as `/auth/logout` does for one. A browser's own cookie is cleared in the reply; a phone forgets its tokens once it has the `204`. From then on every one of those sessions is refused with `401 authentication_required`, and every retired refresh token with `401 invalid_token`, which is the one answer that tells a phone it is signed out.
+
+`POST /account/password` takes `{ "currentPassword": "…", "newPassword": "…" }` and answers `{ "data": { "user": … } }`.
+
+- The new password must be 12 to 128 characters (`400 invalid_input`, `Use a password between 12 and 128 characters.`). It is checked first, and says nothing about the current one.
+- A wrong current password is answered exactly as a wrong password at `/auth/login`: `401 invalid_credentials`, `Username, email, or password is incorrect.`, after the same single Argon2id verification. An account opened with Google or Apple has no password (`hasPassword: false`) and is answered the same way, after verifying against the same padding hash login uses; the clients do not offer it the form.
+- On success the session or token family that asked is kept as it is: nothing is re-issued, so the cookie, its CSRF value, and the phone's access and refresh tokens all carry on, and a request already on its way from that device is not refused. Every other session is deleted and every other token family retired. An unused recovery link sent before the change stops working.
+- Once the change has committed, one plain-text email goes to the account's address saying the password was changed, that every other device was signed out, and, if it was not them, to use "I forgot my password" and write to ledger-support@together-ledger.com. It carries no link, no code, and nothing from any journey. A failed send does not undo the change and is logged by kind (`password-changed`), never by address.
 
 ### Signing in with Google or Apple
 
@@ -130,4 +145,4 @@ Moment visibility accepts `private`, `shared-now`, or `share-later`. Private and
 
 ## Email adapter
 
-Automated tests use an in-memory outbox. The deployed provider is Resend SMTP, supplied through the provider-neutral Nodemailer SMTP adapter so another relay can be adopted only after independent testing. Raw verification, invitation, and recovery tokens may appear only in the mail adapter invocation and destination message; only their SHA-256 hashes are stored and application logs must never contain them.
+Automated tests use an in-memory outbox. The deployed provider is Resend SMTP, supplied through the provider-neutral Nodemailer SMTP adapter so another relay can be adopted only after independent testing. The password-changed notice carries no token or link at all. Raw verification, invitation, and recovery tokens may appear only in the mail adapter invocation and destination message; only their SHA-256 hashes are stored and application logs must never contain them.

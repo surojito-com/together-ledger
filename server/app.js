@@ -268,6 +268,22 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(204).send();
   });
 
+  // Sign out everywhere (#194): every browser and phone signed in to the account, this one
+  // included. Limited on its own count, as every account route is.
+  app.post('/api/v1/auth/logout-everywhere', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    await platform.signOutEverywhere(request.auth.userId);
+    if (!request.auth.bearer) reply.clearCookie(SESSION_COOKIE, cookieOptions());
+    return reply.code(204).send();
+  });
+
+  // Change password while signed in (#194). It checks a password, so it is limited as signing in
+  // is: the same numbers, counted on their own. The sign-in that asked stays signed in as it is;
+  // every other one ends.
+  app.post('/api/v1/account/password', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => {
+    const keep = request.auth.bearer ? { tokenFamilyId: request.auth.tokenFamilyId } : { sessionId: request.auth.id };
+    return { data: { user: await platform.changePassword(request.auth.userId, request.body || {}, keep) } };
+  });
+
   app.get('/api/v1/session', { preHandler: authenticate }, async (request) => (
     request.auth.bearer
       ? { data: { user: request.auth.user } }

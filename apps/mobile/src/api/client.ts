@@ -12,6 +12,12 @@
  * lost, the phone still holds the spent refresh token; the server answers it again with a fresh
  * pair as long as nobody has used the lost one (server/platform.js, refreshTokens).
  *
+ * That refusal is also how the phone learns its sign-in was ended somewhere else (#194): by Sign
+ * out everywhere, a password change or a recovery on another device. Whoever is listening
+ * (`onSignedOut`) is told once per refusal, so the app can take the person to sign in and say
+ * why, instead of leaving a screen half-loaded. Nothing else tells them: not a wrong password,
+ * not a request sent with no tokens held, and not the service being out of reach.
+ *
  * The two situations the web client keeps apart stay apart here: `offline` (the service could
  * not be reached) and `accounts_unavailable` (this build has no service to reach at all). A
  * renewal the service answered without a pair is `unreachable`, in the offline words.
@@ -100,6 +106,7 @@ export function createAccountClient({ base, fetch, tokens, build }: {
   build?: string;
 }) {
   let refreshing: Promise<Tokens | null> | null = null;
+  const signedOutListeners = new Set<() => void>();
   // The same on every request this client makes, the image loader's included.
   const appHeaders: Record<string, string> = build ? { 'x-together-client': 'app', 'x-together-build': build } : { 'x-together-client': 'app' };
 
@@ -138,6 +145,7 @@ export function createAccountClient({ base, fetch, tokens, build }: {
       const { response, payload } = await send('/auth/refresh', { method: 'POST', body: { refreshToken: held.refreshToken } });
       if (response.status === 401 && payload?.error?.code === 'invalid_token') {
         await tokens.clear();
+        signedOutListeners.forEach((listener) => listener());
         return null;
       }
       const fresh = (response.ok ? (payload?.data as Tokens | null) : null) ?? null;
@@ -173,6 +181,11 @@ export function createAccountClient({ base, fetch, tokens, build }: {
   }
 
   return {
+    /** Told when the service refuses this phone's tokens: its sign-in has ended (#194). Returns how to stop listening. */
+    onSignedOut(listener: () => void) {
+      signedOutListeners.add(listener);
+      return () => { signedOutListeners.delete(listener); };
+    },
     async register(input: { email: string; username: string; password: string }) {
       const data = await keep(await request<{ user: AccountUser; verificationSent?: boolean } & Tokens>('/auth/register', { method: 'POST', body: input }));
       return { user: data.user, verificationSent: data.verificationSent !== false };
@@ -219,6 +232,19 @@ export function createAccountClient({ base, fetch, tokens, build }: {
         // told, so a lost phone never stays signed in because it happened to be offline.
         await tokens.clear();
       }
+    },
+    /**
+     * Every phone and browser signed in to this account, this one included (#194). Unlike
+     * signing out, the tokens are forgotten only once the service has done it: a phone that could
+     * not reach it says so and stays as it was, rather than seeming to have signed out everywhere.
+     */
+    async logoutEverywhere() {
+      await request('/auth/logout-everywhere', { method: 'POST', body: {}, signedIn: true });
+      await tokens.clear();
+    },
+    /** The phone that asks stays signed in with the tokens it has; every other sign-in ends (#194). */
+    async changePassword(currentPassword: string, newPassword: string) {
+      return (await request<{ user: AccountUser }>('/account/password', { method: 'POST', body: { currentPassword, newPassword }, signedIn: true })).user;
     },
     async resendVerification() {
       const result = await request<{ delivered?: boolean }>('/auth/resend-verification', { method: 'POST', body: {}, signedIn: true });

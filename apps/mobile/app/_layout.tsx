@@ -53,6 +53,7 @@ function ThemedStack() {
       <Stack.Screen name="recovery" options={{ title: 'Account recovery' }} />
       <Stack.Screen name="recovery-confirm" options={{ title: 'Account recovery' }} />
       <Stack.Screen name="verify-email" options={{ title: 'Verify email' }} />
+      <Stack.Screen name="change-password" options={{ title: 'Change password' }} />
       {/* An invitation, from a tapped link or pasted (#266). */}
       <Stack.Screen name="invite" options={{ title: 'Invitation' }} />
       <Stack.Screen name="delete-account" options={{ title: 'Delete account' }} />
@@ -103,6 +104,21 @@ function ConnectionWatch() {
   return null;
 }
 
+/**
+ * When the service refuses this phone's sign-in (#194), whatever screen was open is closed and the
+ * person is taken to sign in, with what happened said there: the password was changed, Sign out
+ * everywhere was used, or the sign-in ran out. Never a half-loaded screen. Only a refusal does
+ * this; a phone that cannot reach the service is still signed in (#353).
+ */
+function SignedOutWatch() {
+  const { client } = useSession();
+  useEffect(() => client.onSignedOut(() => {
+    if (router.canDismiss()) router.dismissAll();
+    router.push({ pathname: '/account', params: { notice: 'signedOutHere' } });
+  }), [client]);
+  return null;
+}
+
 export default function RootLayout() {
   // The serif ships inside the app (#177), so nothing is fetched at runtime.
   const [fontsLoaded] = useFonts(fontSources);
@@ -126,6 +142,7 @@ export default function RootLayout() {
                 </MomentViewProvider>
               </StoreProvider>
               <ConnectionWatch />
+              <SignedOutWatch />
               <PendingInvitationWatch />
             </WaitingMomentsProvider>
           </JourneyProvider>
