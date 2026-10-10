@@ -50,6 +50,35 @@ remains the summary; that document is the thing to follow on the host.
 
 `compose.production.yaml` is deliberately separate from the local `compose.yaml` file. It has no Mailpit service and exposes only Caddy on ports 80 and 443. PostgreSQL and the Node service have no host ports and communicate only on the Docker network.
 
+### Whose address the rate limits count
+
+Every rate limit counts per client address (`request.ip`; IPv6 per /64), and nothing is counted per account (#259). Which address that is depends on three things, and all three are load-bearing:
+
+- **`TRUST_PROXY=true` trusts every hop.** Fastify takes the leftmost `X-Forwarded-For` entry. Anyone who could reach the app directly could choose their own count, so the app must never get a host port; only Caddy does.
+- **The shipped `Caddyfile` has no `trusted_proxies`.** Caddy 2.5 and later then drop any `X-Forwarded-For` a client sends and write the address Caddy was connected from. `tests/sign-in-limits.test.js` proves this against the shipped file when `CADDY_BIN` points to a caddy binary.
+- **`api.together-ledger.com` is DNS only (grey cloud), not proxied through Cloudflare** (owner, Oct 10, 2026; it resolves to the host's own address, not a Cloudflare one). So the address Caddy is connected from is the person's own. To check it: Cloudflare → together-ledger.com zone → DNS → Records → the `api` row → Proxy status.
+
+If that row is ever switched to **Proxied** (orange cloud), Caddy would be connected from a Cloudflare edge instead. Everyone routed through one edge would share one count: ten wrong passwords from anyone would refuse sign-in to all of them, and `/auth/refresh` would be shared by every phone behind that edge. Change the `Caddyfile` in the same release:
+
+```text
+{
+  email {$CADDY_EMAIL}
+  servers {
+    trusted_proxies static <every range listed at https://www.cloudflare.com/ips/, IPv4 and IPv6>
+    client_ip_headers CF-Connecting-IP
+  }
+}
+
+{$CADDY_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy app:4174 {
+    header_up X-Forwarded-For {client_ip}
+  }
+}
+```
+
+The `header_up` line is not optional. Without it, Caddy passes the client's own `X-Forwarded-For` through from a trusted proxy, and Fastify, trusting every hop, keys on the client's made-up first entry: tried on Oct 9, 2026, it took `6.6.6.6` from the header. With it, the app sees one address, Cloudflare's `CF-Connecting-IP`. A request reaching the host directly, not from a Cloudflare range, is counted as its own address whatever headers it sends. Cloudflare's ranges change from time to time, so the list needs checking when this is in use.
+
 1. Build the image on the host from a reviewed commit, tagged with that commit, and set `TOGETHER_IMAGE` to it. No image has been pushed to a registry yet. The build is step 2 of the [API server deployment procedure](SERVER_DEPLOY.md); a private Amazon ECR repository and deploying by immutable digest are written there as a plan, not yet done (#225).
 2. Copy `.env.production.example` to a persistent, root-owned, mode-0600 file outside the repository, such as `/etc/together-ledger/production.env`. Do not use `/run`, which is cleared at reboot. In production, materialize its real values from AWS Secrets Manager; do not commit it.
 3. Set `CADDY_DOMAIN=api.together-ledger.com` and `API_ORIGIN=https://api.together-ledger.com` only after staging DNS and TLS are ready. Set `PUBLIC_ORIGIN=https://app.together-ledger.com` and `ACCOUNT_ORIGIN=https://app.together-ledger.com`. During a dual-host rollout, set `APP_ORIGINS` to the legacy app origin as a comma-separated exact-origin list. `ACCOUNT_ORIGIN` is the safe fallback for trusted non-browser jobs. Browser-issued verification, recovery, and invitation emails preserve the already allowlisted origin that requested them: app actions return to the app origin, direct API testing returns to the API client, and arbitrary origins are rejected before mail is sent.

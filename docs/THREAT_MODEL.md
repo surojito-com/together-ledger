@@ -34,7 +34,7 @@ Payment credentials remain isolated in Stripe-hosted Checkout and Customer Porta
 1. Passwords use Argon2id through the vetted `argon2` package. Passwords are never logged or stored.
 2. Sessions are opaque 256-bit random values. PostgreSQL stores only SHA-256 token hashes. Cookies are `HttpOnly`, `Secure` in production, `SameSite=Lax`, and scoped to `/`.
 3. Every state-changing request requires the session CSRF token and an allowed `Origin`.
-4. Authentication and recovery endpoints are rate limited. Recovery requests return the same response whether an account exists or not.
+4. Authentication and recovery endpoints are rate limited, per client address (#259; proved by tripping each one in `tests/sign-in-limits.test.js`). Recovery requests return the same response, in the same time, whether an account exists or not: the reply goes out before the address is looked up, and the email follows.
 5. Verification, invitation, and recovery tokens are random, single-use, expiration-bound, and stored only as hashes. Their email links may use only the configured public or API origin that already passed request-origin validation; arbitrary host and forwarding headers never choose a link destination.
 6. Authorization is checked inside the same transaction as every read or mutation. A journey ID alone grants nothing.
 7. The production-safe default allows two people. Synthetic group mode is rejected in production, and every mode enforces the unadvertised internal ceiling by counting active members plus live invitation reservations under a per-journey database lock. A shared login is prohibited.

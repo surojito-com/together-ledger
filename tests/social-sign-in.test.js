@@ -265,6 +265,8 @@ test('an account with no password cannot sign in with one, has nothing to recove
   const before = mailer.messages.length;
   const recovery = await post(app, '/api/v1/recovery/request', { email: 'nopw@example.com' });
   assert.equal(recovery.statusCode, 202);
+  // The email follows the answer (#259).
+  await app.afterReplies();
   assert.equal(mailer.messages.length, before);
 
   const deleted = await app.inject({
