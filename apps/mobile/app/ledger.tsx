@@ -11,7 +11,7 @@ import { CardAction, MomentCard, momentColors } from '../src/components/moment-c
 import { MomentRow } from '../src/components/moment-row';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
-import { journeyPeriod, momentFilters, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
+import { journeyPeriod, momentFilters, momentListHeading, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
@@ -109,7 +109,7 @@ export default function LedgerScreen() {
             <Button kind="quiet" label="＋ New journey" onPress={() => router.push('/new-journey')} />
             <View style={styles.section}>
               <Text style={[styles.eyebrow, { color: colors.accent }]}>Our shared journey</Text>
-              <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>Recent moments</Text>
+              <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>{momentListHeading(compact)}</Text>
               <Text style={[styles.body, { color: colors.muted }]}>Hold what happened in words that feel true.</Text>
             </View>
             <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />

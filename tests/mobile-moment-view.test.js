@@ -228,6 +228,15 @@ test('switching back and forth keeps the chosen filter and leaves "See all" wher
   step({ filter: 'all', compact: false }, { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: true, filter: true }, 'full stays expanded, as it was left');
 });
 
+test('the heading reads "All moments" in Compact only; In full keeps "Recent moments"', async () => {
+  assert.equal(view.momentListHeading(false), 'Recent moments', 'in full, as today');
+  assert.equal(view.momentListHeading(true), 'All moments', 'compact, which holds every moment');
+  const ledger = await read('app/ledger.tsx');
+  assert.match(ledger, /<Text accessibilityRole="header" style=\{\[styles\.sectionTitle, fonts\.serif, \{ color: colors\.fg \}\]\}>\{momentListHeading\(compact\)\}<\/Text>/, 'still a header for screen readers, following the view');
+  assert.match(ledger, /const compact = momentView\.view === 'compact';/);
+  assert.doesNotMatch(ledger, />Recent moments</, 'never written in place, so the two cannot drift apart');
+});
+
 test('the full card is unchanged and still the default', async () => {
   const card = await read('src/components/moment-card.tsx');
   assert.match(card, /card: \{ borderWidth: 1, borderLeftWidth: 5, padding: 18 \}/);

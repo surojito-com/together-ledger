@@ -91,6 +91,14 @@ export function momentLabel(kind: string, kindLabel?: string | null) {
 export const MOMENT_VIEW_LABEL = 'Show moments';
 export const MOMENT_VIEWS: [MomentView, string][] = [['full', 'In full'], ['compact', 'Compact']];
 
+/**
+ * The heading over the moment list (Oct 10). In full shows the recent three first, as the web
+ * does, so it keeps "Recent moments"; Compact holds every moment, so it says so.
+ */
+export function momentListHeading(compact: boolean) {
+  return compact ? 'All moments' : 'Recent moments';
+}
+
 /** What a screen reader hears for a compact row: its title, its date and its visibility. */
 export function compactRowLabel(moment: Moment) {
   return `${moment.title}, ${dateLabel(moment.occurredOn)}, Visibility: ${visibilityCue(moment.visibility).label}`;
