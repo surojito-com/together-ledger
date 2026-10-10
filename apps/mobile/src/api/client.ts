@@ -299,6 +299,10 @@ export function createAccountClient({ base, fetch, tokens, build }: {
     async removeMember(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE', body: {}, signedIn: true });
     },
+    /** The person signed in leaves, typed LEAVE on the screen first (#96). Nothing here names anyone else. */
+    async leaveJourney(journeyId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/leave`, { method: 'POST', body: { confirmation: 'LEAVE' }, signedIn: true });
+    },
     async transferOwnership(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/ownership`, { method: 'POST', body: { userId }, signedIn: true });
     },

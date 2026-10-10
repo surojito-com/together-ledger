@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createPool, runMigrations, withTransaction } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
+import { StripeBillingService } from '../server/billing.js';
 import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
@@ -581,4 +582,74 @@ test('real PostgreSQL keeps one waiting row for a Google refund not listed yet, 
   await assert.rejects(pool.query("UPDATE billing_store_notifications SET outcome='nonsense' WHERE store='google' AND notification_id=$1", [messageId]), /billing_store_notifications_outcome_check/);
   await pool.query("UPDATE billing_store_notifications SET outcome='reinstated' WHERE store='google' AND notification_id=$1", [messageId]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+// #96: leaving, against the real schema: the append-only history takes the entry, the photo of a
+// private moment goes with it, and two leaves sent together (a double tap, a retry after a lost
+// reply) leave once, with one entry in History, while the second finds nothing to leave.
+test('real PostgreSQL lets a journeyer leave once, with what they held privately, and keeps the chain whole', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const person = async (name) => {
+    const email = `${name}-${suffix}@example.test`;
+    const { user } = await platform.register({ email, username: `${name}-${suffix}`, password: 'correct horse battery staple' });
+    await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+    return { ...user, email };
+  };
+  const [owner, leaver, stays] = [await person('leave-owner'), await person('leave-member'), await person('leave-stays')];
+  const journey = await platform.createJourney(owner.id, { name: 'Left once', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const join = async (invited, agreeing = []) => {
+    const { proposalId } = await platform.proposeInvitation(owner.id, journey.id, invited.email, '', 'http://127.0.0.1:4174');
+    for (const member of agreeing) await platform.decideInviteProposal(member.id, journey.id, proposalId, 'agree', 'http://127.0.0.1:4174');
+    await platform.acceptInvitation(invited.id, mailer.messages.findLast((message) => message.type === 'invitation' && message.to === invited.email).token);
+  };
+  await join(leaver);
+  await join(stays, [leaver]);
+
+  const base = { kind: 'memory', kindLabel: '', occurredOn: '2026-08-01', detail: '', theme: '', moneyCents: null, moneyCurrency: '', locations: [{ label: 'The harbour', latitude: 38.7, longitude: -9.1, accuracyMeters: 12 }] };
+  const kept = await platform.createMoment(leaver.id, journey.id, { ...base, title: 'Only mine', visibility: 'private', idempotencyKey: `leave-private-${suffix}` });
+  const shared = await platform.createMoment(leaver.id, journey.id, { ...base, title: 'For everyone', visibility: 'shared-now' });
+  const photo = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  await platform.uploadMomentImage(leaver.id, journey.id, kept.id, 'image/jpeg', photo);
+  const { proposalId } = await platform.proposeInvitation(leaver.id, journey.id, `asked-${suffix}@example.test`, '', 'http://127.0.0.1:4174');
+
+  const both = await Promise.allSettled([platform.leaveJourney(leaver.id, journey.id), platform.leaveJourney(leaver.id, journey.id)]);
+  assert.equal(both.filter((result) => result.status === 'fulfilled').length, 1, 'one of them leaves');
+  assert.equal(both.find((result) => result.status === 'rejected').reason.code, 'not_found', 'the other finds nothing to leave');
+
+  const count = async (sql, params) => (await pool.query(sql, params)).rows[0].count;
+  assert.equal(await count("SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1 AND action='member_left'", [journey.id]), 1);
+  assert.equal(await count('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [kept.id]), 0);
+  assert.equal(await count('SELECT count(*)::int AS count FROM moment_images WHERE moment_id=$1', [kept.id]), 0, 'the photo goes with its moment');
+  assert.equal(await count('SELECT count(*)::int AS count FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journey.id, leaver.id]), 0);
+  assert.equal(await count('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [shared.id]), 1, 'what they shared stays');
+  assert.equal((await pool.query('SELECT status FROM journey_invite_proposals WHERE id=$1', [proposalId])).rows[0].status, 'withdrawn');
+  await assert.rejects(pool.query("UPDATE journey_events SET summary='rewritten' WHERE journey_id=$1 AND action='member_left'", [journey.id]), /journey events are append-only/);
+
+  const after = await platform.snapshot(stays.id, journey.id);
+  assert.equal(after.eventChainValid, true);
+  assert.equal(after.events.at(-1).summary, `leave-member-${suffix} left the journey`);
+  assert.equal(after.moments.find((moment) => moment.id === shared.id).createdBy, `leave-member-${suffix}`);
+  assert.deepEqual(after.members.map((member) => member.id).sort(), [owner.id, stays.id].sort());
+  await assert.rejects(platform.snapshot(leaver.id, journey.id), { code: 'forbidden' });
+  assert.deepEqual(await platform.listJourneys(leaver.id), []);
+  await assert.rejects(platform.leaveJourney(owner.id, journey.id), { code: 'ownership_transfer_required' });
+
+  // Paying on the web for this journey's room: leaving waits until that payment ends.
+  const billing = new StripeBillingService({ pool, config: { stripeEnvironment: 'test' }, stripe: {} });
+  await pool.query(
+    `INSERT INTO billing_subscriptions (provider_subscription_id,environment,payer_user_id,journey_id,provider_customer_id,offer_id,paid_capacity,status)
+     VALUES ($1,'test',$2,$3,'cus_leave','additional-person-monthly',1,'active')`,
+    [`sub_leave_${suffix}`, stays.id, journey.id],
+  );
+  await assert.rejects(billing.assertJourneyLeavable(stays.id, journey.id), { code: 'billing_subscription_active' });
+  await pool.query("UPDATE billing_subscriptions SET status='canceled' WHERE provider_subscription_id=$1", [`sub_leave_${suffix}`]);
+  await billing.assertJourneyLeavable(stays.id, journey.id);
+  await platform.leaveJourney(stays.id, journey.id);
+  assert.deepEqual((await platform.snapshot(owner.id, journey.id)).members.map((member) => member.id), [owner.id]);
 });
