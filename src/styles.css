@@ -267,8 +267,16 @@ h1 em { color: var(--on-accent); font-weight: 500; opacity: .82; }
 .trip-bar small { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
 .trip-bar strong { font-family: Georgia, serif; font-size: 27px; }
 .trip-bar span { color: var(--muted); font-size: 14px; }
-.trip-record-links { align-items: center; display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 7px; }
-.trip-record-links button { background: transparent; border: 0; color: var(--spruce); font-size: 14px; font-weight: 900; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+.trip-record-links { --record-links-row-gap: 5px; --record-links-column-gap: 12px; align-items: center; display: flex; flex-wrap: wrap; gap: var(--record-links-row-gap) var(--record-links-column-gap); isolation: isolate; margin-top: 7px; }
+.trip-record-links button { background: transparent; border: 0; color: var(--spruce); font-size: 14px; font-weight: 900; padding: 0; position: relative; text-decoration: underline; text-underline-offset: 3px; z-index: -1; }
+/* The tap area is larger than the link and invisible (#312). It reaches the middle of each gap
+   around the link and no further, because this row wraps: below 621px the two links stack 5px
+   apart with the actor select under them, and in between it wraps wherever the names fall. A
+   44px area would cover the neighbour there, so how much room the row gives is still to decide;
+   widening the gap widens the tap area with it. The row is its own stacking context and the links
+   sit at its back, so they paint in the order they always did: a focused link's ring still passes
+   under the select below it rather than over it. */
+.trip-record-links button::before { content: ''; inset: calc(var(--record-links-row-gap) / -2) calc(var(--record-links-column-gap) / -2); position: absolute; }
 .trip-record-links button span { color: inherit; display: inline; font-size: inherit; }
 .trip-record-links label { align-items: center; color: var(--muted); display: flex; font-size: 14px; gap: 5px; }
 .trip-record-links select { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--ink); font-size: 14px; min-height: 32px; padding: 3px 25px 3px 9px; }
@@ -635,7 +643,10 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .location-list strong { font-size: 14px; overflow-wrap: anywhere; }
 .location-list small { color: var(--muted); font-size: 14px; font-weight: 800; margin-left: auto; white-space: nowrap; }
 /* This one keeps the destructive role: it removes a place, which is what the role is for. */
-.location-list button { background: transparent; border: 0; color: var(--destructive); cursor: pointer; font: inherit; font-size: 14px; font-weight: 800; padding: 3px; }
+.location-list button { background: transparent; border: 0; color: var(--destructive); cursor: pointer; font: inherit; font-size: 14px; font-weight: 800; padding: 3px; position: relative; }
+/* The minimum target without a larger word (#312): an invisible 44px area centred on it. A place's
+   row is taller than the area at every width, so it never reaches the next place's Remove. */
+.location-list button::before { content: ''; height: max(100%, 44px); left: 50%; position: absolute; top: 50%; transform: translate(-50%, -50%); width: max(100%, 44px); }
 .threads-section { padding-bottom: 12px; }
 #open-threads { display: grid; gap: 0; padding: 0 28px 17px; }
 .thread-row { align-items: start; border-top: 1px solid var(--line); display: flex; gap: 15px; justify-content: space-between; padding: 17px 0; }
