@@ -75,3 +75,45 @@ test('a real invitation error is shown, not retried on the older route', async (
     assert.equal(calls.length, 1);
   });
 });
+
+// #194: the page is told once when the service refuses the session it is signed in with, and never
+// for a wrong password, for a visitor who never signed in, or for a session it has already left.
+test('a refused session is noticed once, only for the session the request was sent with', async (t) => {
+  const answers = [];
+  t.mock.method(globalThis, 'fetch', async () => {
+    const [status, body] = answers.shift();
+    return { ok: status < 300, status, json: async () => body };
+  });
+  const refused = [401, { error: { code: 'authentication_required', message: 'Sign in to continue.' } }];
+  const api = new TogetherApi('/api/v1');
+  let told = 0;
+  api.onSignedOut = () => { told += 1; };
+
+  // Not signed in: a refusal is just that.
+  answers.push(refused);
+  await assert.rejects(api.request('/session'), (error) => error.sessionEnded === false);
+  assert.equal(told, 0);
+
+  // Signed in: a wrong password is not being signed out.
+  api.csrfToken = 'csrf-1';
+  answers.push([401, { error: { code: 'invalid_credentials', message: 'Username, email, or password is incorrect.' } }]);
+  await assert.rejects(api.changePassword('wrong', 'a new long passphrase'), (error) => error.sessionEnded === false);
+  assert.equal(told, 0);
+  assert.equal(api.csrfToken, 'csrf-1');
+
+  // Two requests refused together: both say so, the page is told once.
+  answers.push(refused, refused);
+  const results = await Promise.allSettled([api.request('/journeys'), api.request('/journeys/j1/snapshot')]);
+  assert.ok(results.every((result) => result.reason.sessionEnded === true));
+  assert.equal(told, 1);
+  assert.equal(api.csrfToken, '');
+
+  // A refusal arriving after the page signed in again ends nothing.
+  api.csrfToken = 'csrf-old';
+  answers.push(refused);
+  const late = api.request('/journeys');
+  api.csrfToken = 'csrf-new';
+  await assert.rejects(late, (error) => error.sessionEnded === true);
+  assert.equal(api.csrfToken, 'csrf-new');
+  assert.equal(told, 1);
+});

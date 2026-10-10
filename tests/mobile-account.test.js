@@ -246,3 +246,120 @@ test('the Delete account screen says what is kept, and which payment stops a del
   // And the store-subscription paragraph stays.
   assert.match(remove, /<Body>\{STORE_SUBSCRIPTION_NOT_CANCELLED\}<\/Body>/);
 });
+
+// #194: signing out everywhere, changing the password, and being signed out by either.
+const { ACCOUNT_NOTICES } = await importMobile('src/auth/account-messages.ts');
+const refused = reply(401, { error: { code: 'invalid_token', message: 'Sign in again to continue.' } });
+
+test('a sign-in ended elsewhere tells the app once, however many requests find out together', async () => {
+  const tokens = memoryTokens(pair(1));
+  let told = 0;
+  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? refused : expired) });
+  client.onSignedOut(() => { told += 1; });
+  const results = await Promise.allSettled([client.session(), client.journeys(), client.snapshot('j1')]);
+  assert.ok(results.every((result) => result.status === 'rejected' && result.reason.code === 'authentication_required'));
+  assert.equal(told, 1);
+  assert.equal(tokens.held, null);
+});
+
+// #353 stays: only the service refusing the tokens is being signed out.
+test('a renewal the network, a 500 or a 429 stopped never tells the app it was signed out', async () => {
+  for (const answer of [() => { throw new TypeError('offline'); }, () => reply(500, { error: { code: 'internal_error' } }), () => reply(429, { error: { code: 'rate_limit_exceeded' } })]) {
+    const tokens = memoryTokens(pair(1));
+    let told = 0;
+    const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? answer() : expired) });
+    client.onSignedOut(() => { told += 1; });
+    await assert.rejects(client.session(), (error) => error.code !== 'authentication_required');
+    assert.equal(told, 0);
+    assert.equal(tokens.held.refreshToken, 'refresh-1');
+  }
+});
+
+test('a listener that stops listening is not told', async () => {
+  const tokens = memoryTokens(pair(1));
+  let told = 0;
+  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? refused : expired) });
+  const stop = client.onSignedOut(() => { told += 1; });
+  stop();
+  await assert.rejects(client.session(), { code: 'authentication_required' });
+  assert.equal(told, 0);
+});
+
+test('signing out everywhere forgets this phone\'s tokens once the service has done it, and not before', async () => {
+  const seen = [];
+  const done = memoryTokens(pair(1));
+  const client = createAccountClient({ base: () => '/api/v1', tokens: done, fetch: async (url, init) => { seen.push(`${init.method} ${url} ${init.headers.Authorization}`); return reply(204, null); } });
+  await client.logoutEverywhere();
+  assert.deepEqual(seen, ['POST /api/v1/auth/logout-everywhere Bearer access-1']);
+  assert.equal(done.held, null);
+  // Out of reach: nothing was signed out anywhere, so this phone says so and stays as it was.
+  const offline = memoryTokens(pair(1));
+  const unreachable = createAccountClient({ base: () => '/api/v1', tokens: offline, fetch: async () => { throw new TypeError('offline'); } });
+  await assert.rejects(unreachable.logoutEverywhere(), { code: 'offline' });
+  assert.equal(offline.held.refreshToken, 'refresh-1');
+  const limited = memoryTokens(pair(1));
+  const tooMany = createAccountClient({ base: () => '/api/v1', tokens: limited, fetch: async () => reply(429, { error: { code: 'rate_limit_exceeded', message: 'Too many requests. Wait and try again.' } }) });
+  await assert.rejects(tooMany.logoutEverywhere(), { code: 'rate_limit_exceeded', message: 'Too many requests. Wait and try again.' });
+  assert.equal(limited.held.refreshToken, 'refresh-1');
+});
+
+test('changing the password keeps this phone\'s tokens, and a wrong one is said as it is, without signing out', async () => {
+  const tokens = memoryTokens(pair(1));
+  const sent = [];
+  let told = 0;
+  const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url, init) => {
+    sent.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization });
+    const { currentPassword } = JSON.parse(init.body);
+    return currentPassword === 'right one, twelve+'
+      ? reply(200, { data: { user: { id: 'u1', hasPassword: true } } })
+      : reply(401, { error: { code: 'invalid_credentials', message: 'Username, email, or password is incorrect.' } });
+  } });
+  client.onSignedOut(() => { told += 1; });
+  await assert.rejects(client.changePassword('wrong', 'new password, twelve+'), { code: 'invalid_credentials', message: 'Username, email, or password is incorrect.' });
+  assert.deepEqual(await client.changePassword('right one, twelve+', 'new password, twelve+'), { id: 'u1', hasPassword: true });
+  assert.deepEqual(sent.map((entry) => entry.url), ['/api/v1/account/password', '/api/v1/account/password'], 'no refresh was spent on a wrong password');
+  assert.deepEqual(sent[1].body, { currentPassword: 'right one, twelve+', newPassword: 'new password, twelve+' });
+  assert.equal(sent[1].auth, 'Bearer access-1');
+  assert.deepEqual(tokens.held, pair(1), 'the same tokens: nothing re-issued, nothing forgotten');
+  assert.equal(told, 0);
+});
+
+test('the phone says signing out everywhere as signing out is said, and names moments still waiting', async () => {
+  const { signOutEverywhereConsequence, signOutConsequence, SIGN_OUT_EVERYWHERE_CONSEQUENCE } = await importMobile('src/journey/waiting-moments.ts');
+  assert.deepEqual(signOutEverywhereConsequence(0), { title: 'Sign out everywhere?', consequence: 'Every device signed in to this account, this one included, will need to sign in again. Nothing in your journeys is deleted.', confirmLabel: 'Sign out everywhere', destructive: false });
+  assert.deepEqual(signOutEverywhereConsequence(1), { title: 'Sign out everywhere with moments waiting?', consequence: `${SIGN_OUT_EVERYWHERE_CONSEQUENCE} ${signOutConsequence(1).consequence}`, confirmLabel: 'Sign out everywhere and remove it', destructive: true });
+  assert.equal(signOutEverywhereConsequence(3).consequence, `${SIGN_OUT_EVERYWHERE_CONSEQUENCE} 3 moments you held haven’t been sent yet. Signing out removes them from this phone, and they can’t be sent later.`);
+  assert.equal(signOutEverywhereConsequence(3).confirmLabel, 'Sign out everywhere and remove them');
+  const web = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
+  assert.ok(web.includes(`const SIGN_OUT_EVERYWHERE_CONSEQUENCE = '${SIGN_OUT_EVERYWHERE_CONSEQUENCE}';`), 'the web asks in the same words');
+  assert.ok(web.includes("confirmConsequence({ title: 'Sign out everywhere?', consequence: SIGN_OUT_EVERYWHERE_CONSEQUENCE, confirmLabel: 'Sign out everywhere' })"));
+});
+
+test('the account screen offers Sign out everywhere behind the consequence dialog, and Change password only with a password', async () => {
+  const account = await readFile(new URL('app/account.tsx', mobile), 'utf8');
+  assert.match(account, /label="Sign out everywhere"[^\n]*onPress=\{async \(\) => \{\s*const held = waiting\.moments\.length;\s*if \(!await shell\.confirmConsequence\(signOutEverywhereConsequence\(held\)\)\) return;/);
+  // The moments go only after the service has signed everything out.
+  assert.match(account, /await session\.client\.logoutEverywhere\(\);\s*if \(held\) await waiting\.clear\(\);\s*session\.setUser\(null\);\s*return ACCOUNT_NOTICES\.signedOutEverywhere;/);
+  assert.match(account, /\{user\.hasPassword !== false \? <Button kind="quiet" label="Change password" onPress=\{\(\) => router\.push\('\/change-password'\)\} \/> : null\}/);
+  const change = await readFile(new URL('app/change-password.tsx', mobile), 'utf8');
+  assert.match(change, /if \(session\.status !== 'signed-in' \|\| session\.user\.hasPassword === false\) return <Redirect href="\/account" \/>;/);
+  assert.match(change, /session\.client\.changePassword\(currentPassword, newPassword\)/);
+  assert.match(change, /ACCOUNT_NOTICES\.passwordChangedHere/);
+  assert.doesNotMatch(change, /Alert\.alert/);
+  const index = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const lead = /lead="([^"]+)"/.exec(change)[1];
+  assert.ok(index.includes(`<p>${lead}</p>`), 'the phone says what the web says above the form');
+  const layout = await readFile(new URL('app/_layout.tsx', mobile), 'utf8');
+  assert.match(layout, /<Stack\.Screen name="change-password" options=\{\{ title: 'Change password' \}\} \/>/);
+});
+
+test('a refused sign-in takes the person to sign in, and says why, from whatever screen was open', async () => {
+  const layout = await readFile(new URL('app/_layout.tsx', mobile), 'utf8');
+  assert.match(layout, /function SignedOutWatch\(\) \{[\s\S]*client\.onSignedOut\(\(\) => \{\s*if \(router\.canDismiss\(\)\) router\.dismissAll\(\);\s*router\.push\(\{ pathname: '\/account', params: \{ notice: 'signedOutHere' \} \}\);/);
+  assert.match(layout, /<SignedOutWatch \/>/);
+  const session = await readFile(new URL('src/auth/session.tsx', mobile), 'utf8');
+  assert.match(session, /useEffect\(\(\) => client\.onSignedOut\(\(\) => setState\(sessionAnswered\(null\)\)\), \[\]\);/);
+  const account = await readFile(new URL('app/account.tsx', mobile), 'utf8');
+  assert.match(account, /carried && carried in ACCOUNT_NOTICES \? ACCOUNT_NOTICES\[carried\]/, 'the notice it carries is shown on the sign-in form');
+  assert.equal(ACCOUNT_NOTICES.signedOutHere, 'This device was signed out. This can happen when the password is changed, when Sign out everywhere is used, or when a sign-in runs out. Sign in again to continue.');
+});

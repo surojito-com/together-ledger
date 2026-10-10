@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SmtpMailer } from '../server/mailer.js';
+import { readFile } from 'node:fs/promises';
+import { PASSWORD_CHANGED_TEXT, SmtpMailer } from '../server/mailer.js';
 
 test('SMTP messages contain only the intended single-use application links', async () => {
   const messages = [];
@@ -159,4 +160,35 @@ test('every emailed link carries its code after the #, never in the query', asyn
       assert.ok(!url.href.split('#')[0].includes(token), `the ${key} code is before the #`);
     }
   }
+});
+
+// #194: the notice that a password was changed while signed in. It is plain text with no link at
+// all: nothing in it can sign anyone in or reset anything, and nothing from any journey is in it.
+test('the password-changed notice is one plain message that carries no link, code, or journey content', async () => {
+  const messages = [];
+  const transport = { sendMail: async (message) => { messages.push(message); return { accepted: [message.to] }; } };
+  const mailer = new SmtpMailer({
+    transport,
+    from: 'Together Ledger <no-reply@example.test>',
+    recoveryFrom: 'Together Ledger - 030 Password Reset <account-recovery@example.test>',
+    accountOrigin: 'https://accounts.example.test',
+  });
+
+  await mailer.sendPasswordChanged({ to: 'alex@example.test', token: 'never-sent', journey: 'Never sent either' });
+
+  assert.equal(messages.length, 1);
+  const [message] = messages;
+  assert.deepEqual(Object.keys(message).sort(), ['from', 'html', 'subject', 'text', 'to']);
+  assert.equal(message.html, undefined, 'plain text only');
+  assert.equal(message.to, 'alex@example.test');
+  assert.equal(message.from, 'Together Ledger - 030 Password Reset <account-recovery@example.test>', 'from the password sender, as recovery is');
+  assert.equal(message.subject, 'Your Together Ledger password was changed');
+  assert.equal(message.text, PASSWORD_CHANGED_TEXT);
+  assert.doesNotMatch(message.text, /https?:|www\.|#|accounts\.example\.test|never-sent|Never sent either/, 'no link, no code, nothing it was not given to say');
+  assert.match(message.text, /choose “I forgot my password”/, 'what to do if it was not them: the words both sign-in screens use');
+  assert.match(message.text, /ledger-support@together-ledger\.com/);
+  assert.match(message.text, /Every device signed in to the account was signed out, except the one used to change it\./);
+  const signIn = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const phone = await readFile(new URL('../apps/mobile/app/account.tsx', import.meta.url), 'utf8');
+  assert.ok(signIn.includes('>I forgot my password<') && phone.includes('label="I forgot my password"'), 'the button the email names is the one both clients show');
 });

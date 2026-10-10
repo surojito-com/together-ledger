@@ -36,6 +36,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     settle(client.session());
   }, [settle]);
 
+  // The service refused this phone's tokens (#194): its sign-in ended somewhere else, or ran
+  // out. It is signed out here at once, whichever screen noticed. SignedOutWatch (app/_layout.tsx)
+  // takes the person to sign in and says why.
+  useEffect(() => client.onSignedOut(() => setState(sessionAnswered(null))), []);
+
   const value = useMemo<SessionValue>(() => ({ ...state, client, refresh, setUser }), [state, refresh, setUser]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

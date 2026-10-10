@@ -928,6 +928,54 @@ export class PlatformService {
     if (rawToken) await this.pool.query('DELETE FROM sessions WHERE token_hash=$1', [sha256(rawToken)]);
   }
 
+  // Sign out everywhere (#194): every web session and every phone sign-in the account holds ends,
+  // the one asking included. It is the revocation signing out already uses, applied to all of
+  // them: a session is deleted, as logout() deletes one, and every token family is retired, as
+  // revokeToken() retires one. A phone that presents a retired refresh token is answered
+  // `invalid_token` (refreshTokens), which is the one answer that signs a phone out (#353).
+  async signOutEverywhere(userId) {
+    await withTransaction(this.pool, async (client) => {
+      await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL', [this.now(), userId]);
+    });
+  }
+
+  // Change password while signed in (#194). The current password is checked as login checks one:
+  // the same argon2 work whether or not the account has a password, and the same answer when it is
+  // wrong. An account opened with Google or Apple has no password to give, so it is refused in
+  // exactly that way; its clients never offer this. The new password follows the one rule every
+  // password does, and is checked first, since that says nothing about the current one.
+  //
+  // `keep` names the sign-in that asked, which stays signed in as it is: the browser's session
+  // (`sessionId`) or the phone's token family (`tokenFamilyId`). Nothing is re-issued, so a
+  // request already on its way from this device is not refused. Every other session and token
+  // family ends. A recovery link asked for before the change stops working too.
+  async changePassword(userId, { currentPassword, newPassword } = {}, keep = {}) {
+    try { assertPassword(newPassword); } catch { throw new PlatformError(400, 'invalid_input', 'Use a password between 12 and 128 characters.'); }
+    const found = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    const currentHash = found.rows[0]?.password_hash || null;
+    const passwordMatches = await verifyPassword(currentHash || await this.dummyPasswordHash, currentPassword);
+    if (!currentHash || !passwordMatches) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+    const passwordHash = await cleanPasswordHash(newPassword);
+    const user = await withTransaction(this.pool, async (client) => {
+      // Only from the password just checked: if another change landed in between, this one is
+      // refused as a wrong password would be, rather than quietly replacing it.
+      const updated = await client.query('UPDATE users SET password_hash=$1 WHERE id=$2 AND password_hash=$3 AND deleted_at IS NULL RETURNING *', [passwordHash, userId, currentHash]);
+      if (!updated.rowCount) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+      await client.query(`UPDATE account_tokens SET consumed_at=$1 WHERE user_id=$2 AND purpose='password_recovery' AND consumed_at IS NULL`, [this.now(), userId]);
+      if (keep.sessionId) await client.query('DELETE FROM sessions WHERE user_id=$1 AND id<>$2', [userId, keep.sessionId]);
+      else await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      if (keep.tokenFamilyId) await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND family_id<>$3 AND revoked_at IS NULL', [this.now(), userId, keep.tokenFamilyId]);
+      else await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL', [this.now(), userId]);
+      return updated.rows[0];
+    });
+    // One plain notice, to the account's own address, once the change has committed. It carries
+    // no link and nothing from any journey. A failed send never undoes the change: deliver()
+    // reports it by kind, never by address.
+    await this.deliver('password-changed', () => this.mailer.sendPasswordChanged({ to: user.email_normalized }));
+    return publicUser(user);
+  }
+
   async requestRecovery(email, accountOrigin) {
     let normalizedEmail;
     try { normalizedEmail = normalizeEmail(email); } catch { return; }

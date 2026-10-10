@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { buildApp } from '../server/app.js';
 import { createPool, runMigrations, withTransaction } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
@@ -581,4 +582,118 @@ test('real PostgreSQL keeps one waiting row for a Google refund not listed yet, 
   await assert.rejects(pool.query("UPDATE billing_store_notifications SET outcome='nonsense' WHERE store='google' AND notification_id=$1", [messageId]), /billing_store_notifications_outcome_check/);
   await pool.query("UPDATE billing_store_notifications SET outcome='reinstated' WHERE store='google' AND notification_id=$1", [messageId]);
   await platform.deleteAccount(user.id, 'correct horse battery staple');
+});
+
+// #194: sign out everywhere and changing the password while signed in, through the routes, against
+// real PostgreSQL. Each ends exactly the sign-ins it should: browsers by their session rows, phones
+// by their token families, and nobody else's.
+async function signInsAgainstPostgres(t) {
+  const config = loadConfig({ NODE_ENV: 'development', PUBLIC_ORIGIN: 'http://127.0.0.1:4174', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const app = await buildApp({ platform, config });
+  t.after(async () => { await app.close(); await pool.end(); });
+  const origin = config.PUBLIC_ORIGIN;
+  const suffix = Date.now().toString(36);
+  const register = async (name, password) => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/register', headers: { origin }, payload: { email: `${name}-${suffix}@example.test`, username: `${name}-${suffix}`, password } });
+    assert.equal(response.statusCode, 201, response.body);
+    return response.json().data.user;
+  };
+  const browser = async (user, password) => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin }, payload: { identifier: user.email, password } });
+    assert.equal(response.statusCode, 200, response.body);
+    return { origin, cookie: response.headers['set-cookie'].split(';')[0], 'x-together-csrf': response.json().data.csrfToken };
+  };
+  const phone = async (user, password) => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { 'x-together-client': 'app' }, payload: { identifier: user.email, password } });
+    assert.equal(response.statusCode, 200, response.body);
+    const { token, refreshToken } = response.json().data;
+    return { authorization: `Bearer ${token}`, 'x-together-client': 'app', refreshToken };
+  };
+  const send = (method, url, { refreshToken: _refresh, ...headers }, payload) => app.inject({ method, url, headers, payload });
+  const isIn = async (headers) => (await send('GET', '/api/v1/session', headers)).statusCode === 200;
+  const renews = async (headers) => (await app.inject({ method: 'POST', url: '/api/v1/auth/refresh', payload: { refreshToken: headers.refreshToken } })).statusCode === 200;
+  return { app, pool, mailer, register, browser, phone, send, isIn, renews };
+}
+
+test('real PostgreSQL: signing out everywhere ends every browser and phone of that account, from either, and no one else\'s', { skip: !databaseUrl }, async (t) => {
+  const { pool, register, browser, phone, send, isIn, renews } = await signInsAgainstPostgres(t);
+  const password = 'correct horse battery staple';
+  const asha = await register('everywhere-asha', password);
+  const ben = await register('everywhere-ben', 'bens own long passphrase');
+  const benBrowser = await browser(ben, 'bens own long passphrase');
+  const benPhone = await phone(ben, 'bens own long passphrase');
+
+  // From the browser.
+  const [webHere, webThere, phoneThere] = [await browser(asha, password), await browser(asha, password), await phone(asha, password)];
+  const fromWeb = await send('POST', '/api/v1/auth/logout-everywhere', webHere);
+  assert.equal(fromWeb.statusCode, 204);
+  assert.match(fromWeb.headers['set-cookie'], /^tl_session=;/);
+  for (const headers of [webHere, webThere, phoneThere]) assert.equal(await isIn(headers), false);
+  assert.equal(await renews(phoneThere), false);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM sessions WHERE user_id=$1', [asha.id])).rows[0].n, 0);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM api_tokens WHERE user_id=$1 AND revoked_at IS NULL', [asha.id])).rows[0].n, 0);
+
+  // From the phone.
+  const [phoneHere, phoneOther, webOther] = [await phone(asha, password), await phone(asha, password), await browser(asha, password)];
+  const fromPhone = await send('POST', '/api/v1/auth/logout-everywhere', phoneHere, {});
+  assert.equal(fromPhone.statusCode, 204);
+  for (const headers of [phoneHere, phoneOther, webOther]) assert.equal(await isIn(headers), false);
+  assert.equal(await renews(phoneHere), false);
+  assert.equal(await renews(phoneOther), false);
+
+  // Ben was never touched.
+  assert.equal(await isIn(benBrowser), true);
+  assert.equal(await isIn(benPhone), true);
+  assert.equal(await renews(benPhone), true);
+});
+
+test('real PostgreSQL: changing the password keeps the device that asked and ends every other, and a wrong one is login\'s answer', { skip: !databaseUrl }, async (t) => {
+  const { app, mailer, register, browser, phone, send, isIn, renews } = await signInsAgainstPostgres(t);
+  const first = 'correct horse battery staple';
+  const second = 'a different, longer passphrase';
+  const third = 'and a third one, just as long';
+  const asha = await register('change-asha', first);
+  const ben = await register('change-ben', 'bens own long passphrase');
+  const benBrowser = await browser(ben, 'bens own long passphrase');
+  const benPhone = await phone(ben, 'bens own long passphrase');
+
+  // A wrong current password: the answer login gives, and nothing changes.
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', headers: { origin: 'http://127.0.0.1:4174' }, payload: { identifier: asha.email, password: 'not the password at all' } });
+  const webHere = await browser(asha, first);
+  const phoneThere = await phone(asha, first);
+  const wrong = await send('POST', '/api/v1/account/password', webHere, { currentPassword: 'not the password at all', newPassword: second });
+  assert.equal(wrong.statusCode, login.statusCode);
+  assert.deepEqual(wrong.json(), login.json());
+  assert.equal(await isIn(phoneThere), true);
+  const short = await send('POST', '/api/v1/account/password', webHere, { currentPassword: first, newPassword: 'x'.repeat(11) });
+  assert.deepEqual(short.json(), { error: { code: 'invalid_input', message: 'Use a password between 12 and 128 characters.' } });
+
+  // From the browser: this browser stays, the phone ends.
+  const webThere = await browser(asha, first);
+  const fromWeb = await send('POST', '/api/v1/account/password', webHere, { currentPassword: first, newPassword: second });
+  assert.equal(fromWeb.statusCode, 200, fromWeb.body);
+  assert.equal(await isIn(webHere), true);
+  assert.equal(await isIn(webThere), false);
+  assert.equal(await isIn(phoneThere), false);
+  assert.equal(await renews(phoneThere), false);
+
+  // From the phone: this phone stays, refresh included; the browser that changed it last ends.
+  const phoneHere = await phone(asha, second);
+  const phoneOther = await phone(asha, second);
+  const fromPhone = await send('POST', '/api/v1/account/password', phoneHere, { currentPassword: second, newPassword: third });
+  assert.equal(fromPhone.statusCode, 200, fromPhone.body);
+  assert.equal(await isIn(phoneHere), true);
+  assert.equal(await renews(phoneHere), true);
+  assert.equal(await isIn(phoneOther), false);
+  assert.equal(await isIn(webHere), false);
+  assert.equal(await isIn(await browser(asha, third)), true);
+
+  // Two notices, both to Asha, holding nothing but where they go. Ben was never touched.
+  assert.deepEqual(mailer.messages.filter((message) => message.type === 'password-changed'), [{ type: 'password-changed', to: asha.email }, { type: 'password-changed', to: asha.email }]);
+  assert.equal(await isIn(benBrowser), true);
+  assert.equal(await renews(benPhone), true);
 });

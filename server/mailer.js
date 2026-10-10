@@ -18,6 +18,10 @@ export class MemoryMailer {
   async sendVerification(message) {
     this.messages.push({ type: 'verification', ...message });
   }
+
+  async sendPasswordChanged(message) {
+    this.messages.push({ type: 'password-changed', ...message });
+  }
 }
 
 export class ConsoleBlockedMailer {
@@ -35,6 +39,10 @@ export class ConsoleBlockedMailer {
 
   async sendVerification() {
     throw new Error('Production verification delivery is not configured.');
+  }
+
+  async sendPasswordChanged() {
+    throw new Error('Production password notice delivery is not configured.');
   }
 }
 
@@ -95,7 +103,22 @@ export class SmtpMailer {
       html: email0020Verification(verificationUrl),
     });
   }
+
+  // Changing the password while signed in (#194). Plain text on purpose: it carries no link at
+  // all, so there is no code in it to steal and nothing that looks like one to imitate, and nothing
+  // from any journey. It comes from the password sender, as recovery does, and says what to do if
+  // the change was not the person's own.
+  sendPasswordChanged({ to }) {
+    return this.send({
+      from: this.recoveryFrom,
+      to,
+      subject: 'Your Together Ledger password was changed',
+      text: PASSWORD_CHANGED_TEXT,
+    });
+  }
 }
+
+export const PASSWORD_CHANGED_TEXT = `Together Ledger\n\nYour password was changed.\n\nThe password for the Together Ledger account that uses this email address was just changed. Every device signed in to the account was signed out, except the one used to change it.\n\nIf you changed it, there is nothing more to do.\n\nIf it wasn’t you, choose a new password now. On the Together Ledger sign-in screen, choose “I forgot my password”, and a recovery link will be sent to this address. Choosing a new password that way signs the account out on every device. Then write to ledger-support@together-ledger.com and tell us what happened.\n\nTogether Ledger`;
 
 // The code goes after the #, which no browser sends to any server or puts in a Referer (#261).
 // In the query, opening the link handed it to the app's host in the address, and again in the

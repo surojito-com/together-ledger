@@ -196,6 +196,23 @@ export function signOutConsequence(n: number) {
   };
 }
 
+/** Every device, this one included, signs in again (#194); in the web's words (src/app.js). */
+export const SIGN_OUT_EVERYWHERE_CONSEQUENCE = 'Every device signed in to this account, this one included, will need to sign in again. Nothing in your journeys is deleted.';
+
+/**
+ * Signing out everywhere, said and asked as signing out is (#194). Moments still waiting on this
+ * phone are named in signing out's own words, and then the act is the one that cannot be undone.
+ */
+export function signOutEverywhereConsequence(n: number) {
+  if (!n) return { title: 'Sign out everywhere?', consequence: SIGN_OUT_EVERYWHERE_CONSEQUENCE, confirmLabel: 'Sign out everywhere', destructive: false };
+  return {
+    title: 'Sign out everywhere with moments waiting?',
+    consequence: `${SIGN_OUT_EVERYWHERE_CONSEQUENCE} ${signOutConsequence(n).consequence}`,
+    confirmLabel: n === 1 ? 'Sign out everywhere and remove it' : 'Sign out everywhere and remove them',
+    destructive: true,
+  };
+}
+
 /** Added to the deletion's last question when something is still waiting: it can never be sent. */
 export function removedWithAccount(n: number) {
   if (!n) return '';

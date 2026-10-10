@@ -6,7 +6,7 @@ import { ACCOUNT_WHILE_OFFLINE } from '../src/auth/session-state';
 import { accountEmailLabel, appleSharedNoEmail, NO_EMAIL_SUPPORT } from '../src/auth/social-sign-in';
 import { useJourney } from '../src/journey/use-journey';
 import { useWaitingMoments } from '../src/journey/use-waiting-moments';
-import { signOutConsequence } from '../src/journey/waiting-moments';
+import { signOutConsequence, signOutEverywhereConsequence } from '../src/journey/waiting-moments';
 import { useShell } from '../src/shell/shell-provider';
 import { SocialSignIn } from '../src/components/social-sign-in';
 import { Body, Button, Field, Notice, Screen } from '../src/components/ui';
@@ -21,7 +21,7 @@ export default function AccountScreen() {
   const { notice: carried } = useLocalSearchParams<{ notice?: keyof typeof ACCOUNT_NOTICES }>();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [pending, setPending] = useState<'sign-in' | 'resend' | 'sign-out' | 'refresh' | 'name' | null>(null);
+  const [pending, setPending] = useState<'sign-in' | 'resend' | 'sign-out' | 'sign-out-everywhere' | 'refresh' | 'name' | null>(null);
   // The name being edited; null until the person types, so it shows their current name.
   const [name, setName] = useState<string | null>(null);
   const journey = useJourney();
@@ -105,6 +105,21 @@ export default function AccountScreen() {
             return ACCOUNT_NOTICES.signedOut;
           });
         }} />
+        {/* #194. Every device, this one included, behind the consequence dialog; moments still
+            waiting here are named in it, as signing out names them. They are removed only once
+            the service has signed everything out, so a phone that can't reach it loses nothing. */}
+        <Button kind="quiet" label="Sign out everywhere" pending={pending === 'sign-out-everywhere'} pendingLabel="Signing out…" onPress={async () => {
+          const held = waiting.moments.length;
+          if (!await shell.confirmConsequence(signOutEverywhereConsequence(held))) return;
+          await run('sign-out-everywhere', async () => {
+            await session.client.logoutEverywhere();
+            if (held) await waiting.clear();
+            session.setUser(null);
+            return ACCOUNT_NOTICES.signedOutEverywhere;
+          });
+        }} />
+        {/* Only an account with a password has one to change; one opened with Apple or Google doesn't (#194). */}
+        {user.hasPassword !== false ? <Button kind="quiet" label="Change password" onPress={() => router.push('/change-password')} /> : null}
       </Screen>
     );
   }

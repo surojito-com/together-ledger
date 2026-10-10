@@ -36,5 +36,9 @@ export const ACCOUNT_NOTICES = {
   passwordChanged: 'Password changed. Sign in again on every device.',
   passwordsDiffer: 'The new passwords do not match.',
   signedOut: 'Signed out.',
+  // #194, in the web's words (src/app.js).
+  signedOutEverywhere: 'Signed out on every device, this one included. Sign in again to continue.',
+  signedOutHere: 'This device was signed out. This can happen when the password is changed, when Sign out everywhere is used, or when a sign-in runs out. Sign in again to continue.',
+  passwordChangedHere: 'Password changed. Every other device was signed out, and this one stays signed in.',
   deleted: 'Account deleted and sessions revoked.',
 } as const;

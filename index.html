@@ -319,7 +319,7 @@
         <p id="no-email-support" hidden></p>
         <p id="account-sync-copy">Your account is ready for a private journey.</p>
         <p>Signing out removes hosted journeys from this view without deleting them. Your separate browser-only ledger remains on this device.</p>
-        <div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button></div>
+        <div class="settings-actions"><button class="button quiet" type="button" id="refresh-sync-button">Refresh journeys</button><button class="button quiet" type="button" id="logout-button">Sign out</button><button class="button quiet" type="button" id="logout-everywhere-button">Sign out everywhere</button></div>
         <section id="billing-panel" class="billing-panel" aria-labelledby="billing-title" hidden>
           <hr />
           <p class="eyebrow">Web billing · this journey</p>
@@ -337,6 +337,12 @@
           <div id="billing-offers" class="billing-offers"></div>
           <button class="button quiet" type="button" id="billing-portal-button" hidden>Manage payment and cancellation</button>
           <p class="billing-boundary">This is for purchases made on the web. Apple App Store and future Google Play purchases remain with those stores and are never recreated as Stripe charges.</p>
+        </section>
+        <section id="change-password-section" aria-labelledby="change-password-title">
+          <hr />
+          <h3 id="change-password-title">Change password</h3>
+          <p>Changing your password signs out every other device. This one stays signed in, and we email you to say the password changed.</p>
+          <form id="change-password-form"><label class="field"><span>Current password</span><input name="currentPassword" type="password" autocomplete="current-password" required /></label><label class="field"><span>New password</span><input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><label class="field"><span>Confirm new password</span><input name="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label><button class="button quiet">Change password</button></form>
         </section>
         <hr />
         <h3>Delete account</h3>
