@@ -34,6 +34,41 @@ import {
   HISTORY_GUIDE_SECTIONS, HISTORY_GUIDE_TITLE, HISTORY_KINDS_HEADING, HISTORY_NEVER_LABEL, HISTORY_RECORDS_LABEL, HISTORY_RECORDS_NOTHING,
 } from './history-guide.js';
 
+// An emailed link's one-time code: verify, recovery or invite. The server puts it after the #,
+// which no browser sends to any server or puts in a Referer (#261). A link sent before that
+// carries it in the query, and an invitation lasts 14 days, so that shape is still read. Either
+// way it is taken out of the address first, before the page does anything else.
+const EMAILED_CODES = ['verify', 'recovery', 'invite'];
+
+function takeEmailedCodes() {
+  const query = new URLSearchParams(window.location.search);
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const inFragment = EMAILED_CODES.some((key) => fragment.has(key));
+  const inQuery = EMAILED_CODES.some((key) => query.has(key));
+  const codes = new Map();
+  for (const key of EMAILED_CODES) {
+    if (fragment.has(key)) codes.set(key, fragment.get(key));
+    else if (query.has(key)) codes.set(key, query.get(key));
+    fragment.delete(key);
+    query.delete(key);
+  }
+  if (inFragment || inQuery) {
+    const search = query.toString();
+    const hash = inFragment ? fragment.toString() : window.location.hash.slice(1);
+    window.history.replaceState({}, '', `${window.location.pathname}${search ? `?${search}` : ''}${hash ? `#${hash}` : ''}`);
+  }
+  return codes;
+}
+
+const emailedCodes = takeEmailedCodes();
+
+// A link pasted into a tab already on this page changes only what follows the #, which loads
+// nothing, so the page loads again and reads it as it would a link opened fresh.
+window.addEventListener('hashchange', () => {
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  if (EMAILED_CODES.some((key) => fragment.has(key))) window.location.reload();
+});
+
 // Visibility is carried by shape as well as colour and word: an empty ring holds nothing
 // out, a half ring is meant for later, a full ring is out. The order reads even in
 // monochrome, in forced colours, and for anyone who cannot separate the three hues.
@@ -2239,15 +2274,14 @@ else showWelcomeSurface();
 async function initializeAccount() {
   const params = new URLSearchParams(window.location.search);
   try {
-    if (params.has('verify')) {
-      await api.request('/auth/verify-email', { method: 'POST', body: { token: params.get('verify') } });
+    if (emailedCodes.has('verify')) {
+      await api.request('/auth/verify-email', { method: 'POST', body: { token: emailedCodes.get('verify') } });
       showToast('Email verified. You can now accept invitations.');
     }
-    if (params.has('recovery')) {
-      $('#recovery-confirm-form').elements.token.value = params.get('recovery');
+    if (emailedCodes.has('recovery')) {
+      $('#recovery-confirm-form').elements.token.value = emailedCodes.get('recovery');
       $('#recovery-confirm-dialog').showModal();
       $('#recovery-confirm-form').elements.password.focus({ preventScroll: true });
-      window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
       renderAccountState();
       return;
     }
@@ -2258,11 +2292,11 @@ async function initializeAccount() {
       await refreshCloudState();
       refreshBillingState().catch((error) => showStatus(accountMessage(error)));
       showLedgerSurface({ persist: true });
-      if (params.has('invite')) {
-        await api.acceptInvitation(params.get('invite'));
+      if (emailedCodes.has('invite')) {
+        await api.acceptInvitation(emailedCodes.get('invite'));
         await refreshCloudState({ announce: true });
       }
-    } else if (params.has('invite')) {
+    } else if (emailedCodes.has('invite')) {
       $('#account-dialog').showModal();
       showToast('Sign in with the invited email, then reopen the invitation link.');
     }
@@ -2276,7 +2310,7 @@ async function initializeAccount() {
   } catch (error) {
     showStatus(accountMessage(error));
   } finally {
-    if ([...params.keys()].some((key) => ['verify', 'recovery', 'invite', 'billing', 'session_id'].includes(key))) {
+    if ([...params.keys()].some((key) => ['billing', 'session_id'].includes(key))) {
       window.history.replaceState({}, '', `${window.location.pathname}${window.location.hash}`);
     }
     renderAccountState();

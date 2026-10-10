@@ -255,8 +255,12 @@ one function (`apps/mobile/src/api/client.ts:71-89`) or the photo loader with th
 (`client.ts:197-212`), and `fetch` is passed in once (`apps/mobile/src/auth/session.tsx:20`).
 **Verified in code.** Not yet verified by captured traffic (#261).
 
-**The web app** loads no script, font or stylesheet from another origin (`index.html`) and calls
-only our API (`src/api.js:50`, `:117`, `:133`). **Verified in code.**
+**The web app** loads nothing from another origin except two things, and calls only our API
+(`src/api.js:50`, `:117`, `:133`): its favicon and touch icon, from `together-ledger.com` (the
+company site, on Cloudflare, which sets no cookie; `index.html`), and, once a signed-out person
+opens Sign in on a server with both providers configured, Google's and Apple's sign-in scripts
+(1.5). No font or stylesheet comes from anywhere else. **Verified in code**, and by the captured
+traffic in `docs/OUTBOUND_CAPTURE.md`.
 
 The tables below name every dependency in both manifests. `tests/store-readiness.test.js` reads
 them: a dependency added to either `package.json` without a row here fails the test, and so does a
@@ -284,7 +288,7 @@ row for one that is gone.
 | `expo-router` | No | Navigation |
 | `expo-secure-store` | No | Keychain/Keystore for the tokens (2.3) |
 | `expo-sqlite` | No | Local key-value store (2.3) |
-| `expo-iap` | Yes, to the store | StoreKit 2 on iOS, Play Billing on Android (#340). Talks only to the App Store or Google Play through the platform's own store services, never to a server of ours or the library author's. Our code imports it in one file (`apps/mobile/src/billing/store-kit.ts:26`). Its Android library depends on Play Billing 9.1.0, which brings Google's datatransport (2.4) and `play-services-location` 19.0.0; the built APK asks for no location permission (1.6) |
+| `expo-iap` | Yes, to the store | StoreKit 2 on iOS, Play Billing on Android (#340). Talks only to the App Store or Google Play through the platform's own store services, never to a server of ours or the library author's. Its libraries also carry its author's optional IAPKit service (`kit.openiap.dev`), reached only through `kitApi()` or `verifyPurchaseWithProvider()`, which the app never calls (`tests/outbound-declarations.test.js`). Our code imports it in one file (`apps/mobile/src/billing/store-kit.ts:26`). Its Android library depends on Play Billing 9.1.0, which brings Google's datatransport (2.4) and `play-services-location` 19.0.0; the built APK asks for no location permission (1.6) |
 | `expo-status-bar` | No | |
 | `react` | No | |
 | `react-native` | Yes, as the platform | Provides `fetch`, used only by our API client (above) |
