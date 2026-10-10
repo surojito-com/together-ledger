@@ -256,12 +256,14 @@ one function (`apps/mobile/src/api/client.ts:71-89`) or the photo loader with th
 (`client.ts:197-212`), and `fetch` is passed in once (`apps/mobile/src/auth/session.tsx:20`).
 **Verified in code.** Not yet verified by captured traffic (#261).
 
-**The web app** loads nothing from another origin except two things, and calls only our API
-(`src/api.js:50`, `:117`, `:133`): its favicon and touch icon, from `together-ledger.com` (the
-company site, on Cloudflare, which sets no cookie; `index.html`), and, once a signed-out person
-opens Sign in on a server with both providers configured, Google's and Apple's sign-in scripts
-(1.5). No font or stylesheet comes from anywhere else. **Verified in code**, and by the captured
-traffic in `docs/OUTBOUND_CAPTURE.md`.
+**The web app** loads nothing from another origin except, once a signed-out person opens Sign in
+on a server with both providers configured, Google's and Apple's sign-in scripts (1.5), and calls
+only our API (`src/api.js:50`, `:117`, `:133`). Its favicon, touch icon and share card come from
+its own address, `app.together-ledger.com` (`index.html`, and the policy pages'
+`scripts/render-privacy-page.mjs`). Until Oct 10 they pointed at `together-ledger.com`, the
+company site, which has none of those files and answered 404 for each. No font or stylesheet comes
+from anywhere else. **Verified in code** (`tests/outbound-declarations.test.js`), and by the
+captured traffic in `docs/OUTBOUND_CAPTURE.md`.
 
 The tables below name every dependency in both manifests. `tests/store-readiness.test.js` reads
 them: a dependency added to either `package.json` without a row here fails the test, and so does a

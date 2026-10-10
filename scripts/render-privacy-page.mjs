@@ -123,7 +123,7 @@ function renderPolicyPage(markdown, page) {
     <meta name="description" content="${escapeHtml(page.description)}" />
     <meta name="theme-color" content="#F3EFE6" />
     <link rel="canonical" href="https://app.together-ledger.com/${page.path}" />
-    <link rel="icon" href="https://together-ledger.com/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="https://app.together-ledger.com/favicon.svg" type="image/svg+xml" />
     <title>${escapeHtml(title)} — Together Ledger</title>
     <script src="./src/themes.js"></script>
     <link rel="stylesheet" href="./src/styles.css" />
