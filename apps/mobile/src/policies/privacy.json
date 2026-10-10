@@ -266,7 +266,7 @@
       "kind": "paragraph",
       "spans": [
         {
-          "text": "If you choose to sign in with Apple or Google, that company tells us an identifier it keeps for you, your email address and whether it has been verified, and, from Google, your name. If you use Apple's Hide My Email, we receive the relay address Apple makes for you instead of your own. We store the identifier, so we can recognise you next time. With Apple, we also keep a token Apple gives us, encrypted, so we can tell Apple to end the link when you delete your account. Apple or Google learns that you are signing in to Together Ledger; their own privacy policies apply to what they do with that, at "
+          "text": "If you choose to sign in with Apple or Google, that company tells us an identifier it keeps for you, your email address and whether it has been verified, and your name. Google shares your name; Apple shares it only the first time you sign in with Apple, and only if you allow it. If you use Apple's Hide My Email, we receive the relay address Apple makes for you instead of your own. We store the identifier, so we can recognise you next time. With Apple, we also keep a token Apple gives us, encrypted, so we can tell Apple to end the link when you delete your account. Apple or Google learns that you are signing in to Together Ledger; their own privacy policies apply to what they do with that, at "
         },
         {
           "text": "apple.com/legal/privacy"

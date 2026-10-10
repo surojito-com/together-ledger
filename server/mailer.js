@@ -115,9 +115,9 @@ function actionUrl(accountOrigin, action, token, path = '/') {
   return url.toString();
 }
 
-// One footer for every account email, so the three cannot drift apart (#292). It says "people",
-// as the invitation's own body does, rather than "two people".
-const ACCOUNT_EMAIL_FOOTER = 'Together Ledger is a private shared journey workspace for people to hold what happened and return to what matters.';
+// One footer for every account email, so the three cannot drift apart (#292). It says "two
+// people", as the invitation's own body and the store listing do (#304).
+const ACCOUNT_EMAIL_FOOTER = 'Together Ledger is a private shared journey workspace for two people to hold what happened and return to what matters.';
 
 // An invitation lasts INVITATION_DAYS, 14 by default (#347), so its link is not short-lived like
 // the other two, and says how long it does last.
@@ -126,7 +126,7 @@ function invitationLifetime(days) {
 }
 
 function email0010Text(invitationUrl, days) {
-  return `Together Ledger\n\nYou have been invited to a shared journey.\n\nTogether Ledger is a private place for people to hold what happened, return to what matters, and make room for repair.\n\nOpen your invitation: ${invitationUrl}\n\nSign in with your own account to accept. ${invitationLifetime(days)}\n\nDid not expect this? You can safely ignore this email.\n\nTogether Ledger`;
+  return `Together Ledger\n\nYou have been invited to a shared journey.\n\nTogether Ledger is a private place for two people to hold what happened, return to what matters, and make room for repair.\n\nOpen your invitation: ${invitationUrl}\n\nSign in with your own account to accept. ${invitationLifetime(days)}\n\nDid not expect this? You can safely ignore this email.\n\nTogether Ledger`;
 }
 
 function email0010Invitation(invitationUrl, days) {
@@ -160,7 +160,7 @@ function email0010Invitation(invitationUrl, days) {
                 <p style="margin:0 0 12px;color:#816469;font-size:13px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;">A private shared journey</p>
                 <h1 style="margin:0 0 18px;color:#2c2531;font-size:30px;line-height:1.18;letter-spacing:-0.6px;">You have been invited.</h1>
                 <p style="margin:0 0 16px;color:#4b404a;font-size:17px;line-height:1.55;">Someone you trust has made room for you in a Together Ledger journey.</p>
-                <p style="margin:0 0 28px;color:#4b404a;font-size:17px;line-height:1.55;">It is a private place for people to hold what happened, return to what matters, and make room for repair.</p>
+                <p style="margin:0 0 28px;color:#4b404a;font-size:17px;line-height:1.55;">It is a private place for two people to hold what happened, return to what matters, and make room for repair.</p>
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;">
                   <tr>
                     <td bgcolor="#5b355f" style="border-radius:9px;">
