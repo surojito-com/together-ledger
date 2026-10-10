@@ -34,17 +34,17 @@ export function sessionFailed(current: SessionState, error: unknown): SessionSta
 /** What the phone says while it holds a sign-in it cannot check, short enough for Settings. */
 export const STILL_SIGNED_IN: Readonly<Record<OfflineReason, string>> = Object.freeze({
   offline: 'This phone is offline. You’re still signed in.',
-  unreachable: 'Private sync can’t be reached right now. You’re still signed in.',
+  unreachable: 'Together Ledger can’t be reached right now. You’re still signed in.',
 });
 
 /** The ledger in place of its journeys, which are not kept on the phone in v1 (#352, #360). */
 export const LEDGER_WHILE_OFFLINE: Readonly<Record<OfflineReason, string>> = Object.freeze({
   offline: 'This phone is offline. You’re still signed in, and your journeys will be back here when it reconnects.',
-  unreachable: 'Private sync can’t be reached right now. You’re still signed in on this phone. Try again in a moment.',
+  unreachable: 'Together Ledger can’t be reached right now. You’re still signed in on this phone. Try again in a moment.',
 });
 
 /** The account screen in place of the sign-in form, which this phone does not need. */
 export const ACCOUNT_WHILE_OFFLINE: Readonly<Record<OfflineReason, string>> = Object.freeze({
   offline: 'This phone is offline. You’re still signed in, and your account will be here when it reconnects.',
-  unreachable: 'Private sync can’t be reached right now. You’re still signed in on this phone. Try again in a moment.',
+  unreachable: 'Together Ledger can’t be reached right now. You’re still signed in on this phone. Try again in a moment.',
 });

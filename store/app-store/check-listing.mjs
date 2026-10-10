@@ -53,10 +53,14 @@ const listingWords = [
 ];
 // What the iPhone app can't do yet, so the listing doesn't claim it: notifications (#265),
 // encryption, seamless sync (#186), attaching a photo (#187), the web's export and guided
-// check-in. Nor anything that scores a relationship. Offline (#300) is refused for another
-// reason: since #361 and #366 the phone says when it is offline and holds a new moment until the
-// connection returns, but whether the listing says so is the owner's call, not yet made.
-const listingStems = ['notification', 'offline', 'end-to-end', 'encrypt', 'sync', 'photo', 'export', 'check-in', 'check in'];
+// check-in. Nor anything that scores a relationship.
+const listingStems = ['notification', 'end-to-end', 'encrypt', 'sync', 'photo', 'export', 'check-in', 'check in'];
+// Offline (#300, #352): the owner's one sentence (Oct 10, decision 102), word for word, and
+// nothing broader. Since #361 and #366 the phone holds a new moment without a connection and
+// sends it once it's back; it doesn't keep journeys to read or browse offline (#360, v2), so any
+// other word about the connection is refused, in every listing field.
+const offlineSentence = "You can hold a moment without a connection; it's sent when you're back online.";
+const connectionWords = ['offline', 'online', 'connection', 'connectivity', 'internet', 'airplane', 'flight mode', 'wi-fi', 'wifi', 'no signal', 'reception'];
 const listingPhrases = ['relationship score', 'healthy relationship'];
 
 // The description has to keep these.
@@ -104,6 +108,9 @@ for (const { file, label, max, min = 0, unit } of listing) {
   common(label, text);
   for (const word of listingWords) if (hasWord(text, word)) fail(`${label} uses "${word}"`);
   for (const stem of listingStems) if (hasStem(text, stem)) fail(`${label} uses "${stem}…"`);
+  // The offline sentence is checked on its own below; every other word about the connection is a broader claim.
+  const rest = text.split(offlineSentence).join(' ').toLowerCase();
+  for (const word of connectionWords) if (rest.includes(word)) fail(`${label} says "${word}": only the offline sentence may speak of the connection (#352, #360)`);
   for (const phrase of listingPhrases) if (text.toLowerCase().includes(phrase)) fail(`${label} uses "${phrase}"`);
 }
 
@@ -129,6 +136,8 @@ const description = read('description.txt').toLowerCase();
 for (const [phrase, why] of requiredInDescription) {
   if (!description.includes(phrase)) fail(`Description no longer says "${phrase}" (${why})`);
 }
+const offlineCount = read('description.txt').split(offlineSentence).length - 1;
+if (offlineCount !== 1) fail(`Description says the offline sentence ${offlineCount} times, not once, word for word (owner decision 102, Oct 10)`);
 
 // The review notes, on their own rules.
 const notesText = read(notes.file);

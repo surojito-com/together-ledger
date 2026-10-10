@@ -170,13 +170,6 @@ export function sentFromPhone(n: number) {
   return n === 1 ? 'Your waiting moment was sent.' : `${n} waiting moments were sent.`;
 }
 
-/** The ledger while the app was opened offline, in place of the journeys it cannot show (#360). */
-export function waitingWhileOffline(n: number) {
-  return n === 1
-    ? 'One moment you held is waiting on this phone. It will be sent when the connection returns.'
-    : `${n} moments you held are waiting on this phone. They will be sent when the connection returns.`;
-}
-
 export function discardConsequence(entry: WaitingMoment) {
   return {
     title: 'Discard this moment?',

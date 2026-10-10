@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import { useSession } from '../auth/session';
 import { dateLabel, momentLabel } from '../journey/journey-view';
 import { useWaitingMoments } from '../journey/use-waiting-moments';
 import { DISCARD_LABEL, discardConsequence, inJourney, onceSent, SEND_NOW_LABEL, TRY_AGAIN_LABEL, WAITING_CUE, WAITING_HELP, WAITING_TITLE, type WaitingMoment } from '../journey/waiting-moments';
@@ -12,19 +13,24 @@ import { Button } from './ui';
  * own. Never drawn as a moment card: a card carries its visibility cue, and a moment that is
  * waiting is not shared, whatever it will be once it is sent. Its cue is its own, in shape, word
  * and border: ▲ Waiting to send, or ▲ Not sent with the service's words when it was refused.
+ * With no journey open (offline, #352), each names the journey it was held for.
  */
-export function WaitingMoments({ activeJourneyId }: { activeJourneyId: string }) {
+export function WaitingMoments({ activeJourneyId }: { activeJourneyId: string | null }) {
   const waiting = useWaitingMoments();
+  const session = useSession();
   const { theme } = useTheme();
   const colors = theme.colors;
   if (!waiting.moments.length) return null;
   const sendable = waiting.moments.some((entry) => !entry.refusal);
+  // Opened offline, nothing is sent until the service says who is signed in: asking it is the
+  // first step, and once it answers, what waits is sent (src/journey/use-waiting-moments.ts).
+  const sendNow = session.status === 'signed-in' ? waiting.sendNow : session.refresh;
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={[styles.title, fonts.serif, { color: colors.fg }]}>{WAITING_TITLE}</Text>
       <Text style={[styles.body, { color: colors.muted }]}>{WAITING_HELP}</Text>
       {waiting.moments.map((entry) => <WaitingCard key={entry.key} entry={entry} elsewhere={entry.journeyId !== activeJourneyId} />)}
-      {sendable ? <Button kind="quiet" label={SEND_NOW_LABEL} onPress={waiting.sendNow} /> : null}
+      {sendable ? <Button kind="quiet" label={SEND_NOW_LABEL} onPress={sendNow} /> : null}
     </View>
   );
 }

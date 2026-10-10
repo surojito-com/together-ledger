@@ -45,8 +45,8 @@ capacity words `CLAUDE.md` rules out (seats, licences, slots, "removed");
 emergency, SOS and panic; any email address or password; any photo-privacy
 claim (#258); other platforms' names and ranking claims in the listing; what
 the iPhone can't do yet (photos, export, check-in, notifications,
-encryption, sync); offline, which it does but the listing doesn't claim until
-the owner decides it should; keywords with a wasted space, a repeat, or a word the name
+encryption, sync); any word about the connection outside the one offline
+sentence, which the description has to say once, word for word; keywords with a wasted space, a repeat, or a word the name
 already gives; that the description still says a journey of two is free, the
 agreement rule, 18 and over, how a subscription renews, and the terms and
 privacy links; and that the notes still say where to sign in, where the
@@ -168,6 +168,7 @@ date. This PR leaves it alone; these notes are the written version.
 |---|---|
 | A promise, a memory, a heart-to-heart, a boundary, a repair request, or your own kind | `MOMENT_TYPES` in `src/model.js`; "Name this kind of moment" in `apps/mobile/app/moment.tsx` |
 | A date, a place in your own words, an amount of money, detail; edit or delete | `apps/mobile/app/moment.tsx` (When, Enter a place, Amount and Currency, Delete moment); places are typed words only (`apps/mobile/src/journey/moment-draft.ts`) |
+| A moment can be held without a connection and is sent when you're back online | `apps/mobile/src/journey/use-waiting-moments.ts` and `waiting-moments.ts` (#352, #361, #366); owner decision 102, Oct 10 |
 | Private / Share later / Shared now, in shape, word and border | `VISIBILITY_CUES` in `apps/mobile/src/journey/journey-view.ts`; the privacy cue language in `CLAUDE.md` |
 | Sharing asks first; a shared moment can't be made private again | `SHARE_NOW` confirmation in `apps/mobile/src/journey/moment-actions.ts`; `visibilityLocked` in `moment-draft.ts`; `PRIVACY.md` |
 | A conversation to come back to, marked resolved | `apps/mobile/app/concern.tsx`, `CONCERN_STATUSES` (Open, Resolved) in `apps/mobile/src/journey/sharing-view.ts` |
@@ -212,10 +213,13 @@ date. This PR leaves it alone; these notes are the written version.
   wants one.
 - **Export and the check-in**, which only the web has.
 - **Notifications** (#265), **encryption**, and sync (#186), as on Play.
-- **Offline** (#300), though no longer because the iPhone can't do it: since
-  #361 and #366 it says when it is offline and holds a new moment until the
-  connection returns. Whether the listing says so is the owner's call, not yet
-  made, so the check still refuses the word, as on Play.
+- **Offline** (#300), beyond one sentence. The description says the owner's
+  own (Oct 10, decision 102): "You can hold a moment without a connection;
+  it's sent when you're back online." Since #361 and #366 that is what the
+  iPhone does: it keeps a new moment and sends it once, when the connection is
+  back. It doesn't keep journeys to read or browse offline (#360, planned for
+  v2), so the check allows that sentence word for word and refuses every
+  other word about the connection in every field, as on Play.
 - **A price.** Prices come from the App Store for each storefront.
 - **"Emergency".** Not even as a disclaimer: Together Ledger is never
   positioned as one, and nothing here needs the word.
