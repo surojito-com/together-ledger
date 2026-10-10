@@ -314,6 +314,7 @@ function cleanImageFilename(value, contentType) {
 // The key a phone chose for a moment it holds (#352): its own random id, never anything about the
 // person. Absent is fine (the web sends none); anything else malformed is refused.
 const HOLD_KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cleanHoldKey(value) {
   if (value === undefined || value === null) return null;
@@ -1769,6 +1770,41 @@ export class PlatformService {
     });
   }
 
+  // What the person holding an invitation's code may know before they answer it (#266): the
+  // phone shows who invited them and to which journey, and says plainly why a code can't be used.
+  // It reads and never writes: nothing is spent, recorded or reserved by looking.
+  //
+  // The email itself names neither the journey nor who sent it, so holding the code alone tells
+  // nobody either. Only the account the invitation was sent to, once its address is verified (the
+  // same account that could accept it), sees the journey's name and the sender's. Someone already
+  // in the journey, such as its owner opening their own link, is told so and nothing more.
+  async previewInvitation(userId, rawToken) {
+    const user = await this.pool.query('SELECT id,email_normalized,email_verified_at FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    if (!user.rowCount) throw new PlatformError(401, 'authentication_required', 'Sign in to continue.');
+    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+    if (!token || token.length > 200) return { state: 'not_found' };
+    const found = await this.pool.query(
+      `SELECT i.*,j.name AS journey_name,u.display_name AS invited_by_display_name
+       FROM invitations i JOIN journeys j ON j.id=i.journey_id LEFT JOIN users u ON u.id=i.invited_by_user_id
+       WHERE i.token_hash=$1`,
+      [sha256(token)],
+    );
+    if (!found.rowCount) return { state: 'not_found' };
+    const invitation = found.rows[0];
+    const member = await this.pool.query('SELECT 1 FROM journey_members WHERE journey_id=$1 AND user_id=$2', [invitation.journey_id, userId]);
+    if (member.rowCount) return { state: 'already_member', journeyId: invitation.journey_id, journeyName: invitation.journey_name };
+    if (invitation.email_normalized !== user.rows[0].email_normalized) return { state: 'another_account' };
+    if (!user.rows[0].email_verified_at) return { state: 'verify_email' };
+    const status = invitationStatus(invitation, this.now());
+    const state = { pending: 'open', accepted: 'used', withdrawn: 'withdrawn', revoked: 'closed', expired: 'expired' }[status];
+    return {
+      state,
+      journeyName: invitation.journey_name,
+      invitedByDisplayName: invitation.invited_by_display_name || 'Journey member',
+      expiresAt: dateTime(invitation.expires_at),
+    };
+  }
+
   async removeMember(userId, journeyId, memberUserId) {
     if (userId === memberUserId) throw new PlatformError(400, 'invalid_member', 'The journey owner cannot remove themselves.');
     return withTransaction(this.pool, async (client) => {
@@ -1782,6 +1818,58 @@ export class PlatformService {
       await client.query('DELETE FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journeyId, memberUserId]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_removed', entityType: 'membership', entityId: memberUserId, summary: `Removed journey member: ${member.rows[0].display_name}`, before: { userId: memberUserId, role: member.rows[0].role }, after: null });
       await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, memberUserId]);
+    });
+  }
+
+  // Anyone can leave a journey by themselves, without anyone else's help (#96). Nothing in the
+  // request names who leaves: it is always the person asking. What goes with them is what goes
+  // when the owner removes someone: their private and share-later moments here, with their places
+  // and photos, the private record of those moments' visibility, and their moment keys. What they
+  // shared stays with everyone else, still held by them. The questions they asked here are taken
+  // back, so nobody is added on the word of someone who has gone. Resting never stops anyone
+  // leaving. The owner hands the journey over first, and a journey of one has nobody to leave it
+  // to. Coming back takes a new invitation, agreed to as any other is (migration 022).
+  async leaveJourney(userId, journeyId) {
+    if (!UUID_PATTERN.test(String(journeyId || ''))) throw notFound();
+    return withTransaction(this.pool, async (client) => {
+      await this.lockJourney(client, journeyId);
+      const found = await client.query(
+        `SELECT jm.role,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id
+         WHERE jm.journey_id=$1 AND jm.user_id=$2 FOR UPDATE`,
+        [journeyId, userId],
+      );
+      // Someone who is not here, or has already left, has nothing to leave.
+      if (!found.rowCount) throw notFound();
+      const { role, display_name: displayName } = found.rows[0];
+      const others = await client.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1 AND user_id<>$2', [journeyId, userId]);
+      if (!Number(others.rows[0].count)) throw new PlatformError(409, 'journey_of_one', 'You are the only person in this journey, so there is nobody to leave it to.');
+      if (role === 'owner') throw new PlatformError(409, 'ownership_transfer_required', 'You hold this journey for everyone in it. Make someone else here the owner first, then you can leave.');
+
+      // Anything that had already run out is recorded as running out, not as taken back.
+      await this.recordRunOuts(client, journeyId);
+      const proposals = await client.query(
+        `UPDATE journey_invite_proposals SET status='withdrawn',closed_at=$3
+         WHERE journey_id=$1 AND proposed_by_user_id=$2 AND status='open' RETURNING *`,
+        [journeyId, userId, this.now()],
+      );
+      const invitations = await client.query(
+        `UPDATE invitations SET revoked_at=$3,withdrawn_by_user_id=$2,reservation_active=false
+         WHERE journey_id=$1 AND invited_by_user_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>$3 RETURNING *`,
+        [journeyId, userId, this.now()],
+      );
+      for (const row of proposals.rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))) {
+        await this.recordInvitationStep(client, { journeyId, actorUserId: userId, action: 'invite_proposal_withdrawn', entityType: 'invite_proposal', entityId: row.id, email: row.email_normalized, summary: (masked) => `Withdrew the proposal to add ${masked}`, before: { status: 'open' }, after: { status: 'withdrawn' } });
+      }
+      for (const row of invitations.rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))) {
+        await this.recordInvitationStep(client, { journeyId, actorUserId: userId, action: 'invitation_withdrawn', entityType: 'invitation', entityId: row.id, email: row.email_normalized, summary: (masked) => `Withdrew the invitation to ${masked}`, before: { status: 'pending' }, after: { status: 'withdrawn' } });
+      }
+
+      await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [journeyId, userId]);
+      await client.query("DELETE FROM journey_moments WHERE journey_id=$1 AND created_by_user_id=$2 AND visibility<>'shared-now'", [journeyId, userId]);
+      await client.query('DELETE FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journeyId, userId]);
+      // Their name is in the words, because once they have gone History shows them as Former journeyer.
+      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_left', entityType: 'membership', entityId: userId, summary: `${displayName} left the journey`, before: { userId, role }, after: null });
+      await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, userId]);
     });
   }
 

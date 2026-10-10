@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.togetherledger.ledger",
+      "sha256_cert_fingerprints": [
+        "OWNER-TO-SUPPLY: Play Console > Test and release > App integrity > App signing key certificate > SHA-256",
+        "OWNER-TO-SUPPLY: Play Console > Test and release > App integrity > Upload key certificate > SHA-256"
+      ]
+    }
+  }
+]

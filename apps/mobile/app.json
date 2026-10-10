@@ -12,6 +12,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.togetherledger.ledger",
       "usesAppleSignIn": true,
+      "associatedDomains": ["applinks:app.together-ledger.com"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
@@ -83,6 +84,14 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [{ "scheme": "https", "host": "app.together-ledger.com", "path": "/invite" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
       "permissions": [
         "android.permission.INTERNET",
         "com.android.vending.BILLING",

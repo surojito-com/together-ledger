@@ -162,6 +162,8 @@ async function everyKindOfEntry(t) {
   await platform.removeMember(ana.id, journeyId, dee.id);
   await platform.changeDisplayName(ben.id, { displayName: 'Benedict' });
   await platform.transferOwnership(ana.id, journeyId, ben.id);
+  // Once the journey is handed over, Ana can leave it (#96).
+  await platform.leaveJourney(ana.id, journeyId);
 
   // Fifteen days on, the invitation has run out, and whoever asked sends it again. Past thirty,
   // the question nobody answered has run out too.

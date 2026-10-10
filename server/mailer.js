@@ -61,7 +61,7 @@ export class SmtpMailer {
   }
 
   sendInvitation({ to, token, accountOrigin = this.accountOrigin, days = 14 }) {
-    const invitationUrl = actionUrl(accountOrigin, 'invite', token);
+    const invitationUrl = actionUrl(accountOrigin, 'invite', token, INVITATION_PATH);
     return this.send({
       from: this.invitationFrom,
       to,
@@ -124,8 +124,16 @@ export const PASSWORD_CHANGED_TEXT = `Together Ledger\n\nYour password was chang
 // In the query, opening the link handed it to the app's host in the address, and again in the
 // Referer of the page's first files, before the page could take it out. The web still reads the
 // old ?verify=, ?recovery= and ?invite= shape, for links sent before this.
-function actionUrl(accountOrigin, action, token) {
+//
+// An invitation has a path of its own, /invite (#266), so the phone app can claim that one link
+// and nothing else: Android's App Links match a path but never what follows the #, so a link at /
+// could only be claimed together with every verification and recovery link. The code stays after
+// the #; it is never in the path or the query. The web serves /invite as the app page.
+export const INVITATION_PATH = '/invite';
+
+function actionUrl(accountOrigin, action, token, path = '/') {
   const url = new URL(accountOrigin);
+  url.pathname = path;
   url.hash = new URLSearchParams({ [action]: token }).toString();
   return url.toString();
 }

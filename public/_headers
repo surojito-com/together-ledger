@@ -3,3 +3,10 @@
 # ?revision= cache-buster inert and left it reading a stale marker for minutes after a deploy.
 /release.json
   Cache-Control: no-store
+
+# Apple reads apple-app-site-association only as JSON, and the file has no extension to say so
+# (#266). Get it wrong and nothing complains: a tapped invitation just opens the browser.
+# assetlinks.json needs no rule, since its extension already makes it application/json, and a rule
+# here would also label the app page as JSON while the file is left out (scripts/app-links.mjs).
+/.well-known/apple-app-site-association
+  Content-Type: application/json

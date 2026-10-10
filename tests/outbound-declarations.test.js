@@ -18,8 +18,10 @@ async function shippedWebFiles() {
   for (const path of ['index.html', ...(await readdir(join(root, 'src'))).map((name) => `src/${name}`)]) {
     if (['.html', '.js', '.css'].includes(extname(path))) files.set(path, await readFile(join(root, path), 'utf8'));
   }
-  for (const name of await readdir(join(root, 'public'), { recursive: true })) {
-    if (['.svg', '.html', '.json', ''].includes(extname(name)) && !name.endsWith('social')) files.set(`public/${name}`, await readFile(join(root, 'public', name), 'utf8'));
+  // Folders are skipped by type, not by name: .well-known/ (#266) has no extension either.
+  for (const entry of await readdir(join(root, 'public'), { recursive: true, withFileTypes: true })) {
+    const name = relative(join(root, 'public'), join(entry.parentPath, entry.name));
+    if (entry.isFile() && ['.svg', '.html', '.json', ''].includes(extname(name))) files.set(`public/${name}`, await readFile(join(root, 'public', name), 'utf8'));
   }
   files.set('privacy.html', renderPrivacyPage(await readFile(join(root, 'PRIVACY.md'), 'utf8')));
   files.set('terms.html', renderTermsPage(await readFile(join(root, 'TERMS.md'), 'utf8')));

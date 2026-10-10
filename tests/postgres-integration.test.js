@@ -5,6 +5,7 @@ import { buildApp } from '../server/app.js';
 import { createPool, runMigrations, withTransaction } from '../server/db.js';
 import { loadConfig } from '../server/config.js';
 import { MemoryMailer } from '../server/mailer.js';
+import { StripeBillingService } from '../server/billing.js';
 import { PlatformService } from '../server/platform.js';
 import { AppleTransactionVerifier } from '../server/store-apple.js';
 import { StorePurchaseService } from '../server/store-purchases.js';
@@ -696,4 +697,128 @@ test('real PostgreSQL: changing the password keeps the device that asked and end
   assert.deepEqual(mailer.messages.filter((message) => message.type === 'password-changed'), [{ type: 'password-changed', to: asha.email }, { type: 'password-changed', to: asha.email }]);
   assert.equal(await isIn(benBrowser), true);
   assert.equal(await renews(benPhone), true);
+});
+
+// #96: leaving, against the real schema: the append-only history takes the entry, the photo of a
+// private moment goes with it, and two leaves sent together (a double tap, a retry after a lost
+// reply) leave once, with one entry in History, while the second finds nothing to leave.
+test('real PostgreSQL lets a journeyer leave once, with what they held privately, and keeps the chain whole', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const person = async (name) => {
+    const email = `${name}-${suffix}@example.test`;
+    const { user } = await platform.register({ email, username: `${name}-${suffix}`, password: 'correct horse battery staple' });
+    await platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token);
+    return { ...user, email };
+  };
+  const [owner, leaver, stays] = [await person('leave-owner'), await person('leave-member'), await person('leave-stays')];
+  const journey = await platform.createJourney(owner.id, { name: 'Left once', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const join = async (invited, agreeing = []) => {
+    const { proposalId } = await platform.proposeInvitation(owner.id, journey.id, invited.email, '', 'http://127.0.0.1:4174');
+    for (const member of agreeing) await platform.decideInviteProposal(member.id, journey.id, proposalId, 'agree', 'http://127.0.0.1:4174');
+    await platform.acceptInvitation(invited.id, mailer.messages.findLast((message) => message.type === 'invitation' && message.to === invited.email).token);
+  };
+  await join(leaver);
+  await join(stays, [leaver]);
+
+  const base = { kind: 'memory', kindLabel: '', occurredOn: '2026-08-01', detail: '', theme: '', moneyCents: null, moneyCurrency: '', locations: [{ label: 'The harbour', latitude: 38.7, longitude: -9.1, accuracyMeters: 12 }] };
+  const kept = await platform.createMoment(leaver.id, journey.id, { ...base, title: 'Only mine', visibility: 'private', idempotencyKey: `leave-private-${suffix}` });
+  const shared = await platform.createMoment(leaver.id, journey.id, { ...base, title: 'For everyone', visibility: 'shared-now' });
+  const photo = await readFile(new URL('./fixtures/photos/sideways-with-gps.jpg', import.meta.url));
+  await platform.uploadMomentImage(leaver.id, journey.id, kept.id, 'image/jpeg', photo);
+  const { proposalId } = await platform.proposeInvitation(leaver.id, journey.id, `asked-${suffix}@example.test`, '', 'http://127.0.0.1:4174');
+
+  const both = await Promise.allSettled([platform.leaveJourney(leaver.id, journey.id), platform.leaveJourney(leaver.id, journey.id)]);
+  assert.equal(both.filter((result) => result.status === 'fulfilled').length, 1, 'one of them leaves');
+  assert.equal(both.find((result) => result.status === 'rejected').reason.code, 'not_found', 'the other finds nothing to leave');
+
+  const count = async (sql, params) => (await pool.query(sql, params)).rows[0].count;
+  assert.equal(await count("SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1 AND action='member_left'", [journey.id]), 1);
+  assert.equal(await count('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [kept.id]), 0);
+  assert.equal(await count('SELECT count(*)::int AS count FROM moment_images WHERE moment_id=$1', [kept.id]), 0, 'the photo goes with its moment');
+  assert.equal(await count('SELECT count(*)::int AS count FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journey.id, leaver.id]), 0);
+  assert.equal(await count('SELECT count(*)::int AS count FROM journey_moments WHERE id=$1', [shared.id]), 1, 'what they shared stays');
+  assert.equal((await pool.query('SELECT status FROM journey_invite_proposals WHERE id=$1', [proposalId])).rows[0].status, 'withdrawn');
+  await assert.rejects(pool.query("UPDATE journey_events SET summary='rewritten' WHERE journey_id=$1 AND action='member_left'", [journey.id]), /journey events are append-only/);
+
+  const after = await platform.snapshot(stays.id, journey.id);
+  assert.equal(after.eventChainValid, true);
+  assert.equal(after.events.at(-1).summary, `leave-member-${suffix} left the journey`);
+  assert.equal(after.moments.find((moment) => moment.id === shared.id).createdBy, `leave-member-${suffix}`);
+  assert.deepEqual(after.members.map((member) => member.id).sort(), [owner.id, stays.id].sort());
+  await assert.rejects(platform.snapshot(leaver.id, journey.id), { code: 'forbidden' });
+  assert.deepEqual(await platform.listJourneys(leaver.id), []);
+  await assert.rejects(platform.leaveJourney(owner.id, journey.id), { code: 'ownership_transfer_required' });
+
+  // Paying on the web for this journey's room: leaving waits until that payment ends.
+  const billing = new StripeBillingService({ pool, config: { stripeEnvironment: 'test' }, stripe: {} });
+  await pool.query(
+    `INSERT INTO billing_subscriptions (provider_subscription_id,environment,payer_user_id,journey_id,provider_customer_id,offer_id,paid_capacity,status)
+     VALUES ($1,'test',$2,$3,'cus_leave','additional-person-monthly',1,'active')`,
+    [`sub_leave_${suffix}`, stays.id, journey.id],
+  );
+  await assert.rejects(billing.assertJourneyLeavable(stays.id, journey.id), { code: 'billing_subscription_active' });
+  await pool.query("UPDATE billing_subscriptions SET status='canceled' WHERE provider_subscription_id=$1", [`sub_leave_${suffix}`]);
+  await billing.assertJourneyLeavable(stays.id, journey.id);
+  await platform.leaveJourney(stays.id, journey.id);
+  assert.deepEqual((await platform.snapshot(owner.id, journey.id)).members.map((member) => member.id), [owner.id]);
+});
+
+// #266: reading an invitation before answering it writes nothing, and only the invited, verified
+// account learns the journey and who sent it; someone already in it, the owner included, spends nothing.
+test('real PostgreSQL reads an invitation for the person it was sent to, and looking spends nothing', { skip: !databaseUrl }, async (t) => {
+  const config = loadConfig({ NODE_ENV: 'development', JOURNEY_CAPACITY_MODE: 'test-groups', DATABASE_URL: databaseUrl, SESSION_SECRET: 's'.repeat(32), AUDIT_HMAC_KEY: 'a'.repeat(32) });
+  const pool = createPool(config);
+  t.after(async () => pool.end());
+  await runMigrations(pool);
+  const mailer = new MemoryMailer();
+  const platform = new PlatformService({ pool, config, mailer });
+  const suffix = Date.now().toString(36);
+  const verified = async (name) => {
+    const email = `${name}-${suffix}@example.test`;
+    const { user } = await platform.register({ email, username: `${name}-${suffix}`, password: 'correct horse battery staple' });
+    return { user, email, verify: () => platform.verifyEmail(mailer.messages.findLast((message) => message.type === 'verification' && message.to === email).token) };
+  };
+  const alice = await verified('preview-alice');
+  await alice.verify();
+  const journey = await platform.createJourney(alice.user.id, { name: 'Read before joining', location: '', startDateStatus: 'unknown', endDateStatus: 'forever', startDate: null, endDate: null, budgetCents: 0 });
+  const bobEmail = `preview-bob-${suffix}@example.test`;
+  await platform.proposeInvitation(alice.user.id, journey.id, bobEmail, '', 'https://app.together-ledger.com');
+  const token = mailer.messages.findLast((message) => message.type === 'invitation' && message.to === bobEmail).token;
+  const state = async () => ({
+    invitation: (await pool.query('SELECT accepted_at,revoked_at,reservation_active,lapse_recorded_at FROM invitations WHERE journey_id=$1', [journey.id])).rows,
+    events: (await pool.query('SELECT count(*)::int AS count FROM journey_events WHERE journey_id=$1', [journey.id])).rows[0].count,
+    members: (await pool.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1', [journey.id])).rows[0].count,
+  });
+  const before = await state();
+
+  const bob = await verified('preview-bob');
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, token), { state: 'verify_email' });
+  await bob.verify();
+  const open = await platform.previewInvitation(bob.user.id, token);
+  assert.equal(open.state, 'open');
+  assert.equal(open.journeyName, 'Read before joining');
+  assert.equal(open.invitedByDisplayName, `preview-alice-${suffix}`);
+  assert.deepEqual(await platform.previewInvitation(alice.user.id, token), { state: 'already_member', journeyId: journey.id, journeyName: 'Read before joining' });
+  const carol = await verified('preview-carol');
+  await carol.verify();
+  assert.deepEqual(await platform.previewInvitation(carol.user.id, token), { state: 'another_account' });
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, 'no-such-code-at-all-here'), { state: 'not_found' });
+  assert.deepEqual(await state(), before, 'nothing written by looking');
+
+  // The owner tapping their own link spends nothing either.
+  await assert.rejects(platform.acceptInvitation(alice.user.id, token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await state(), before);
+
+  assert.equal(await platform.acceptInvitation(bob.user.id, token), journey.id);
+  const joined = await state();
+  assert.equal(joined.members, before.members + 1);
+  assert.deepEqual(await platform.previewInvitation(bob.user.id, token), { state: 'already_member', journeyId: journey.id, journeyName: 'Read before joining' });
+  await assert.rejects(platform.acceptInvitation(bob.user.id, token), (error) => error.code === 'invalid_invitation');
+  assert.deepEqual(await state(), joined, 'tapping again adds and spends nothing');
 });

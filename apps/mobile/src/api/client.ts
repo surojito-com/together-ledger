@@ -45,6 +45,16 @@ export type SignInProviders = {
 export type GoogleSignInBody = { idToken: string };
 export type AppleSignInBody = { idToken: string; authorizationCode: string; displayName?: string };
 
+/**
+ * What the phone may know about an invitation before it is answered (#266), from
+ * `POST /invitations/preview`. Only the account it was sent to, once verified, is told the journey
+ * and who sent it; someone already in the journey is told only that.
+ */
+export type InvitationPreview =
+  | { state: 'open' | 'used' | 'expired' | 'withdrawn' | 'closed'; journeyName: string; invitedByDisplayName: string; expiresAt: string }
+  | { state: 'already_member'; journeyId: string; journeyName: string }
+  | { state: 'another_account' | 'verify_email' | 'not_found' };
+
 export type Tokens = {
   token: string;
   tokenExpiresAt: string;
@@ -322,8 +332,23 @@ export function createAccountClient({ base, fetch, tokens, build }: {
     async sendInvitationAgain(journeyId: string, invitationId: string) {
       return request<{ invitationSent?: boolean }>(`/journeys/${encodeURIComponent(journeyId)}/invitations/${encodeURIComponent(invitationId)}/send-again`, { method: 'POST', body: {}, signedIn: true });
     },
+    /**
+     * An invitation, read before it is answered (#266). Looking spends nothing. The code travels in
+     * the body, never the address, as accepting does (#208).
+     */
+    async previewInvitation(token: string) {
+      return (await request<{ invitation: InvitationPreview }>('/invitations/preview', { method: 'POST', body: { token }, signedIn: true })).invitation;
+    },
+    /** Accept it, with the code in the body (#208). Answers with the journey joined. */
+    async acceptInvitation(token: string) {
+      return (await request<{ journeyId: string }>('/invitations/accept', { method: 'POST', body: { token }, signedIn: true })).journeyId;
+    },
     async removeMember(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE', body: {}, signedIn: true });
+    },
+    /** The person signed in leaves, typed LEAVE on the screen first (#96). Nothing here names anyone else. */
+    async leaveJourney(journeyId: string) {
+      await request(`/journeys/${encodeURIComponent(journeyId)}/leave`, { method: 'POST', body: { confirmation: 'LEAVE' }, signedIn: true });
     },
     async transferOwnership(journeyId: string, userId: string) {
       await request(`/journeys/${encodeURIComponent(journeyId)}/ownership`, { method: 'POST', body: { userId }, signedIn: true });

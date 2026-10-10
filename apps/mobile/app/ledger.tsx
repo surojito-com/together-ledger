@@ -11,6 +11,7 @@ import { CardAction, MomentCard, momentColors } from '../src/components/moment-c
 import { MomentRow } from '../src/components/moment-row';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
+import { INVITATION_WORDS } from '../src/invitations/invitation-words';
 import { journeyPeriod, momentFilters, momentListHeading, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
@@ -185,6 +186,8 @@ function EmptyStart({ signedIn }: { signedIn: boolean }) {
           <Button label="Sign in" onPress={() => router.push('/account')} />
         </>
       )}
+      {/* Joining someone else's journey begins with their invitation (#266). */}
+      <Button kind="quiet" label={INVITATION_WORDS.haveOne} onPress={() => router.push('/invite')} />
     </Screen>
   );
 }
