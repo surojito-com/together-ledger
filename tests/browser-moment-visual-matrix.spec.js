@@ -62,21 +62,21 @@ test('the approved moment treatments keep a reviewed desktop and mobile visual m
   await page.setViewportSize({ width: 1440, height: 900 });
   await selectThemeForReview(page, 'light');
   await expectNoHorizontalOverflow(page, 'light desktop');
-  await expect(page).toHaveScreenshot('moment-matrix-light-desktop.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-matrix-light-desktop.png', { fullPage: true, animations: 'disabled' });
 
   await selectThemeForReview(page, 'dark');
   await expectNoHorizontalOverflow(page, 'dark desktop');
-  await expect(page).toHaveScreenshot('moment-matrix-dark-desktop.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-matrix-dark-desktop.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 320, height: 568 });
   await selectThemeForReview(page, 'light');
   await expectNoHorizontalOverflow(page, '320-pixel light mobile');
-  await expect(page).toHaveScreenshot('moment-matrix-light-mobile-320.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-matrix-light-mobile-320.png', { fullPage: true, animations: 'disabled' });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await selectThemeForReview(page, 'dark');
   await expectNoHorizontalOverflow(page, '390-pixel dark mobile');
-  await expect(page).toHaveScreenshot('moment-matrix-dark-mobile-390.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-matrix-dark-mobile-390.png', { fullPage: true, animations: 'disabled' });
 
   const accessibilityScan = await new AxeBuilder({ page }).include('main').analyze();
   expect(accessibilityScan.violations).toEqual([]);
@@ -95,5 +95,5 @@ test('the approved moment treatments keep a reviewed desktop and mobile visual m
   await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
   await expect.poll(() => page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
   await expect(page.locator('#moment-timeline .moment-card').first()).toHaveCSS('border-left-width', '5px');
-  await expect(page).toHaveScreenshot('moment-matrix-forced-colors-mobile-390.png', { fullPage: true, animations: 'disabled' });
+  await expect.soft(page).toHaveScreenshot('moment-matrix-forced-colors-mobile-390.png', { fullPage: true, animations: 'disabled' });
 });

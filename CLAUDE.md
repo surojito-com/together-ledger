@@ -95,17 +95,18 @@ npx playwright test    # 27 browser tests, including visual and token contracts
 Both must pass. `npm run check` includes the theme gate, which fails on an undefined custom
 property, a contrast pair below WCAG AA, or a destructive colour too close in hue to the accent.
 
-**Two visual snapshots only pass on the owner's Mac** (#295):
-`moment-matrix-light-desktop.png` (`tests/browser-moment-visual-matrix.spec.js`) and
-`welcome-light-desktop.png` (`tests/browser-welcome.spec.js`). They were recorded there, and
-anywhere else, including a Linux cloud session, the page renders a few pixels taller and they fail
-on an unchanged `main`. CI does not run the browser suite, so nothing else checks them. Outside the
-owner's Mac:
+**Every visual snapshot only passes on the owner's Mac** (#295): each committed screenshot in
+`tests/browser-moment-visual-matrix.spec.js` and `tests/browser-welcome.spec.js`. They were recorded
+there, and anywhere else, including a Linux cloud session, the pages render at a different height or
+draw differently and every one of them fails on an unchanged `main`. Each is a soft assertion, so one
+run lists every difference instead of stopping at the first. CI runs the browser suite with
+`--ignore-snapshots`, so nothing else compares them. Outside the owner's Mac:
 
-- Report these two as failing on this environment, and say whether they also fail on `main`.
-- **Never re-record them**, and never raise `maxDiffPixels` to absorb the difference. Either would
-  quietly replace the reviewed baseline with whatever this machine happens to draw.
-- Every other browser test is expected to pass anywhere.
+- Report which screenshots differ on this environment, and say whether they also differ on `main`.
+- **Never re-record any of them**, and never raise `maxDiffPixels` to absorb the difference. Either
+  would quietly replace the reviewed baseline with whatever this machine happens to draw.
+- Every behaviour test is expected to pass anywhere, and so is every assertion in those two files
+  that is not a screenshot.
 
 ## Verifying a release
 
