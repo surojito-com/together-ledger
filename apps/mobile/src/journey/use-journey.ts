@@ -2,18 +2,12 @@ import { useFocusEffect } from 'expo-router';
 import { createContext, createElement, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { accountMessage } from '../auth/account-messages';
 import { useSession } from '../auth/session';
-import type { OfflineReason } from '../auth/session-state';
+import { CONNECTION_SOURCE } from '../shell/connection';
 import { useShell } from '../shell/shell-provider';
+import { failedLoad, opening, preferredJourney, type JourneyState } from './journey-state';
 import { chooseJourney, type Journey, type Snapshot } from './journey-view';
 
-export type JourneyState =
-  | { phase: 'signed-out' }
-  /** Signed in on this phone, but the service could not be asked who (#352). No journey is kept on the phone in v1. */
-  | { phase: 'offline'; reason: OfflineReason }
-  | { phase: 'loading' }
-  | { phase: 'no-journeys' }
-  | { phase: 'failed' }
-  | { phase: 'ready'; journeys: Journey[]; activeId: string; snapshot: Snapshot };
+export type { JourneyState } from './journey-state';
 
 type Held = { forUser: string; state: JourneyState };
 
@@ -50,13 +44,17 @@ function useJourneyLoader() {
       if (attempt !== latest.current) return;
       setHeld({ forUser, state: next });
       clearStatus('journey');
+      // An answer proves the connection, even where the phone never said it was back.
+      clearStatus(CONNECTION_SOURCE);
       if (announce && next.phase === 'ready') showToast('Private journeys refreshed.');
     }, (error) => {
       if (attempt !== latest.current) return;
       if ((error as { code?: string }).code === 'authentication_required') setUser(null);
+      // Offline, these are the connection notice's own words, and take its place (src/shell/status.ts).
       showStatus(accountMessage(error), { source: 'journey' });
-      // A refresh that fails keeps what is already on screen; a first load that fails says so.
-      setHeld((current) => (current?.forUser === forUser && current.state.phase === 'ready' ? current : { forUser, state: { phase: 'failed' } }));
+      // What is open stays open, and a journey asked for offline opens once the connection is
+      // back (#352); only a first load that fails says so in its place (src/journey/journey-state.ts).
+      setHeld((current) => ({ forUser, state: failedLoad(current?.forUser === forUser ? current.state : null, error) }));
     });
   }, [fetchState, setUser, showStatus, clearStatus, showToast]);
 
@@ -73,9 +71,11 @@ function useJourneyLoader() {
         : held?.forUser === userId ? held.state : { phase: 'loading' };
 
   const activeId = state.phase === 'ready' ? state.activeId : null;
+  // Re-reading opens the journey asked for while offline, once the connection lets it.
+  const preferredId = preferredJourney(state);
   const reload = useCallback(async () => {
-    if (userId) await load(userId, activeId);
-  }, [userId, activeId, load]);
+    if (userId) await load(userId, preferredId);
+  }, [userId, preferredId, load]);
 
   return {
     state,
@@ -85,23 +85,28 @@ function useJourneyLoader() {
       if (!userId) return;
       setRefreshing(true);
       try {
-        await load(userId, activeId, { announce: true });
+        await load(userId, preferredId, { announce: true });
       } finally {
         setRefreshing(false);
       }
     },
-    /** Opening another journey clears this one first, so no moment is ever shown under the wrong name. */
+    /**
+     * Opening another journey keeps this one on screen until the other has loaded, and offline
+     * says it opens once the connection is back (#352). Name and moments come from one snapshot,
+     * so no moment is ever shown under the wrong name. Choosing the open one again stays there.
+     */
     select: (journeyId: string) => {
-      if (!userId || journeyId === activeId) return;
-      setHeld({ forUser: userId, state: { phase: 'loading' } });
-      load(userId, journeyId);
+      if (!userId) return;
+      setHeld((current) => (current?.forUser === userId ? { forUser: userId, state: opening(current.state, journeyId) } : current));
+      // Choosing the open one again while another loads re-reads it, so the other's answer is dropped.
+      if (journeyId !== activeId || (state.phase === 'ready' && state.next)) load(userId, journeyId);
     },
     /** Open a journey this phone just began. It works from an empty start too, where nothing is open yet. */
     open: async (journeyId: string) => {
       if (userId) await load(userId, journeyId);
     },
     retry: () => {
-      if (userId) load(userId, activeId);
+      if (userId) load(userId, preferredId);
     },
     /** Re-read quietly after a change this phone made, such as holding a moment. */
     reload,

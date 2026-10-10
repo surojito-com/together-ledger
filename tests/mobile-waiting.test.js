@@ -101,7 +101,7 @@ test('waiting moments go in order, a refusal stays with its moment, and losing t
   let online = true;
   const send = async (held) => {
     tried.push(held.key);
-    if (!online) throw Object.assign(new Error('Private sync is temporarily unreachable.'), { code: 'offline', status: 0 });
+    if (!online) throw Object.assign(new Error('You’re offline.'), { code: 'offline', status: 0 });
     if (held.key === 'k2') throw Object.assign(new Error('Choose a valid moment date.'), { code: 'invalid_input', status: 400 });
     if (held.key === 'k3') online = false;
   };
@@ -138,8 +138,6 @@ test('the words the person reads, for the owner to approve', () => {
   assert.equal(waiting.KEPT_ON_PHONE, 'Kept on this phone. It will be sent when the connection returns.');
   assert.equal(waiting.sentFromPhone(1), 'Your waiting moment was sent.');
   assert.equal(waiting.sentFromPhone(3), '3 waiting moments were sent.');
-  assert.equal(waiting.waitingWhileOffline(1), 'One moment you held is waiting on this phone. It will be sent when the connection returns.');
-  assert.equal(waiting.waitingWhileOffline(2), '2 moments you held are waiting on this phone. They will be sent when the connection returns.');
   assert.deepEqual(waiting.signOutConsequence(1), { title: 'Sign out with moments waiting?', consequence: 'One moment you held hasn’t been sent yet. Signing out removes it from this phone, and it can’t be sent later.', confirmLabel: 'Sign out and remove it', destructive: true });
   assert.equal(waiting.signOutConsequence(2).consequence, '2 moments you held haven’t been sent yet. Signing out removes them from this phone, and they can’t be sent later.');
   assert.equal(waiting.signOutConsequence(2).confirmLabel, 'Sign out and remove them');
@@ -147,7 +145,7 @@ test('the words the person reads, for the owner to approve', () => {
   assert.equal(waiting.removedWithAccount(0), '');
   assert.equal(waiting.removedWithAccount(1), 'One moment waiting on this phone was never sent, and is removed too.');
   assert.equal(waiting.removedWithAccount(4), '4 moments waiting on this phone were never sent, and are removed too.');
-  for (const words of [waiting.WAITING_HELP, waiting.KEPT_ON_PHONE, waiting.waitingWhileOffline(2), waiting.onceSent('shared-now')]) {
+  for (const words of [waiting.WAITING_HELP, waiting.KEPT_ON_PHONE, waiting.onceSent('shared-now')]) {
     assert.doesNotMatch(words, /\b(seat|seats|license|slot|removed for)\b/i);
   }
 });
@@ -171,7 +169,8 @@ test('waiting moments live in the phone\'s own storage, never the keychain, and 
 
   const ledger = await read('app/ledger.tsx');
   assert.match(ledger, /<WaitingMoments activeJourneyId=\{activeId\} \/>/);
-  assert.match(ledger, /waitingWhileOffline\(waiting\.moments\.length\)/, 'an app opened offline still says what waits');
+  assert.match(ledger, /function LedgerWhileOffline[\s\S]*?<WaitingMoments activeJourneyId=\{null\} \/>/, 'an app opened offline still shows what waits, each with its journey (#352)');
+  assert.equal(waiting.waitingWhileOffline, undefined, 'the count it showed before is retired: the moments themselves are shown');
 });
 
 test('signing out on purpose asks first; a sign-in that ends by itself keeps what waits', async () => {

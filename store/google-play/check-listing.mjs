@@ -33,13 +33,21 @@ const stems = ['seat', 'licen', 'slot', 'removed', 'emergenc', 'diagnos'];
 
 // Claims Together Ledger can't back on any surface yet
 // (store/google-play/README.md): notifications (#265), encryption, seamless
-// sync (#186), and anything that scores or diagnoses a relationship. Offline
-// (#300) is refused for another reason: the phone has said when it is offline
-// and held a new moment until the connection returns since #361 and #366, but
-// whether the listing says so is the owner's call, not yet made.
+// sync (#186), and anything that scores or diagnoses a relationship.
 const offVoice = [
-  'notification', 'notifications', 'offline', 'end-to-end', 'encrypted',
+  'notification', 'notifications', 'end-to-end', 'encrypted',
   'sync', 'couples', 'relationship score', 'healthy relationship',
+];
+
+// Offline (#300, #352): the owner's one sentence (Oct 10, decision 102), word
+// for word, and nothing broader. Since #361 and #366 the phone holds a new
+// moment without a connection and sends it once it's back; it doesn't keep
+// journeys to read or browse offline (#360, v2), so any other word about the
+// connection is refused, wherever it appears.
+const offlineSentence = "You can hold a moment without a connection; it's sent when you're back online.";
+const connectionWords = [
+  'offline', 'online', 'connection', 'connectivity', 'internet', 'airplane',
+  'flight mode', 'wi-fi', 'wifi', 'no signal', 'reception',
 ];
 
 // Lines the owner asked for, and the ones that bound the promise.
@@ -62,7 +70,12 @@ for (const { file, label, max } of fields) {
   if (length > max) fail(`${label} is ${length - max} characters over`);
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text)) fail(`${label} contains an emoji`);
 
-  const lower = text.toLowerCase();
+  // The offline sentence is checked on its own below; every other word about
+  // the connection is a broader claim than it makes.
+  const lower = text.split(offlineSentence).join(' ').toLowerCase();
+  for (const word of connectionWords) {
+    if (lower.includes(word)) fail(`${label} says "${word}": only the offline sentence may speak of the connection (#352, #360)`);
+  }
   for (const word of stems) {
     if (new RegExp(`\\b${word}`, 'i').test(lower)) fail(`${label} uses "${word}…"`);
   }
@@ -76,6 +89,8 @@ const full = read('full-description.txt').toLowerCase();
 for (const [phrase, why] of required) {
   if (!full.includes(phrase)) fail(`Full description no longer says "${phrase}" (${why})`);
 }
+const offlineCount = read('full-description.txt').split(offlineSentence).length - 1;
+if (offlineCount !== 1) fail(`Full description says the offline sentence ${offlineCount} times, not once, word for word (owner decision 102, Oct 10)`);
 
 console.log(failed ? '\nFAILED' : '\nAll checks passed');
 process.exit(failed ? 1 : 0);

@@ -4,7 +4,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { HISTORY_GUIDE_TITLE } from '../../../src/history-guide.js';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { JourneyNotOpen } from '../src/components/journey-not-open';
 import { Body, Button, Screen } from '../src/components/ui';
+import { HISTORY_WITHOUT_JOURNEY } from '../src/journey/journey-state';
 import { CONSEQUENCES, concernsByRecency, dateTimeLabel, historyEvents, valueLabel, type ConcernRecord, type SharingSnapshot } from '../src/journey/sharing-view';
 import { useJourney, useReloadWhenShown } from '../src/journey/use-journey';
 import { useShell } from '../src/shell/shell-provider';
@@ -16,9 +18,8 @@ import { targetSize, useTheme } from '../src/theme';
  * to read your history" (#349), which explains every part of it in plain words.
  */
 export default function HistoryScreen() {
-  const session = useSession();
   const { state } = useJourney();
-  if (session.status !== 'signed-in' || state.phase !== 'ready') return <Screen title="History"><Body>Sign in and open a journey to see its history.</Body></Screen>;
+  if (state.phase !== 'ready') return <JourneyNotOpen title="History" signedOut="Sign in and open a journey to see its history." noJourneys={HISTORY_WITHOUT_JOURNEY} />;
   return <History snapshot={state.snapshot as unknown as SharingSnapshot} />;
 }
 

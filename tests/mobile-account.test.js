@@ -12,7 +12,7 @@ export async function importMobile(path) {
   return import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
 }
 
-const { createAccountClient, OFFLINE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
+const { createAccountClient, OFFLINE_MESSAGE, UNREACHABLE_MESSAGE, UNAVAILABLE_MESSAGE } = await importMobile('src/api/client.ts');
 const { accountMessage, ACCOUNT_FALLBACK_MESSAGE, NO_ROOM_ADDED_HERE } = await importMobile('src/auth/account-messages.ts');
 const { sessionAnswered, sessionFailed, LEDGER_WHILE_OFFLINE, ACCOUNT_WHILE_OFFLINE, STILL_SIGNED_IN } = await importMobile('src/auth/session-state.ts');
 
@@ -84,7 +84,7 @@ test('a 500, a 429, a reply that is not JSON, or no pair at all keeps the tokens
   for (const [name, answer] of cases) {
     const tokens = memoryTokens(pair(1));
     const client = createAccountClient({ base: () => '/api/v1', tokens, fetch: async (url) => (url.endsWith('/auth/refresh') ? answer : expired) });
-    await assert.rejects(client.session(), { code: 'unreachable', message: OFFLINE_MESSAGE }, name);
+    await assert.rejects(client.session(), { code: 'unreachable', message: UNREACHABLE_MESSAGE }, name);
     assert.deepEqual(tokens.held, pair(1), `${name} keeps the tokens`);
     assert.equal(sessionFailed({ status: 'signed-in', user: { id: 'u1' } }, await client.session().catch((error) => error)).status, 'signed-in', `${name} keeps the person signed in`);
   }
@@ -139,7 +139,8 @@ test('opening the app with the network failing says offline, not signed out', as
   // And the screens say so instead of offering the password form.
   const read = (file) => readFile(new URL(file, mobile), 'utf8');
   const ledger = await read('app/ledger.tsx');
-  assert.match(ledger, /if \(state\.phase === 'offline'\) \{[\s\S]*?LEDGER_WHILE_OFFLINE\[state\.reason\][\s\S]*?\}\n  if \(state\.phase === 'signed-out'/, 'the ledger says offline before it ever offers Sign in');
+  assert.ok(ledger.indexOf("if (state.phase === 'offline') return <LedgerWhileOffline reason={state.reason}") < ledger.indexOf("if (state.phase === 'signed-out'"), 'the ledger says offline before it ever offers Sign in');
+  assert.match(ledger, /function LedgerWhileOffline[\s\S]*?<Body>\{LEDGER_WHILE_OFFLINE\[reason\]\}<\/Body>/);
   assert.match(await read('app/account.tsx'), /if \(session\.status === 'offline'\) \{[\s\S]*?ACCOUNT_WHILE_OFFLINE\[session\.reason\]/);
   assert.match(await read('app/settings.tsx'), /session\.status === 'offline' \? \(\s*<Body>\{STILL_SIGNED_IN\[session\.reason\]\}<\/Body>/);
   for (const words of [...Object.values(LEDGER_WHILE_OFFLINE), ...Object.values(ACCOUNT_WHILE_OFFLINE), ...Object.values(STILL_SIGNED_IN)]) {
@@ -149,13 +150,17 @@ test('opening the app with the network failing says offline, not signed out', as
   assert.match(await read('src/journey/use-journey.ts'), /session\.status === 'offline'\s*\? \{ phase: 'offline', reason: session\.reason \}/);
 });
 
-test('offline and "no service in this build" stay two different messages, in the web\'s words', async () => {
+// #352: on the phone, offline is said in the connection notice's words; "no service in this
+// build" keeps the web's own words. The web keeps its own offline words.
+test('offline and "no service in this build" stay two different messages', async () => {
   const offline = createAccountClient({ base: () => '/api/v1', tokens: memoryTokens(), fetch: async () => { throw new TypeError('Network request failed'); } });
   await assert.rejects(offline.requestRecovery('a@example.test'), { code: 'offline', message: OFFLINE_MESSAGE });
   const unconfigured = createAccountClient({ base: () => { throw new Error('EXPO_PUBLIC_API_ORIGIN is not set.'); }, tokens: memoryTokens(), fetch: async () => reply(200, {}) });
   await assert.rejects(unconfigured.requestRecovery('a@example.test'), { code: 'accounts_unavailable', message: UNAVAILABLE_MESSAGE });
   const webApi = await readFile(new URL('../src/api.js', import.meta.url), 'utf8');
-  assert.ok(webApi.includes(`'${OFFLINE_MESSAGE}'`) && webApi.includes(`'${UNAVAILABLE_MESSAGE}'`), 'the phone uses the web client\'s exact words');
+  assert.ok(webApi.includes(`'${UNAVAILABLE_MESSAGE}'`), 'the phone uses the web client\'s words for a build with no service');
+  assert.ok(webApi.includes("'Private sync is temporarily unreachable.'"), 'the web keeps its own offline words');
+  assert.ok(!webApi.includes(OFFLINE_MESSAGE), 'and the phone\'s are its connection notice\'s, not the web\'s');
 });
 
 test('an offline refresh keeps the tokens, so a network drop never signs anyone out', async () => {

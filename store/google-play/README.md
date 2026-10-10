@@ -32,9 +32,10 @@ node store/google-play/check-listing.mjs
 
 It checks the three lengths, emoji, superlatives and other brands' names, the
 capacity words `CLAUDE.md` rules out (seats, licenses, slots, "removed"),
-claims nothing in Together Ledger backs yet (and offline, until the owner
-decides; see below), and that "A journey of two is
-free" and the agreement rule for adding people are still there. It runs in
+claims nothing in Together Ledger backs yet, any word about the connection
+outside the one offline sentence (see below), and that "A journey of two is
+free", the agreement rule for adding people and the offline sentence, once
+and word for word, are still there. It runs in
 `npm run check` too, beside the App Store check (owner, Oct 8).
 
 ## What every claim rests on
@@ -42,6 +43,7 @@ free" and the agreement rule for adding people are still there. It runs in
 | Claim | Where it's true |
 |---|---|
 | Kinds of moment, a date, a place in your own words, a photo, detail, your own kind; edit or delete | `index.html` and `src/` (web), `apps/mobile/app/moment.tsx`, `src/model.js` |
+| A moment can be held without a connection and is sent when you're back online | `apps/mobile/src/journey/use-waiting-moments.ts` and `waiting-moments.ts` (#352, #361, #366); owner decision 102, Oct 10 |
 | Private / Share later / Shared now, in shape, word and border | both clients; the privacy cue language in `CLAUDE.md` |
 | A shared moment can't be made private again | `PRIVACY.md` |
 | A check-in asks one question at a time and saves nothing written | `README.md` ("bounded one-prompt-at-a-time check-in with no saved written answers") |
@@ -59,11 +61,15 @@ free" and the agreement rule for adding people are still there. It runs in
 
 Left out on purpose, because nothing in Together Ledger does them yet:
 **notifications** (#265), **encryption**, and "seamless" sync (#186 is open
-and `TERMS.md` disclaims conflicts). **Offline** (#300) is left out too, but
-no longer for that reason: since #361 and #366 the phone says when it is
-offline and holds a new moment until the connection returns. Whether the
-listing says so is the owner's call, not yet made, so the check still refuses
-the word. A **price** is left out too: only "a journey of two is free" is stated, since
+and `TERMS.md` disclaims conflicts). **Offline** (#300) is said in one
+sentence, the owner's own (Oct 10, decision 102): "You can hold a moment
+without a connection; it's sent when you're back online." That is all the
+phone does without a connection since #361 and #366: it keeps a new moment and
+sends it once, when the connection is back. It doesn't keep journeys to read
+or browse offline (#360, planned for v2), so the check allows that sentence
+word for word and refuses every other word about the connection ("offline",
+"online", "connection", "internet", "airplane" and the like), so no broader
+claim slips in beside it. A **price** is left out too: only "a journey of two is free" is stated, since
 live billing isn't on yet.
 
 ## Images

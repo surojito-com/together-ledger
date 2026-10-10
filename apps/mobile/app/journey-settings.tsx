@@ -20,6 +20,7 @@ import {
 } from '../../../src/leave-journey.js';
 import { accountMessage } from '../src/auth/account-messages';
 import { useSession } from '../src/auth/session';
+import { JourneyNotOpen } from '../src/components/journey-not-open';
 import { RoomForMorePeople } from '../src/components/store-offers';
 import { Body, Button, Field, Screen } from '../src/components/ui';
 import {
@@ -76,8 +77,9 @@ export default function JourneySettingsScreen() {
   const session = useSession();
   const journey = useJourney();
   const { state } = journey;
-  if (session.status !== 'signed-in') return <Screen title="Journey sharing"><Body>Sign in and create a private journey to invite another journeyer.</Body></Screen>;
-  if (state.phase !== 'ready') return <Screen title="Journey sharing"><Body>{state.phase === 'no-journeys' ? 'Your account is ready. Create a private journey to invite another journeyer.' : 'Loading this journey…'}</Body></Screen>;
+  if (session.status !== 'signed-in' || state.phase !== 'ready') {
+    return <JourneyNotOpen title="Journey sharing" signedOut="Sign in and create a private journey to invite another journeyer." noJourneys="Your account is ready. Create a private journey to invite another journeyer." />;
+  }
   return <Sharing snapshot={state.snapshot as unknown as SharingSnapshot} viewerId={session.user.id} />;
 }
 
