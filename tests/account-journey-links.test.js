@@ -98,7 +98,9 @@ function linksIn(message, key) {
     for (const candidate of part.match(/https?:\/\/[^\s"'<>]+/g) || []) {
       let url;
       try { url = new URL(candidate.replace(/&amp;/g, '&')); } catch { continue; }
-      if (url.searchParams.has(key)) inThisPart.push(url);
+      // A code belongs after the #, never in the query (#261).
+      assert.equal(url.searchParams.has(key), false, `a ${key} link carried its code in the query`);
+      if (codeIn(url, key) !== null) inThisPart.push(url);
     }
     assert.ok(inThisPart.length >= 1, `a part of the ${key} message carries no ${key} link`);
     found.push(...inThisPart);
@@ -107,12 +109,14 @@ function linksIn(message, key) {
   return found;
 }
 
+const codeIn = (url, key) => new URLSearchParams(url.hash.slice(1)).get(key);
+
 function assertReturnsToAppHome(message, key) {
   for (const url of linksIn(message, key)) {
     assert.equal(url.origin, appOrigin, `a ${key} link pointed at ${url.origin}`);
-    assert.ok(url.searchParams.get(key).length >= 20, `the ${key} link carried no usable token`);
+    assert.ok(codeIn(url, key).length >= 20, `the ${key} link carried no usable token`);
   }
-  return linksIn(message, key)[0].searchParams.get(key);
+  return codeIn(linksIn(message, key)[0], key);
 }
 
 const lastOf = (sent, sender) => sent.findLast((message) => message.from.includes(sender));

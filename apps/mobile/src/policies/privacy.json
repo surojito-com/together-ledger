@@ -283,6 +283,14 @@
       ]
     },
     {
+      "kind": "paragraph",
+      "spans": [
+        {
+          "text": "On the web, opening Sign in while signed out loads Apple's and Google's own sign-in scripts from their servers, so they receive that request as any website does, with your network address and browser, even if you then use a password. Nothing about your account goes to them unless you choose them."
+        }
+      ]
+    },
+    {
       "kind": "heading",
       "level": 2,
       "spans": [

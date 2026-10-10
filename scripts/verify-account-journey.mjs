@@ -43,9 +43,12 @@ Set RESEND_API_KEY in your own shell to read the links from the delivery
 provider's log instead of a mailbox. The key is never printed or recorded.
 
 The links file holds only what a mailbox reader found, for example:
-  { "verification": "https://app.together-ledger.com/?verify=...",
-    "invitation":   "https://app.together-ledger.com/?invite=...",
-    "recovery":     "https://app.together-ledger.com/?recovery=..." }
+  { "verification": "https://app.together-ledger.com/#verify=...",
+    "invitation":   "https://app.together-ledger.com/#invite=...",
+    "recovery":     "https://app.together-ledger.com/#recovery=..." }
+
+A link carries its code after the # (#261). One sent by a server from before that carries it in
+the query (?verify=...), and is still read.
 `);
     process.exit(0);
   }
@@ -178,6 +181,14 @@ function synthetic(suffix) {
 
 const QUERY_KEY = { verification: 'verify', invitation: 'invite', recovery: 'recovery' };
 
+// A link carries its code after the # (#261); one from a server released before that, in the query.
+function linkCode(url, kind) {
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  if (fragment.has(QUERY_KEY[kind])) return { code: fragment.get(QUERY_KEY[kind]), shape: '#' };
+  if (url.searchParams.has(QUERY_KEY[kind])) return { code: url.searchParams.get(QUERY_KEY[kind]), shape: '?' };
+  return null;
+}
+
 // Two readers can supply what a synthetic mailbox received. The delivery
 // provider's own log is preferred: it reaches only the messages this
 // deployment sent, never a person's inbox, and it also reports whether the
@@ -202,7 +213,7 @@ async function resendLink(kind, recipient) {
     const body = `${message.text || ''}\n${message.html || ''}`;
     const found = (body.match(/https?:\/\/[^\s"'<>]+/g) || [])
       .map((candidateUrl) => { try { return new URL(candidateUrl.replace(/&amp;/g, '&')); } catch { return null; } })
-      .find((candidateUrl) => candidateUrl?.searchParams.has(QUERY_KEY[kind]));
+      .find((candidateUrl) => candidateUrl && linkCode(candidateUrl, kind));
     if (found) {
       deliveryLog.push({ kind, recipient, subject: message.subject, status: message.last_event || 'unknown' });
       return found;
@@ -240,10 +251,10 @@ async function waitForLink(kind, recipient) {
 }
 
 function describeLink(url, kind) {
-  const token = url.searchParams.get(QUERY_KEY[kind]) || '';
+  const { code: token = '', shape = '#' } = linkCode(url, kind) || {};
   expect(url.origin === appOrigin, `the ${kind} link returned to ${url.origin}, not ${appOrigin}`);
   expect(token.length > 0, `the ${kind} link carried no ${QUERY_KEY[kind]} value`);
-  return { token, detail: `link returns to ${url.origin}/?${QUERY_KEY[kind]}=<${token.length}-character token>` };
+  return { token, detail: `link returns to ${url.origin}/${shape}${QUERY_KEY[kind]}=<${token.length}-character token>` };
 }
 
 // --- the journey ----------------------------------------------------------

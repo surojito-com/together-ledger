@@ -5,8 +5,10 @@ browser and the phone, so `PRIVACY.md` and the store forms rest on evidence, not
 on any release that adds a dependency, and run the by-hand phone capture below before a store
 submission.
 
-- **Last run:** Oct 10, 2026 (00:19 UTC), against `144803c` on `main` ("Let people continue with
-  Google and Apple on the phone", #377), in a Linux cloud session, with headless Chromium 141.
+- **Last run:** Oct 10, 2026 (00:54 UTC), against `102da5b` on `main` ("Capture what the website
+  and the phone send", #382) with emailed links carrying their code after the #, in a Linux cloud
+  session, with headless Chromium 141. The run before it (00:19 UTC, `144803c`) found the codes in
+  the query; that is Finding 1.
 - **Website:** captured, end to end, with stand-ins for every third party. **Phone:** inspected,
   not captured; a capture needs a device, which is the owner's by-hand step.
 
@@ -57,7 +59,7 @@ deleting two accounts (a password one and an Apple one).
 
 | Host | Who | When | What is sent |
 |---|---|---|---|
-| `app.together-ledger.com` | Us (Cloudflare) | Every page load | Standard request details. Opening an emailed link sends its one-time token in the address (see Findings) |
+| `app.together-ledger.com` | Us (Cloudflare) | Every page load | Standard request details. Opening an emailed link sends none of its one-time code: the code is after the #, which the browser keeps (Finding 1) |
 | `api.together-ledger.com` | Us (AWS) | Every account action | JSON bodies (register, sign-in, moments, photo bytes, invitations, deletion), the `tl_session` cookie, the CSRF header, the photo's file name in `X-Together-Image-Name`. `Referer` is the origin only |
 | `together-ledger.com` | Us (Cloudflare, the company site) | Every page load | The favicon and touch icon `index.html` links there. `Referer` origin only, no cookie. The company site's Worker sets no cookie and has no analytics (`together-ledger.com` repo, `worker/index.ts`) |
 | `accounts.google.com` | Google | A signed-out person opens Sign in, for any reason, on a server with both providers configured | A script request; `Referer` origin only |
@@ -68,16 +70,18 @@ And from our server, because of what the browser did:
 
 | Host | When | What is sent |
 |---|---|---|
-| Email sender (Resend) | Register, invite, recovery | Address, subject, body, and a link to `app.together-ledger.com` with a one-time token |
+| Email sender (Resend) | Register, invite, recovery | Address, subject, body, and a link to `app.together-ledger.com` with a one-time code after the # (`/#verify=…`, `/#invite=…`, `/#recovery=…`) |
 | `api.stripe.com` | Checkout | Price check; a customer with the payer's email and our account id; a session with our account and journey ids, quantity and return addresses |
 | `www.googleapis.com` | Continue with Google | A request for Google's public keys, nothing about the person |
 | `appleid.apple.com` | Continue with Apple; deleting that account | Public keys; the one-time code exchanged for a refresh token; that token revoked on deletion |
 
 Checks, all passing: no host beyond these; every request `https`; **no font request of any kind**
 (the web has no `@font-face` yet, so not even Gelasio is fetched); **Stripe's script loads on no
-page**: only the checkout navigation reaches Stripe; 28 secrets (cookies, CSRF values, emailed
-tokens, ID tokens, Apple's code, passwords) appear in no address or `Referer` beyond the emailed
-link itself; the uploaded photo carried only its Orientation tag (the original had Make, Model,
+page**: only the checkout navigation reaches Stripe; **every emailed link carries its code after
+the #**, and **no emailed code reaches `app.together-ledger.com` in an address or a `Referer`**
+(all four links opened, every request our hosts received checked); 28 secrets (cookies, CSRF
+values, emailed tokens, ID tokens, Apple's code, passwords) appear in no address or `Referer` at
+all; the uploaded photo carried only its Orientation tag (the original had Make, Model,
 Software, the EXIF directory and GPS); no request used the legacy accept route that puts an
 invitation token in the address.
 
@@ -122,8 +126,8 @@ scope.
 |---|---|---|---|
 | `app.together-ledger.com` | Named (Cloudflare) | Web only | Web only |
 | `api.together-ledger.com` | Named (Amazon Web Services) | Every type declared is what reaches it | Same |
-| `together-ledger.com` | Cloudflare "runs our domain names"; the icon requests aren't said | Web only | Web only |
-| Google and Apple sign-in, web | Said only "if you choose to sign in with" them; **the scripts load when Sign in opens** | Web only | Web only |
+| `together-ledger.com` | Cloudflare "runs our domain names"; the icon requests aren't said. STORE_READINESS 2.5 names them | Web only | Web only |
+| Google and Apple sign-in, web | Says the scripts load when a signed-out person opens Sign in, even to use a password (Oct 10) | Web only | Web only |
 | Google and Apple sign-in, phone | Named | OAuth sign-in; no new type | No new type (decided Oct 9) |
 | Stripe | Named, with the ids it receives | Phone never reaches Stripe | Same |
 | Resend | Named | Service provider | — |
@@ -132,23 +136,35 @@ scope.
 
 ## Findings, for the owner
 
-1. **An emailed link's token reaches Cloudflare.** Verification (30 minutes), recovery (30 minutes)
-   and invitation (14 days) links carry their one-time token in the query. Opening one sends it to
-   `app.together-ledger.com` in the address, and again in the `Referer` of the page's own three
-   files, before the page removes it from the address bar. No other host receives it; the API gets
-   it only in a body. The app Worker has Workers Logs on at full sampling (`wrangler.jsonc`);
-   whether asset requests are logged there is **not verified**. `PRIVACY.md`'s promise that
-   one-time codes are removed from logs is about our API's logs. Fixing it means carrying the
-   token in the fragment (`/#verify=…`), which no browser sends anywhere. That would be a mailer,
-   page and test change, not made here.
-2. **Google and Apple hear about every signed-out Sign in.** Once `GOOGLE_WEB_CLIENT_ID` is set,
-   their scripts load when a signed-out person opens Sign in, including to use a password or to
-   recover an account. `PRIVACY.md` says they learn about it "if you choose to sign in with" them.
-   What their real scripts do next was stood in for, not captured.
-3. **The app's icons come from the company site.** STORE_READINESS 2.5 says the web loads no
-   script, font or stylesheet from another origin. That is true, but its favicon and touch icon are
-   fetched from `together-ledger.com`. The same files are in `_site`, so pointing `index.html` at
-   `/favicon.svg` would keep every load on the app's own host. The company site's source has no
+1. **An emailed link's code reached Cloudflare. Fixed in the web and the server; the server half
+   reaches inboxes with the server release.** Verification (30 minutes), recovery (30 minutes)
+   and invitation (14 days) links carried their one-time code in the query (`?verify=…`). The
+   00:19 run saw each one sent to `app.together-ledger.com` in the address, and again in the
+   `Referer` of the page's first three files (`src/themes.js`, `src/styles.css`, `src/app.js`),
+   before the page removed it: 16 times across the four links opened. No other host received one;
+   the API gets it only in a body.
+   The mailer now puts the code after the # (`/#verify=…`), which no browser sends to any server
+   or puts in a `Referer`, and the 00:54 run saw it in no address and no `Referer` on any host.
+   The page reads the code from the # first and takes it out of the address before it does
+   anything else; a link pasted into a tab already on the app reloads the page so it is read the
+   same way. **Old links still work, and still reach Cloudflare once.** The page still reads
+   `?verify=`, `?recovery=` and `?invite=`, because a link already in an inbox, and an invitation
+   for 14 days, carries that shape. Opening one sends its code in that first request and those
+   three `Referer`s, as before; nothing the page does can take those back. Until the server
+   release, the server keeps sending that shape. The app Worker has Workers Logs on at full
+   sampling (`wrangler.jsonc`); whether asset requests are logged there is still **not
+   verified**. `PRIVACY.md`'s promise that one-time codes are removed from logs is about our
+   API's logs. `tests/browser-emailed-links.spec.js` holds both shapes.
+2. **Google and Apple hear about every signed-out Sign in. Now said.** Once
+   `GOOGLE_WEB_CLIENT_ID` is set, their scripts load when a signed-out person opens Sign in,
+   including to use a password or to recover an account. `PRIVACY.md` now says so, in the words
+   the owner approved on Oct 10, and STORE_READINESS 2.5 lists the two scripts. What their real
+   scripts do next was stood in for, not captured.
+3. **The app's icons come from the company site. Now said; the request itself is unchanged.**
+   STORE_READINESS 2.5 used to say only that the web loads no script, font or stylesheet from
+   another origin; it now says the favicon and touch icon come from `together-ledger.com`. The
+   same files are in `_site`, so pointing `index.html` at `/favicon.svg` would keep every load on
+   the app's own host; that is the owner's call and is not made. The company site's source has no
    `/favicon.svg` or `/apple-touch-icon.png` route, so in production those requests may not even
    succeed. That is **not verified**: production isn't fetched, on purpose.
 

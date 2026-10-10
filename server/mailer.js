@@ -97,9 +97,13 @@ export class SmtpMailer {
   }
 }
 
+// The code goes after the #, which no browser sends to any server or puts in a Referer (#261).
+// In the query, opening the link handed it to the app's host in the address, and again in the
+// Referer of the page's first files, before the page could take it out. The web still reads the
+// old ?verify=, ?recovery= and ?invite= shape, for links sent before this.
 function actionUrl(accountOrigin, action, token) {
   const url = new URL(accountOrigin);
-  url.searchParams.set(action, token);
+  url.hash = new URLSearchParams({ [action]: token }).toString();
   return url.toString();
 }
 

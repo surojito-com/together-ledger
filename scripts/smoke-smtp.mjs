@@ -29,9 +29,9 @@ try {
   await mailer.sendRecovery({ to: 'qa@example.test', token: 'qa-recovery' });
   assert.equal(received.length, 3);
   const decoded = received.map((message) => message.replace(/=\r\n/g, '').replace(/=3D/g, '='));
-  assert.match(decoded[0], /\?verify=qa-verify/);
-  assert.match(decoded[1], /\?invite=qa-invite/);
-  assert.match(decoded[2], /\?recovery=qa-recovery/);
+  assert.match(decoded[0], /https:\/\/together\.example\.test\/#verify=qa-verify/);
+  assert.match(decoded[1], /https:\/\/together\.example\.test\/#invite=qa-invite/);
+  assert.match(decoded[2], /https:\/\/together\.example\.test\/#recovery=qa-recovery/);
   console.log('✓ SMTP smoke check passed — verification, invitation, and recovery messages delivered locally.');
 } finally {
   await new Promise((resolve) => server.close(resolve));

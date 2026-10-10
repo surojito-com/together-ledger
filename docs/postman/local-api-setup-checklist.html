@@ -254,7 +254,7 @@ docker compose up --build</pre>
             <li>Open Mailpit: <a href="http://127.0.0.1:8025"><code>http://127.0.0.1:8025</code></a>.</li>
             <li>Open the newest message titled <strong>Verify your Together Ledger email</strong>.</li>
             <li>If you want to test verification in Postman, do not click the email button—the link works only once.</li>
-            <li>Copy the part of the link after <code>?verify=</code>.</li>
+            <li>Copy the part of the link after <code>#verify=</code> (or after <code>?verify=</code>, in an older email).</li>
             <li>Open <strong>TC-API-003 — Verify the email address</strong> in Postman and put that value in the token field.</li>
             <li>Press Send. Success shows <strong>200 OK</strong>, passing tests, and <code>"emailVerified": true</code>.</li>
           </ol>

@@ -121,7 +121,23 @@ function maskedPath(raw) {
   const url = new URL(raw);
   const path = decodeURIComponent(url.pathname).replace(UUID, ':id').replace(STRIPE_ID, '$1_…');
   const keys = [...new Set(url.searchParams.keys())];
-  return path + (keys.length ? `?${keys.map((key) => `${key}=…`).join('&')}` : '') + (url.hash ? '#…' : '');
+  return path + (keys.length ? `?${keys.map((key) => `${key}=…`).join('&')}` : '') + maskedHash(url.hash);
+}
+
+// An emailed link's code rides after the # (#261), so its key is shown there too, never its value.
+function maskedHash(hash) {
+  if (!hash) return '';
+  const keys = [...new URLSearchParams(hash.slice(1)).keys()];
+  return keys.length && hash.includes('=') ? `#${keys.map((key) => `${key}=…`).join('&')}` : '#…';
+}
+
+const EMAILED_KEYS = ['verify', 'recovery', 'invite'];
+
+// Where an emailed link carries its code: after the # since #261, in the query before it.
+function emailedCode(url, key) {
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  if (fragment.has(key)) return fragment.get(key);
+  return url.searchParams.has(key) ? url.searchParams.get(key) : null;
 }
 
 function maskedReferer(value) {
@@ -396,6 +412,7 @@ const captureTransport = {
     for (const link of links) {
       const url = new URL(link);
       for (const [key, value] of url.searchParams) keepSecret(value, `emailed ${key} token`);
+      for (const [key, value] of new URLSearchParams(url.hash.slice(1))) keepSecret(value, `emailed ${key} token`);
     }
     mail.push({ step: currentStep, to: message.to, subject: message.subject, links });
     serverRequests.push({
@@ -412,9 +429,9 @@ const captureTransport = {
 };
 
 function mailFor(address, key) {
-  const message = [...mail].reverse().find((item) => item.to === address && item.links.some((link) => new URL(link).searchParams.has(key)));
+  const message = [...mail].reverse().find((item) => item.to === address && item.links.some((link) => emailedCode(new URL(link), key) !== null));
   if (!message) throw new Error(`No ${key} email reached ${address}`);
-  return message.links.find((link) => new URL(link).searchParams.has(key));
+  return message.links.find((link) => emailedCode(new URL(link), key) !== null);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -860,22 +877,30 @@ function checks() {
   const stripeScripts = browserRequests.filter((entry) => /(^|\.)stripe\.(com|network)$/.test(entry.host) && entry.host !== 'checkout.stripe.com');
   add("Stripe's script never loads on our pages", stripeScripts.map((entry) => `${entry.step}: ${entry.host}${entry.path}`), 'No js.stripe.com or other Stripe asset was requested by our pages; only the checkout navigation reached Stripe.');
 
+  // An emailed link carries its code after the #, which the browser sends nowhere (#261). In the
+  // query, opening it handed the code to app.together-ledger.com in the address and in the Referer
+  // of the page's first three files.
+  const emailedLinks = mail.flatMap((message) => message.links.map((link) => ({ step: message.step, url: new URL(link) })))
+    .filter(({ url }) => EMAILED_KEYS.some((key) => emailedCode(url, key) !== null));
+  add('Every emailed link carries its one-time code after the #, never in the query', emailedLinks.filter(({ url }) => EMAILED_KEYS.some((key) => url.searchParams.has(key))).map(({ step, url }) => `${step}: ${url.origin}${maskedPath(url.href)}`), `${emailedLinks.length} emailed links (${[...new Set(emailedLinks.map(({ url }) => maskedPath(url.href)))].join(', ')}); none had a code in the query.`);
+
   // A secret may travel in a request body, or a cookie, to our API. It must never be in an address
-  // (except the emailed link's own page load, reported below), nor in any Referer.
+  // nor in any Referer, the emailed link's own page load included.
   const leaks = [];
-  const emailedLoads = [];
+  const emailedOnTheWire = [];
   for (const entry of frontLog) {
     for (const [value, label] of secrets) {
       if (entry.rawUrl.includes(value) || entry.rawUrl.includes(encodeURIComponent(value))) {
-        if (entry.host === APP && entry.path.startsWith('/?') && /emailed/.test(label)) emailedLoads.push(`${entry.step}: GET ${entry.host}${entry.path} (${label})`);
-        else leaks.push(`${entry.step}: ${label} in the address ${entry.method} ${entry.host}${entry.path}`);
+        leaks.push(`${entry.step}: ${label} in the address ${entry.method} ${entry.host}${entry.path}`);
+        if (/emailed/.test(label)) emailedOnTheWire.push(`${entry.step}: GET ${entry.host}${entry.path} (${label})`);
       }
       if (!entry.rawReferer.includes(value)) continue;
-      // The emailed page's own files, fetched from the same host that was just sent the link.
-      if (entry.host === APP && /emailed/.test(label) && new URL(entry.rawReferer).host === APP) emailedLoads.push(`${entry.step}: Referer of GET ${entry.host}${entry.path} (${label})`);
-      else leaks.push(`${entry.step}: ${label} in the Referer of ${entry.method} ${entry.host}${entry.path}`);
+      leaks.push(`${entry.step}: ${label} in the Referer of ${entry.method} ${entry.host}${entry.path}`);
+      if (/emailed/.test(label)) emailedOnTheWire.push(`${entry.step}: Referer of GET ${entry.host}${entry.path} (${label})`);
     }
   }
+  const emailedOpened = frontLog.filter((entry) => entry.host === APP && entry.method === 'GET' && entry.path === '/' && ['verify-email', 'accept-invite', 'recovery'].includes(entry.step)).length;
+  add("No emailed code reaches app.together-ledger.com (Cloudflare) in an address or a Referer", [...new Set(emailedOnTheWire)], `The verify, invite and recovery steps loaded the page ${emailedOpened} times, opening all ${emailedLinks.length} emailed links. Every request our hosts received was checked for the ${[...secrets.values()].filter((label) => /emailed/.test(label)).length} emailed codes, in its address and its Referer, and none carried one.`);
   for (const entry of browserRequests.filter((item) => !OUR_HOSTS.has(item.host?.replace(/:\d+$/, '')))) {
     for (const [value, label] of secrets) {
       if (entry.url.includes(value)) leaks.push(`${entry.step}: ${label} in the address of ${entry.host}${entry.path}`);
@@ -885,15 +910,7 @@ function checks() {
     for (const [value, label] of secrets) if (entry.referer.includes(value)) leaks.push(`${entry.step}: ${label} in the Referer of ${entry.method} ${entry.host}${entry.path}`);
   }
   add('No request used the old accept route, which carries the invitation token in its address', browserRequests.filter((entry) => entry.why?.startsWith('LEGACY')).map((entry) => `${entry.step}: ${entry.method} ${entry.host}${entry.path}`), 'Invitations were accepted at /api/v1/invitations/accept, with the token in the body (#208).');
-  add('No token, code or session value in any address or Referer, beyond the emailed link itself', [...new Set(leaks)], `Checked ${secrets.size} secrets (cookies, CSRF values, emailed tokens, ID tokens, Apple's code, passwords) against every address and Referer, on every host.`);
-  results.push({
-    name: "Where an emailed link's token travels (by design; reported, not passed)",
-    ok: true,
-    note: true,
-    detail: emailedLoads.length
-      ? ['Opening an emailed link sends its token to app.together-ledger.com in the address, and again in the Referer of the page\'s own three files, to the same host, before the page removes it. No other host receives it.', ...emailedLoads]
-      : ['None seen.'],
-  });
+  add('No token, code or session value in any address or Referer', [...new Set(leaks)], `Checked ${secrets.size} secrets (cookies, CSRF values, emailed tokens, ID tokens, Apple's code, passwords) against every address and Referer, on every host.`);
   const photos = browserRequests.filter((entry) => /^image\//.test(entry.sent || '') || /bytes image\//.test(entry.sent || ''));
   add('No location or camera details in an uploaded photo', photos.filter((entry) => /LEFT THE BROWSER|EXIF unreadable/.test(entry.sent)).map((entry) => `${entry.step}: ${entry.sent}`), photos.length ? `Uploaded: ${photos.map((entry) => entry.sent).join('; ')} (the file sent carried Make, Model, Orientation, Software, ExifIFD and GPS)` : 'No photo was uploaded.');
 
