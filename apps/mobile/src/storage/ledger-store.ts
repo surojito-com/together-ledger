@@ -17,6 +17,14 @@ export type PhoneStorage = {
 /** The web's key for a chosen theme (src/themes.js), so a choice reads the same everywhere. */
 export const THEME_KEY = 'theme';
 
+/** How the ledger draws its moments: every card in full (the default), or one short row each. */
+export type MomentView = 'full' | 'compact';
+
+/** The phone's own key for that choice. The web has no such choice yet, so nothing shares it. */
+export const MOMENT_VIEW_KEY = 'moment-view';
+
+export const DEFAULT_MOMENT_VIEW: MomentView = 'full';
+
 /** Said in the status region when a change could not be written; it is not a crash. */
 export const SAVE_FAILED_MESSAGE = 'This phone could not save that change. It shows for now, but may not be here the next time the app opens.';
 
@@ -48,6 +56,23 @@ export function createPhoneStore(storage: PhoneStorage) {
     /** Null goes back to following the phone. */
     saveTheme(themeId: string | null): Promise<void> {
       return themeId ? storage.setItem(THEME_KEY, themeId) : storage.removeItem(THEME_KEY);
+    },
+
+    /**
+     * The saved way of showing moments. Anything but a saved 'compact', including a store that
+     * cannot be read, gives the cards in full, as the ledger has always drawn them.
+     */
+    async loadMomentView(): Promise<MomentView> {
+      try {
+        return (await storage.getItem(MOMENT_VIEW_KEY)) === 'compact' ? 'compact' : DEFAULT_MOMENT_VIEW;
+      } catch {
+        return DEFAULT_MOMENT_VIEW;
+      }
+    },
+
+    /** Kept on this phone only: nothing about it is sent anywhere. */
+    saveMomentView(view: MomentView): Promise<void> {
+      return storage.setItem(MOMENT_VIEW_KEY, view);
     },
 
     /** Begin the ledger, as the web's showLedgerSurface({ persist: true }) does. */
