@@ -268,6 +268,22 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
     return reply.code(204).send();
   });
 
+  // Sign out everywhere (#194): every browser and phone signed in to the account, this one
+  // included. Limited on its own count, as every account route is.
+  app.post('/api/v1/auth/logout-everywhere', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    await platform.signOutEverywhere(request.auth.userId);
+    if (!request.auth.bearer) reply.clearCookie(SESSION_COOKIE, cookieOptions());
+    return reply.code(204).send();
+  });
+
+  // Change password while signed in (#194). It checks a password, so it is limited as signing in
+  // is: the same numbers, counted on their own. The sign-in that asked stays signed in as it is;
+  // every other one ends.
+  app.post('/api/v1/account/password', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request) => {
+    const keep = request.auth.bearer ? { tokenFamilyId: request.auth.tokenFamilyId } : { sessionId: request.auth.id };
+    return { data: { user: await platform.changePassword(request.auth.userId, request.body || {}, keep) } };
+  });
+
   app.get('/api/v1/session', { preHandler: authenticate }, async (request) => (
     request.auth.bearer
       ? { data: { user: request.auth.user } }
@@ -429,6 +445,16 @@ export async function buildApp({ platform, config, billing = new DisabledBilling
   app.post('/api/v1/invitations/:token/accept', { preHandler: protectMutation }, async (request) => ({ data: { journeyId: await platform.acceptInvitation(request.auth.userId, request.params.token) } }));
   app.delete('/api/v1/journeys/:journeyId/members/:userId', { preHandler: protectMutation }, async (request, reply) => {
     await platform.removeMember(request.auth.userId, request.params.journeyId, request.params.userId);
+    return reply.code(204).send();
+  });
+  // The person signed in leaves, and nobody else: nothing in the request names who (#96). Typed
+  // LEAVE, as an account's deletion is typed DELETE, so no single tap does it. Limited as a change
+  // to the account is: generous enough for people sharing one carrier's address, since nothing here
+  // can be guessed. A web payment for this journey's room ends first, the rule for deleting the account.
+  app.post('/api/v1/journeys/:journeyId/leave', { preHandler: protectMutation, config: { rateLimit: { max: 10, timeWindow: '15 minutes' } } }, async (request, reply) => {
+    if (request.body?.confirmation !== 'LEAVE') throw new PlatformError(400, 'confirmation_required', 'Type LEAVE to confirm leaving this journey.');
+    await billing.assertJourneyLeavable(request.auth.userId, request.params.journeyId);
+    await platform.leaveJourney(request.auth.userId, request.params.journeyId);
     return reply.code(204).send();
   });
   app.post('/api/v1/journeys/:journeyId/ownership', { preHandler: protectMutation }, async (request, reply) => {

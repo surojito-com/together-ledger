@@ -27,6 +27,10 @@ import {
 } from './model.js';
 import { exportState, importState, loadState, resetState, saveState } from './store.js';
 import { ApiError, TogetherApi } from './api.js';
+import {
+  LEAVE_CONFIRM_LABEL, LEAVE_FIELD_HINT, LEAVE_FIELD_LABEL, LEAVE_OWNER_FIRST, LEAVE_PENDING_LABEL, LEAVE_SAFETY, LEAVE_START_LABEL,
+  LEAVE_STAY_LABEL, LEAVE_WORD, LEAVE_ZONE_NOTE, LEAVE_ZONE_TITLE, leaveConsequence, leaveOffer, leaveRefusalTone, leftJourney,
+} from './leave-journey.js';
 import { MOMENT_THEMES, momentThemeLabel, normalizeMomentTheme } from './moment-themes.js';
 import { PHOTO_METADATA_REMOVED, stripPhotoMetadata } from './photo-metadata.js';
 import {
@@ -106,6 +110,13 @@ function confirmConsequence({ title, consequence, confirmLabel, keepLabel = 'Kee
   });
 }
 
+// Signing out everywhere, changing the password, and being signed out by either (#194). The phone
+// says the same words (apps/mobile/src/auth/account-messages.ts).
+const SIGN_OUT_EVERYWHERE_CONSEQUENCE = 'Every device signed in to this account, this one included, will need to sign in again. Nothing in your journeys is deleted.';
+const SIGNED_OUT_EVERYWHERE = 'Signed out on every device, this one included. Sign in again to continue.';
+const SIGNED_OUT_HERE = 'This device was signed out. This can happen when the password is changed, when Sign out everywhere is used, or when a sign-in runs out. Sign in again to continue.';
+const PASSWORD_CHANGED_HERE = 'Password changed. Every other device was signed out, and this one stays signed in.';
+
 // A confirmation may pass; a problem must not. Anything a person needs to read twice, act on,
 // or copy down stays on the page until they dismiss it, rather than fading after 2.6 seconds.
 // Tone is carried by a shape as well as a colour, so the two kinds are told apart without it.
@@ -144,6 +155,8 @@ function placeStatus(banner) {
 function showStatus(message, { tone = 'problem', source = 'action' } = {}) {
   const banner = document.querySelector('#status-banner');
   if (!banner) return;
+  // Being signed out is a condition to act on, not a failure, whichever request noticed it first.
+  if (message === SIGNED_OUT_HERE) ({ tone, source } = { tone: 'caution', source: 'signed-out' });
   placeStatus(banner);
   const shape = STATUS_TONES[tone] || STATUS_TONES.problem;
   banner.querySelector('.status-banner-glyph').textContent = shape.glyph;
@@ -206,6 +219,7 @@ function isCloudJourney(trip = activeTrip(state)) {
 }
 
 function accountMessage(error) {
+  if (error instanceof ApiError && error.sessionEnded) return SIGNED_OUT_HERE;
   if (error instanceof ApiError) return error.message;
   return 'The account service could not complete that request.';
 }
@@ -256,8 +270,12 @@ function snapshotToState(snapshots) {
 async function refreshCloudState({ announce = false } = {}) {
   if (!accountUser) return;
   const { journeys } = await api.request('/journeys');
+  const heldCloudJourneys = state.trips.some((trip) => cloudJourneyIds.has(trip.id));
   cloudJourneyIds = new Set(journeys.map((journey) => journey.id));
   if (!journeys.length) {
+    // The last private journey is gone, by leaving it (#96) or otherwise: what was read from the
+    // service leaves the page, and this browser's own ledger comes back, as after signing out.
+    if (heldCloudJourneys) state = loadState();
     renderAccountState();
     render();
     if (announce) showToast('Account ready. Create your first private journey.');
@@ -392,6 +410,29 @@ function accountEmailLabel(email) {
   return appleSharedNoEmail(email) ? APPLE_SHARED_NO_EMAIL : email;
 }
 
+// What this page held for the account goes, and the browser-only ledger comes back, as signing
+// out does. Then the person is on the sign-in form, with what happened said above it rather than
+// in a toast that fades, and nothing half-loaded is left open behind it.
+function landOnSignIn(explanation) {
+  accountUser = null;
+  billingState = null;
+  cloudJourneyIds = new Set();
+  state = loadState();
+  document.querySelectorAll('dialog[open]').forEach((dialog) => { if (dialog.id !== 'account-dialog') dialog.close(); });
+  render();
+  if (state.preferences.onboardingComplete) showLedgerSurface();
+  else showWelcomeSurface();
+  renderAccountState();
+  if (!$('#account-dialog').open) openAccountDialog();
+  showStatus(explanation, { tone: 'caution', source: 'signed-out' });
+}
+
+// The service refused this page's session: it was ended somewhere else, or it ran out. Every
+// request that was waiting on it fails the same way, so this runs once, for the first.
+api.onSignedOut = () => {
+  if (accountUser) landOnSignIn(SIGNED_OUT_HERE);
+};
+
 function renderAccountState() {
   const signedIn = Boolean(accountUser);
   const accountsAvailable = api.accountsAvailable;
@@ -415,6 +456,10 @@ function renderAccountState() {
   const deleteAsksForPassword = !signedIn || accountUser.hasPassword !== false;
   $('#delete-account-password').hidden = !deleteAsksForPassword;
   $('#delete-account-password input').disabled = !deleteAsksForPassword;
+  // Nor is it offered a password to change (#194). Setting a first password is not offered yet.
+  const changesPassword = signedIn && accountUser.hasPassword !== false;
+  $('#change-password-section').hidden = !changesPassword;
+  $$('#change-password-form input').forEach((input) => { input.disabled = !changesPassword; });
   $('#account-sync-copy').textContent = isCloudJourney() ? 'Private journey sync is active. Moment visibility is enforced by the account service; shared threads and practical context remain visible to people in this journey.' : 'Your account is ready. Create a private journey when you are ready to invite another journeyer.';
   $('#settings-storage-copy').textContent = isCloudJourney() ? 'This signed-in journey is loaded from the private service. Sign out to return to your browser-only journey.' : 'Browser-only journeys stay on this device unless you download a backup.';
   $('#sync-badge').textContent = isCloudJourney() ? 'Private sync' : signedIn ? 'Account ready' : accountsAvailable ? 'Browser only' : 'Accounts soon';
@@ -464,7 +509,9 @@ function renderAccountState() {
     renderUnpaidCapacityRest(trip, members);
     $('#invitation-history').hidden = !invitations.length;
     $('#invitation-list').innerHTML = invitations.map(invitationHistoryRow).join('');
+    renderLeaveJourney(trip);
   } else {
+    renderLeaveJourney(null);
     $('#member-list').innerHTML = '';
     $('#reserved-places').hidden = true;
     $('#reserved-place-list').innerHTML = '';
@@ -1922,6 +1969,46 @@ $('#logout-button').addEventListener('click', async () => {
   showToast('Signed out.');
 });
 
+$('#logout-everywhere-button').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!await confirmConsequence({ title: 'Sign out everywhere?', consequence: SIGN_OUT_EVERYWHERE_CONSEQUENCE, confirmLabel: 'Sign out everywhere' })) return;
+  setButtonPending(button, true, 'Signing out…');
+  try {
+    clearStatus();
+    await api.logoutEverywhere();
+  } catch (error) {
+    showStatus(accountMessage(error));
+    return;
+  } finally {
+    setButtonPending(button, false);
+  }
+  landOnSignIn(SIGNED_OUT_EVERYWHERE);
+});
+
+$('#change-password-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const input = Object.fromEntries(new FormData(form));
+  // As in recovery: a mismatch is fixed by retyping, so it stays until the next attempt.
+  if (input.newPassword !== input.confirmPassword) {
+    showStatus('The new passwords do not match.');
+    return;
+  }
+  const button = form.querySelector('button');
+  setButtonPending(button, true, 'Changing…');
+  try {
+    clearStatus();
+    accountUser = await api.changePassword(input.currentPassword, input.newPassword);
+    form.reset();
+    renderAccountState();
+    showToast(PASSWORD_CHANGED_HERE);
+  } catch (error) {
+    showStatus(accountMessage(error));
+  } finally {
+    setButtonPending(button, false);
+  }
+});
+
 $('#refresh-sync-button').addEventListener('click', async () => {
   try {
     await refreshCloudState({ announce: true });
@@ -2033,6 +2120,84 @@ $('#invite-form').addEventListener('submit', async (event) => {
   } finally {
     setButtonPending(button, false);
   }
+});
+
+// Leaving (#96): its own danger zone, two deliberate steps as deleting the account takes. The
+// button opens the consequence dialog; only then is LEAVE asked for, in full. Not offered in a
+// journey of one, and the owner hands the journey over first. The words are the phone's too.
+let leaveAskedFor = '';
+
+function renderLeaveJourney(trip) {
+  const zone = $('#leave-journey');
+  const offer = trip ? leaveOffer({ role: trip.role, peopleHere: (trip.memberRecords || []).length }) : 'none';
+  zone.hidden = offer === 'none';
+  if (offer === 'none') {
+    leaveAskedFor = '';
+    return;
+  }
+  if (leaveAskedFor && leaveAskedFor !== trip.id) leaveAskedFor = '';
+  $('#leave-journey-title').textContent = LEAVE_ZONE_TITLE;
+  $('#leave-journey-note').textContent = offer === 'hand-over-first' ? LEAVE_OWNER_FIRST : LEAVE_ZONE_NOTE;
+  $('#leave-journey-safety').textContent = LEAVE_SAFETY;
+  const button = $('#leave-journey-button');
+  button.textContent = LEAVE_START_LABEL;
+  const asked = offer === 'leave' && leaveAskedFor === trip.id;
+  button.hidden = offer !== 'leave' || asked;
+  const form = $('#leave-journey-form');
+  if (form.hidden === asked) form.reset();
+  form.hidden = !asked;
+  $('#leave-journey-field-label').textContent = LEAVE_FIELD_LABEL;
+  $('#leave-journey-hint').textContent = LEAVE_FIELD_HINT;
+  $('#leave-journey-stay').textContent = LEAVE_STAY_LABEL;
+  const confirm = $('#leave-journey-confirm');
+  if (confirm.getAttribute('aria-busy') !== 'true') {
+    confirm.textContent = LEAVE_CONFIRM_LABEL;
+    confirm.disabled = form.elements.confirmation.value !== LEAVE_WORD;
+  }
+}
+
+$('#leave-journey-button').addEventListener('click', async () => {
+  const trip = activeTrip(state);
+  if (!isCloudJourney(trip)) return;
+  if (!await confirmConsequence(leaveConsequence(trip.name))) return;
+  leaveAskedFor = trip.id;
+  renderLeaveJourney(trip);
+  $('#leave-journey-form [name=confirmation]').focus();
+});
+
+$('#leave-journey-stay').addEventListener('click', () => {
+  leaveAskedFor = '';
+  renderLeaveJourney(activeTrip(state));
+  $('#leave-journey-button').focus();
+});
+
+$('#leave-journey-form').addEventListener('input', (event) => {
+  $('#leave-journey-confirm').disabled = event.currentTarget.elements.confirmation.value !== LEAVE_WORD;
+});
+
+$('#leave-journey-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const trip = activeTrip(state);
+  if (!isCloudJourney(trip) || leaveAskedFor !== trip.id || event.currentTarget.elements.confirmation.value !== LEAVE_WORD) return;
+  const button = $('#leave-journey-confirm');
+  setButtonPending(button, true, LEAVE_PENDING_LABEL);
+  try {
+    await api.mutate(`/journeys/${trip.id}/leave`, 'POST', { confirmation: LEAVE_WORD });
+  } catch (error) {
+    setButtonPending(button, false);
+    showStatus(accountMessage(error), { tone: leaveRefusalTone(error?.code) });
+    return;
+  }
+  leaveAskedFor = '';
+  setButtonPending(button, false);
+  $('#settings-dialog').close();
+  // The next read no longer has it: the page opens on the next journey, or the empty start.
+  try {
+    await refreshCloudState();
+  } catch (error) {
+    showStatus(accountMessage(error));
+  }
+  showToast(leftJourney(trip.name));
 });
 
 $('#member-list').addEventListener('click', async (event) => {

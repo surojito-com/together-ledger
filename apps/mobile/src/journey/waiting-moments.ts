@@ -90,6 +90,8 @@ export function createWaitingStore(storage: PhoneStorage) {
     add: (accountId: string, entry: WaitingMoment) => change(accountId, (list) => (list.some((held) => held.key === entry.key) ? list : [...list, entry])),
     refuse: (accountId: string, key: string, refusal: Refusal | null) => change(accountId, (list) => list.map((held) => (held.key === key ? { ...held, refusal } : held))),
     remove: (accountId: string, key: string) => change(accountId, (list) => list.filter((held) => held.key !== key)),
+    /** Leaving a journey (#96): what waits for it can never be sent, and the person was told so first. */
+    removeJourney: (accountId: string, journeyId: string) => change(accountId, (list) => list.filter((held) => held.journeyId !== journeyId)),
     clear: (accountId: string) => inTurn(() => write(accountId, [])),
     rememberSignedIn: (accountId: string | null) => inTurn(() => (accountId ? storage.setItem(SIGNED_IN_ACCOUNT_KEY, accountId) : storage.removeItem(SIGNED_IN_ACCOUNT_KEY))),
     signedInAccount: () => inTurn(() => storage.getItem(SIGNED_IN_ACCOUNT_KEY)),
@@ -194,6 +196,31 @@ export function signOutConsequence(n: number) {
     confirmLabel: n === 1 ? 'Sign out and remove it' : 'Sign out and remove them',
     destructive: true,
   };
+}
+
+/** Every device, this one included, signs in again (#194); in the web's words (src/app.js). */
+export const SIGN_OUT_EVERYWHERE_CONSEQUENCE = 'Every device signed in to this account, this one included, will need to sign in again. Nothing in your journeys is deleted.';
+
+/**
+ * Signing out everywhere, said and asked as signing out is (#194). Moments still waiting on this
+ * phone are named in signing out's own words, and then the act is the one that cannot be undone.
+ */
+export function signOutEverywhereConsequence(n: number) {
+  if (!n) return { title: 'Sign out everywhere?', consequence: SIGN_OUT_EVERYWHERE_CONSEQUENCE, confirmLabel: 'Sign out everywhere', destructive: false };
+  return {
+    title: 'Sign out everywhere with moments waiting?',
+    consequence: `${SIGN_OUT_EVERYWHERE_CONSEQUENCE} ${signOutConsequence(n).consequence}`,
+    confirmLabel: n === 1 ? 'Sign out everywhere and remove it' : 'Sign out everywhere and remove them',
+    destructive: true,
+  };
+}
+
+/** Added to leaving's consequence when something held for that journey is still waiting (#96). */
+export function unsentWhenLeaving(n: number) {
+  if (!n) return '';
+  return n === 1
+    ? 'One moment you held for this journey hasn’t been sent yet. Leaving removes it from this phone, and it can’t be sent later.'
+    : `${n} moments you held for this journey haven’t been sent yet. Leaving removes them from this phone, and they can’t be sent later.`;
 }
 
 /** Added to the deletion's last question when something is still waiting: it can never be sent. */

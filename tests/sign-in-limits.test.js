@@ -175,6 +175,47 @@ test('the rest of the account routes trip at their own numbers too', async (t) =
   assert.equal(providers.allowed, 300);
 });
 
+// #194: changing the password checks a password, so it has login's numbers, counted on its own.
+test('changing the password is refused on the 11th try in 15 minutes, the right password included, with its own count', async (t) => {
+  const { app, pool, mailer } = await setup();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const session = await registered(app, 'asha@example.test', '203.0.113.10');
+  const headers = { cookie: session.headers['set-cookie'].split(';')[0], 'x-together-csrf': session.json().data.csrfToken };
+  const change = (currentPassword) => post(app, '/api/v1/account/password', { currentPassword, newPassword: 'a different, longer passphrase' }, { headers });
+  const statuses = [];
+  const { allowed } = await tripLimit(async () => {
+    const response = await change('not the password at all');
+    statuses.push(response.statusCode);
+    return response;
+  });
+  assert.equal(allowed, 10);
+  assert.deepEqual(statuses, [...Array(10).fill(401), 429]);
+  assert.equal((await change(PASSWORD)).statusCode, 429);
+  assert.equal(mailer.messages.filter((message) => message.type === 'password-changed').length, 0, 'the password never changed');
+  // Its own count: the same address can still try a password 10 times at login.
+  const login = await tripLimit(() => post(app, '/api/v1/auth/login', { identifier: 'asha@example.test', password: 'not the password at all' }));
+  assert.equal(login.allowed, 10);
+});
+
+test('signing out everywhere is refused on the 11th try in 15 minutes, with its own count', async (t) => {
+  const { app, pool } = await setup();
+  t.after(async () => { await app.close(); await pool.end(); });
+  const session = await registered(app, 'asha@example.test', '203.0.113.10');
+  const headers = { cookie: session.headers['set-cookie'].split(';')[0], 'x-together-csrf': session.json().data.csrfToken };
+  const statuses = [];
+  const { allowed } = await tripLimit(async () => {
+    const response = await post(app, '/api/v1/auth/logout-everywhere', {}, { headers });
+    statuses.push(response.statusCode);
+    return response;
+  });
+  assert.equal(allowed, 10);
+  // The first one signed everything out, so the cookie it was sent with is refused from then on;
+  // the limit still counts each try.
+  assert.deepEqual(statuses, [204, ...Array(9).fill(401), 429]);
+  const change = await tripLimit(() => post(app, '/api/v1/account/password', { currentPassword: 'x', newPassword: 'y'.repeat(12) }, { headers }));
+  assert.equal(change.allowed, 10, 'changing the password keeps its own count');
+});
+
 test('deleting an account is refused on the 6th try in 15 minutes, the right password included', async (t) => {
   const { app, pool } = await setup();
   t.after(async () => { await app.close(); await pool.end(); });

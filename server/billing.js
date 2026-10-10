@@ -86,6 +86,7 @@ export class DisabledBillingService {
   locationExtrasEnabled() { return false; }
 
   async assertAccountDeletable() {}
+  async assertJourneyLeavable() {}
 
   async handleWebhook() {
     throw new PlatformError(503, 'billing_unavailable', 'Membership billing is not available yet.');
@@ -347,6 +348,24 @@ export class StripeBillingService {
     );
     if (subscription.rowCount) {
       throw new PlatformError(409, 'billing_subscription_active', 'End paid journey capacity in billing settings and wait for it to finish before deleting this account.');
+    }
+  }
+
+  // Account deletion's rule, for one journey (#96): someone who pays on the web for this journey's
+  // room, or owns it while the web pays for it, waits until that payment ends before leaving. A
+  // store subscription never stops anyone leaving, and leaving never cancels one; the apps say so.
+  async assertJourneyLeavable(userId, journeyId) {
+    if (!REQUEST_ID.test(String(journeyId || ''))) return;
+    const subscription = await this.pool.query(
+      `SELECT 1 FROM billing_subscriptions bs
+       JOIN journeys j ON j.id=bs.journey_id
+       WHERE bs.journey_id=$2 AND (bs.payer_user_id=$1 OR j.owner_user_id=$1) AND bs.environment=$3
+         AND bs.status NOT IN ('canceled','incomplete_expired')
+       LIMIT 1`,
+      [userId, journeyId, this.environment],
+    );
+    if (subscription.rowCount) {
+      throw new PlatformError(409, 'billing_subscription_active', 'You pay on the web for room in this journey. End that payment and wait for it to finish, then you can leave.');
     }
   }
 

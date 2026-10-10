@@ -314,6 +314,7 @@ function cleanImageFilename(value, contentType) {
 // The key a phone chose for a moment it holds (#352): its own random id, never anything about the
 // person. Absent is fine (the web sends none); anything else malformed is refused.
 const HOLD_KEY_PATTERN = /^[A-Za-z0-9-]{16,64}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cleanHoldKey(value) {
   if (value === undefined || value === null) return null;
@@ -926,6 +927,54 @@ export class PlatformService {
 
   async logout(rawToken) {
     if (rawToken) await this.pool.query('DELETE FROM sessions WHERE token_hash=$1', [sha256(rawToken)]);
+  }
+
+  // Sign out everywhere (#194): every web session and every phone sign-in the account holds ends,
+  // the one asking included. It is the revocation signing out already uses, applied to all of
+  // them: a session is deleted, as logout() deletes one, and every token family is retired, as
+  // revokeToken() retires one. A phone that presents a retired refresh token is answered
+  // `invalid_token` (refreshTokens), which is the one answer that signs a phone out (#353).
+  async signOutEverywhere(userId) {
+    await withTransaction(this.pool, async (client) => {
+      await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL', [this.now(), userId]);
+    });
+  }
+
+  // Change password while signed in (#194). The current password is checked as login checks one:
+  // the same argon2 work whether or not the account has a password, and the same answer when it is
+  // wrong. An account opened with Google or Apple has no password to give, so it is refused in
+  // exactly that way; its clients never offer this. The new password follows the one rule every
+  // password does, and is checked first, since that says nothing about the current one.
+  //
+  // `keep` names the sign-in that asked, which stays signed in as it is: the browser's session
+  // (`sessionId`) or the phone's token family (`tokenFamilyId`). Nothing is re-issued, so a
+  // request already on its way from this device is not refused. Every other session and token
+  // family ends. A recovery link asked for before the change stops working too.
+  async changePassword(userId, { currentPassword, newPassword } = {}, keep = {}) {
+    try { assertPassword(newPassword); } catch { throw new PlatformError(400, 'invalid_input', 'Use a password between 12 and 128 characters.'); }
+    const found = await this.pool.query('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]);
+    const currentHash = found.rows[0]?.password_hash || null;
+    const passwordMatches = await verifyPassword(currentHash || await this.dummyPasswordHash, currentPassword);
+    if (!currentHash || !passwordMatches) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+    const passwordHash = await cleanPasswordHash(newPassword);
+    const user = await withTransaction(this.pool, async (client) => {
+      // Only from the password just checked: if another change landed in between, this one is
+      // refused as a wrong password would be, rather than quietly replacing it.
+      const updated = await client.query('UPDATE users SET password_hash=$1 WHERE id=$2 AND password_hash=$3 AND deleted_at IS NULL RETURNING *', [passwordHash, userId, currentHash]);
+      if (!updated.rowCount) throw new PlatformError(401, 'invalid_credentials', 'Username, email, or password is incorrect.');
+      await client.query(`UPDATE account_tokens SET consumed_at=$1 WHERE user_id=$2 AND purpose='password_recovery' AND consumed_at IS NULL`, [this.now(), userId]);
+      if (keep.sessionId) await client.query('DELETE FROM sessions WHERE user_id=$1 AND id<>$2', [userId, keep.sessionId]);
+      else await client.query('DELETE FROM sessions WHERE user_id=$1', [userId]);
+      if (keep.tokenFamilyId) await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND family_id<>$3 AND revoked_at IS NULL', [this.now(), userId, keep.tokenFamilyId]);
+      else await client.query('UPDATE api_tokens SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL', [this.now(), userId]);
+      return updated.rows[0];
+    });
+    // One plain notice, to the account's own address, once the change has committed. It carries
+    // no link and nothing from any journey. A failed send never undoes the change: deliver()
+    // reports it by kind, never by address.
+    await this.deliver('password-changed', () => this.mailer.sendPasswordChanged({ to: user.email_normalized }));
+    return publicUser(user);
   }
 
   async requestRecovery(email, accountOrigin) {
@@ -1769,6 +1818,58 @@ export class PlatformService {
       await client.query('DELETE FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journeyId, memberUserId]);
       await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_removed', entityType: 'membership', entityId: memberUserId, summary: `Removed journey member: ${member.rows[0].display_name}`, before: { userId: memberUserId, role: member.rows[0].role }, after: null });
       await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, memberUserId]);
+    });
+  }
+
+  // Anyone can leave a journey by themselves, without anyone else's help (#96). Nothing in the
+  // request names who leaves: it is always the person asking. What goes with them is what goes
+  // when the owner removes someone: their private and share-later moments here, with their places
+  // and photos, the private record of those moments' visibility, and their moment keys. What they
+  // shared stays with everyone else, still held by them. The questions they asked here are taken
+  // back, so nobody is added on the word of someone who has gone. Resting never stops anyone
+  // leaving. The owner hands the journey over first, and a journey of one has nobody to leave it
+  // to. Coming back takes a new invitation, agreed to as any other is (migration 022).
+  async leaveJourney(userId, journeyId) {
+    if (!UUID_PATTERN.test(String(journeyId || ''))) throw notFound();
+    return withTransaction(this.pool, async (client) => {
+      await this.lockJourney(client, journeyId);
+      const found = await client.query(
+        `SELECT jm.role,u.display_name FROM journey_members jm JOIN users u ON u.id=jm.user_id
+         WHERE jm.journey_id=$1 AND jm.user_id=$2 FOR UPDATE`,
+        [journeyId, userId],
+      );
+      // Someone who is not here, or has already left, has nothing to leave.
+      if (!found.rowCount) throw notFound();
+      const { role, display_name: displayName } = found.rows[0];
+      const others = await client.query('SELECT count(*)::int AS count FROM journey_members WHERE journey_id=$1 AND user_id<>$2', [journeyId, userId]);
+      if (!Number(others.rows[0].count)) throw new PlatformError(409, 'journey_of_one', 'You are the only person in this journey, so there is nobody to leave it to.');
+      if (role === 'owner') throw new PlatformError(409, 'ownership_transfer_required', 'You hold this journey for everyone in it. Make someone else here the owner first, then you can leave.');
+
+      // Anything that had already run out is recorded as running out, not as taken back.
+      await this.recordRunOuts(client, journeyId);
+      const proposals = await client.query(
+        `UPDATE journey_invite_proposals SET status='withdrawn',closed_at=$3
+         WHERE journey_id=$1 AND proposed_by_user_id=$2 AND status='open' RETURNING *`,
+        [journeyId, userId, this.now()],
+      );
+      const invitations = await client.query(
+        `UPDATE invitations SET revoked_at=$3,withdrawn_by_user_id=$2,reservation_active=false
+         WHERE journey_id=$1 AND invited_by_user_id=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>$3 RETURNING *`,
+        [journeyId, userId, this.now()],
+      );
+      for (const row of proposals.rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))) {
+        await this.recordInvitationStep(client, { journeyId, actorUserId: userId, action: 'invite_proposal_withdrawn', entityType: 'invite_proposal', entityId: row.id, email: row.email_normalized, summary: (masked) => `Withdrew the proposal to add ${masked}`, before: { status: 'open' }, after: { status: 'withdrawn' } });
+      }
+      for (const row of invitations.rows.sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))) {
+        await this.recordInvitationStep(client, { journeyId, actorUserId: userId, action: 'invitation_withdrawn', entityType: 'invitation', entityId: row.id, email: row.email_normalized, summary: (masked) => `Withdrew the invitation to ${masked}`, before: { status: 'pending' }, after: { status: 'withdrawn' } });
+      }
+
+      await client.query('DELETE FROM private_moment_events WHERE journey_id=$1 AND owner_user_id=$2', [journeyId, userId]);
+      await client.query("DELETE FROM journey_moments WHERE journey_id=$1 AND created_by_user_id=$2 AND visibility<>'shared-now'", [journeyId, userId]);
+      await client.query('DELETE FROM moment_hold_keys WHERE journey_id=$1 AND author_user_id=$2', [journeyId, userId]);
+      // Their name is in the words, because once they have gone History shows them as Former journeyer.
+      await this.appendEvent(client, { journeyId, actorUserId: userId, action: 'member_left', entityType: 'membership', entityId: userId, summary: `${displayName} left the journey`, before: { userId, role }, after: null });
+      await client.query('DELETE FROM journey_members WHERE journey_id=$1 AND user_id=$2', [journeyId, userId]);
     });
   }
 
