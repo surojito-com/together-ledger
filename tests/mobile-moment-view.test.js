@@ -44,7 +44,8 @@ test('the choice above the list, in the words for the owner to approve, opens on
   const ledger = await read('app/ledger.tsx');
   assert.match(ledger, /<Choices label=\{MOMENT_VIEW_LABEL\} options=\{MOMENT_VIEWS\} selected=\{momentView\.view\} onSelect=/, 'the existing Choices, so the chosen one is marked by shape as well as colour');
   const header = ledger.slice(ledger.indexOf('ListHeaderComponent'), ledger.indexOf('ListEmptyComponent'));
-  assert.ok(header.lastIndexOf('MOMENT_VIEW_LABEL') > header.indexOf('Moment types'), 'it sits last in the header, right above the moments');
+  assert.ok(header.lastIndexOf('MOMENT_VIEW_LABEL') < header.indexOf('listing.seeAll'), 'above "See all" and the filter, so Compact bringing the filter in never moves it under the thumb');
+  assert.ok(header.indexOf('MOMENT_VIEW_LABEL') > header.indexOf('<WaitingMoments'), 'and below the moments waiting to send, right above the list');
   assert.match(ledger, /\{recent\.length \? \(\s*<View style=\{styles\.viewChoice\}>/, 'and only once there is a moment to show either way');
 
   const provider = await read('src/journey/use-moment-view.tsx');
@@ -161,17 +162,70 @@ test('the row uses the semantic roles only, never the destructive colour, and ev
   assert.match(choices, /\[styles\.choice, targetSize,/, 'the choice\'s own options are already 44 points');
 });
 
-test('filter, "See all", pull to refresh and waiting moments are the same in both views', async () => {
+test('pull to refresh and the moments waiting to send are the same in both views', async () => {
   const ledger = await read('app/ledger.tsx');
   assert.equal((ledger.match(/<FlatList/g) || []).length, 1, 'one list, whichever view');
-  assert.match(ledger, /data=\{shown\}/, 'drawing the same filtered, recent-or-all moments');
-  assert.match(ledger, /\{seeAllShown\(recent\.length, expanded\) \? <Button kind="quiet" label=\{expanded \? 'Show recent' : seeAllLabel\(recent\.length\)\}/);
-  assert.match(ledger, /<Choices label="Moment types" options=\{filters\} selected=\{currentFilter\} onSelect=\{setFilter\} \/>/);
+  assert.match(ledger, /const listing = momentListing\(recent, \{ compact, expanded, filter: currentFilter \}\);\s*const shown = listing\.shown;/);
+  assert.match(ledger, /data=\{shown\}/);
+  assert.match(ledger, /\{listing\.seeAll \? <Button kind="quiet" label=\{expanded \? 'Show recent' : seeAllLabel\(recent\.length\)\} onPress=\{\(\) => setExpanded\(!expanded\)\} \/> : null\}/);
+  assert.match(ledger, /\{listing\.filter \? <Choices label="Moment types" options=\{filters\} selected=\{currentFilter\} onSelect=\{setFilter\} \/> : null\}/);
   assert.match(ledger, /<RefreshControl refreshing=\{journey\.refreshing\} onRefresh=\{journey\.refresh\}/);
   assert.match(ledger, /<WaitingMoments activeJourneyId=\{activeId\} \/>/);
-  const shown = (expanded, filter) => view.shownMoments([moment({ id: 'a' }), moment({ id: 'b', kind: 'joy' }), moment({ id: 'c' }), moment({ id: 'd' })], { expanded, filter }).map((item) => item.id);
-  assert.deepEqual(shown(false, 'all'), ['a', 'b', 'c']);
-  assert.deepEqual(shown(true, 'repair'), ['a', 'c', 'd']);
+  assert.match(ledger, /onSelect=\{\(value\) => momentView\.setView\(value as MomentView\)\}/, 'changing view touches neither the filter nor "See all"');
+});
+
+// Five moments, newest first: two repairs, a joy, a repair, a joy.
+const journey = [
+  moment({ id: 'm5', kind: 'repair', occurredOn: '2026-10-09' }),
+  moment({ id: 'm4', kind: 'joy', occurredOn: '2026-10-08' }),
+  moment({ id: 'm3', kind: 'repair', occurredOn: '2026-10-07' }),
+  moment({ id: 'm2', kind: 'repair', occurredOn: '2026-10-06' }),
+  moment({ id: 'm1', kind: 'joy', occurredOn: '2026-10-05' }),
+];
+const listing = (options) => {
+  const { shown, seeAll, filter } = view.momentListing(journey, options);
+  return { shown: shown.map((item) => item.id), seeAll, filter };
+};
+
+test('in full is today\'s ledger exactly: three recent, "See all", and the filter only after it', () => {
+  assert.deepEqual(listing({ compact: false, expanded: false, filter: 'all' }), { shown: ['m5', 'm4', 'm3'], seeAll: true, filter: false });
+  assert.deepEqual(listing({ compact: false, expanded: true, filter: 'all' }), { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: true, filter: true }, '"Show recent" and the filter once all are shown');
+  assert.deepEqual(listing({ compact: false, expanded: true, filter: 'joy' }), { shown: ['m4', 'm1'], seeAll: true, filter: true });
+  assert.deepEqual(listing({ compact: false, expanded: false, filter: 'joy' }), { shown: ['m5', 'm4', 'm3'], seeAll: true, filter: false }, 'the three recent ignore the filter, as they always have');
+  // Exactly the old function, for every combination the full view can be in.
+  for (const expanded of [false, true]) for (const filter of ['all', 'repair', 'joy']) {
+    const full = view.momentListing(journey, { compact: false, expanded, filter });
+    assert.deepEqual(full.shown, view.shownMoments(journey, { expanded, filter }), `${expanded} ${filter}`);
+    assert.equal(full.seeAll, view.seeAllShown(journey.length, expanded));
+    assert.equal(full.filter, expanded);
+  }
+  const three = journey.slice(0, 3);
+  assert.equal(view.momentListing(three, { compact: false, expanded: false, filter: 'all' }).seeAll, false, 'no "See all" when three are all there are (#337)');
+});
+
+test('compact shows every moment in the journey, with the filter always there and no "See all"', () => {
+  assert.deepEqual(listing({ compact: true, expanded: false, filter: 'all' }), { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: false, filter: true }, 'more than three, from the start');
+  assert.deepEqual(listing({ compact: true, expanded: true, filter: 'all' }), { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: false, filter: true }, 'whatever "See all" was left at in full');
+  assert.deepEqual(listing({ compact: true, expanded: false, filter: 'repair' }), { shown: ['m5', 'm3', 'm2'], seeAll: false, filter: true });
+  assert.deepEqual(view.momentListing([], { compact: true, expanded: false, filter: 'all' }), { shown: [], seeAll: false, filter: false }, 'no filter with nothing to filter');
+  const one = view.momentListing([journey[0]], { compact: true, expanded: false, filter: 'all' });
+  assert.deepEqual([one.shown.length, one.seeAll, one.filter], [1, false, true]);
+});
+
+test('switching back and forth keeps the chosen filter and leaves "See all" where it was', () => {
+  // The ledger's own state: the filter and "See all" are kept apart from the view, so a switch changes only the view.
+  let state = { compact: false, expanded: false, filter: 'all' };
+  const step = (change, expected, message) => {
+    state = { ...state, ...change };
+    assert.deepEqual(listing(state), expected, message);
+  };
+  step({}, { shown: ['m5', 'm4', 'm3'], seeAll: true, filter: false }, 'opens in full on the three recent');
+  step({ compact: true }, { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: false, filter: true }, 'compact: every moment');
+  step({ filter: 'joy' }, { shown: ['m4', 'm1'], seeAll: false, filter: true }, 'a filter chosen in compact');
+  step({ compact: false }, { shown: ['m5', 'm4', 'm3'], seeAll: true, filter: false }, 'back in full: the three recent, as today');
+  step({ expanded: true }, { shown: ['m4', 'm1'], seeAll: true, filter: true }, '"See all" in full uses the filter chosen in compact');
+  step({ compact: true }, { shown: ['m4', 'm1'], seeAll: false, filter: true }, 'and compact again keeps it');
+  step({ filter: 'all', compact: false }, { shown: ['m5', 'm4', 'm3', 'm2', 'm1'], seeAll: true, filter: true }, 'full stays expanded, as it was left');
 });
 
 test('the full card is unchanged and still the default', async () => {

@@ -133,6 +133,22 @@ export function shownMoments(recent: ShownMoment[], { expanded, filter }: { expa
   return recent.filter((moment) => filter === 'all' || moment.kind === filter);
 }
 
+/**
+ * What the moment list holds in each view (Oct 9, #379). In full is the web's ledger, unchanged:
+ * three recent moments until "See all", and the "Moment types" filter only after it. Compact
+ * fits ten or so to a screen, so it holds every moment from the start: no "See all" or "Show
+ * recent", and the filter always there. The filter is the same one in both, so switching views
+ * keeps it.
+ */
+export function momentListing(recent: ShownMoment[], { compact, expanded, filter }: { compact: boolean; expanded: boolean; filter: string }) {
+  const everyMoment = compact || expanded;
+  return {
+    shown: shownMoments(recent, { expanded: everyMoment, filter }),
+    seeAll: !compact && seeAllShown(recent.length, expanded),
+    filter: everyMoment && recent.length > 0,
+  };
+}
+
 export function openThreads(snapshot: Snapshot) {
   return snapshot.concerns.filter((concern) => concern.status === 'open');
 }

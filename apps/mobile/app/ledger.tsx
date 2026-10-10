@@ -11,7 +11,7 @@ import { CardAction, MomentCard, momentColors } from '../src/components/moment-c
 import { MomentRow } from '../src/components/moment-row';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
-import { journeyPeriod, momentFilters, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, seeAllShown, shownMoments, type Concern, type Journey } from '../src/journey/journey-view';
+import { journeyPeriod, momentFilters, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
@@ -64,10 +64,11 @@ export default function LedgerScreen() {
   const recent = recentMoments(snapshot);
   const filters = momentFilters(recent);
   const currentFilter = filters.some(([value]) => value === filter) ? filter : 'all';
-  const shown = shownMoments(recent, { expanded, filter: currentFilter });
+  const compact = momentView.view === 'compact';
+  const listing = momentListing(recent, { compact, expanded, filter: currentFilter });
+  const shown = listing.shown;
   const threads = openThreads(snapshot);
   const colors = theme.colors;
-  const compact = momentView.view === 'compact';
   const toggle = (id: string) => setOpened((current) => {
     const next = new Set(current);
     if (!next.delete(id)) next.add(id);
@@ -113,14 +114,15 @@ export default function LedgerScreen() {
             </View>
             <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />
             <WaitingMoments activeJourneyId={activeId} />
-            {seeAllShown(recent.length, expanded) ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
-            {expanded && recent.length ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
+            {/* Above "See all" and the filter, so it stays put under the thumb when Compact brings the filter in. */}
             {recent.length ? (
               <View style={styles.viewChoice}>
                 <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.small, { color: colors.muted }]}>{MOMENT_VIEW_LABEL}</Text>
                 <Choices label={MOMENT_VIEW_LABEL} options={MOMENT_VIEWS} selected={momentView.view} onSelect={(value) => momentView.setView(value as MomentView)} />
               </View>
             ) : null}
+            {listing.seeAll ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
+            {listing.filter ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
           </View>
         }
         ListEmptyComponent={<EmptyState title="No moments in this view" body="A small truth is enough to begin, or choose another filter to see more." />}
