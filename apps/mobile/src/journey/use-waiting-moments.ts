@@ -156,6 +156,11 @@ function useWaitingLoader() {
       if (!accountId) return;
       setHeld({ forAccount: accountId, moments: await waitingStore.remove(accountId, key) });
     },
+    /** Leaving a journey, after the person was told what waits for it (#96). */
+    async leftJourney(journeyId: string) {
+      if (!accountId) return;
+      setHeld({ forAccount: accountId, moments: await waitingStore.removeJourney(accountId, journeyId) });
+    },
     /** Signing out on purpose, or deleting the account, after the person was told what waits. */
     async clear() {
       if (!accountId) return;

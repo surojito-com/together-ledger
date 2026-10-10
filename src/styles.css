@@ -450,6 +450,10 @@ dialog::backdrop { background: color-mix(in srgb, var(--fg) 72%, transparent); }
 .settings-grid { display: grid; gap: 13px; grid-template-columns: 1fr 1fr; margin-top: 22px; }
 .settings-grid section { background: var(--soft); border: 1px solid var(--line); border-radius: var(--radius-l); padding: 18px; }
 .settings-grid .sharing-settings { grid-column: 1 / -1; }
+/* Leaving a journey (#96) can't be undone, so it stands apart in the destructive role, like the
+   phone's Delete moment: its own box, its border, its button. Nothing else in settings takes it. */
+.settings-grid .danger-zone { grid-column: 1 / -1; border-color: var(--destructive); background: var(--surface); }
+.danger-zone form { display: grid; gap: 10px; margin-top: 12px; }
 .settings-grid h3 { font-family: Georgia, serif; font-size: 25px; font-weight: 500; margin: 0 0 8px; }
 .settings-grid p { color: var(--muted); font-size: 14px; }
 .account-grid { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; padding-top: 20px; }
