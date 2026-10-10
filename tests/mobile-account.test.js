@@ -335,6 +335,18 @@ test('the phone says signing out everywhere as signing out is said, and names mo
   assert.ok(web.includes("confirmConsequence({ title: 'Sign out everywhere?', consequence: SIGN_OUT_EVERYWHERE_CONSEQUENCE, confirmLabel: 'Sign out everywhere' })"));
 });
 
+// Both warnings about moments still waiting live in one file: leaving a journey's (#387) and
+// signing out everywhere's (#194). Each keeps its own words, and neither borrows the other's.
+test('leaving and signing out everywhere each warn about waiting moments in their own words', async () => {
+  const { unsentWhenLeaving, signOutEverywhereConsequence } = await importMobile('src/journey/waiting-moments.ts');
+  assert.equal(unsentWhenLeaving(0), '');
+  assert.equal(unsentWhenLeaving(1), 'One moment you held for this journey hasn’t been sent yet. Leaving removes it from this phone, and it can’t be sent later.');
+  assert.equal(unsentWhenLeaving(2), '2 moments you held for this journey haven’t been sent yet. Leaving removes them from this phone, and they can’t be sent later.');
+  assert.doesNotMatch(signOutEverywhereConsequence(2).consequence, /Leaving/);
+  const settings = await readFile(new URL('app/journey-settings.tsx', mobile), 'utf8');
+  assert.match(settings, /unsentWhenLeaving\(waiting\.moments\.filter\(\(moment\) => moment\.journeyId === journeyId\)\.length/, 'leaving still counts only that journey\'s moments');
+});
+
 test('the account screen offers Sign out everywhere behind the consequence dialog, and Change password only with a password', async () => {
   const account = await readFile(new URL('app/account.tsx', mobile), 'utf8');
   assert.match(account, /label="Sign out everywhere"[^\n]*onPress=\{async \(\) => \{\s*const held = waiting\.moments\.length;\s*if \(!await shell\.confirmConsequence\(signOutEverywhereConsequence\(held\)\)\) return;/);
