@@ -44,11 +44,11 @@ test('Email-0010 invitation provides a polished HTML message and accessible text
   const [message] = messages;
   assert.equal(message.subject, 'You have been invited to a Together Ledger journey');
   assert.match(message.text, /You have been invited to a shared journey\./);
-  assert.match(message.text, /private place for people/);
-  assert.doesNotMatch(message.text, /private place for two people/);
+  assert.match(message.text, /private place for two people/);
+  assert.doesNotMatch(message.text, /private place for people/);
   assert.match(message.text, /https:\/\/accounts\.example\.test\/invite#invite=invite_token/);
   assert.match(message.html, /Open your invitation/);
-  assert.match(message.html, /private place for people/);
+  assert.match(message.html, /private place for two people/);
   // An invitation lasts 14 days (#347), so its link says so rather than calling itself short-lived.
   assert.match(message.text, /This link works once, for 14 days\./);
   assert.match(message.html, /This link works once, for 14 days\./);
@@ -107,8 +107,8 @@ test('each account email carries both a text and an HTML part', async () => {
     assert.ok(message.text, `${message.subject} has no text part`);
     assert.ok(message.html, `${message.subject} has no HTML part`);
     assert.match(message.html, /Together Ledger<\/td>/, `${message.subject} is missing the shared header`);
-    assert.match(message.html, />Together Ledger is a private shared journey workspace for people to hold what happened and return to what matters\.<\/td>/, `${message.subject} is missing the shared footer`);
-    assert.doesNotMatch(message.html, /for two people/, `${message.subject} still says "for two people"`);
+    assert.match(message.html, />Together Ledger is a private shared journey workspace for two people to hold what happened and return to what matters\.<\/td>/, `${message.subject} is missing the shared footer`);
+    assert.doesNotMatch(`${message.text}${message.html}`, /for people/, `${message.subject} still says "for people"`);
   }
 });
 
