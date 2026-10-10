@@ -8,15 +8,18 @@ import { Choices } from '../src/components/choices';
 import { EmptyState } from '../src/components/empty-state';
 import { GraceBanner } from '../src/components/grace-banner';
 import { CardAction, MomentCard, momentColors } from '../src/components/moment-card';
+import { MomentRow } from '../src/components/moment-row';
 import { ScreenStatusRegion } from '../src/components/status-region';
 import { Body, Button, Screen } from '../src/components/ui';
-import { journeyPeriod, momentFilters, MOMENT_TYPES, openThreads, recentMoments, seeAllLabel, seeAllShown, shownMoments, type Concern, type Journey } from '../src/journey/journey-view';
+import { journeyPeriod, momentFilters, momentListHeading, momentListing, MOMENT_TYPES, MOMENT_VIEW_LABEL, MOMENT_VIEWS, openThreads, recentMoments, seeAllLabel, type Concern, type Journey } from '../src/journey/journey-view';
 import { useMomentActions } from '../src/journey/moment-actions';
 import type { EditableMoment } from '../src/journey/moment-draft';
 import { useJourney } from '../src/journey/use-journey';
+import { useMomentView } from '../src/journey/use-moment-view';
 import { useWaitingMoments } from '../src/journey/use-waiting-moments';
 import { waitingWhileOffline } from '../src/journey/waiting-moments';
 import { WaitingMoments } from '../src/components/waiting-moments';
+import type { MomentView } from '../src/storage/ledger-store';
 import { fonts, useTheme } from '../src/theme';
 
 /**
@@ -31,6 +34,9 @@ export default function LedgerScreen() {
   const { theme } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState('all');
+  const momentView = useMomentView();
+  // The compact rows opened to their full card; folded again on a second tap.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const { state } = journey;
 
   if (state.phase === 'loading') return <Screen title="Our ledger"><Body>Loading…</Body></Screen>;
@@ -58,31 +64,37 @@ export default function LedgerScreen() {
   const recent = recentMoments(snapshot);
   const filters = momentFilters(recent);
   const currentFilter = filters.some(([value]) => value === filter) ? filter : 'all';
-  const shown = shownMoments(recent, { expanded, filter: currentFilter });
+  const compact = momentView.view === 'compact';
+  const listing = momentListing(recent, { compact, expanded, filter: currentFilter });
+  const shown = listing.shown;
   const threads = openThreads(snapshot);
   const colors = theme.colors;
+  const toggle = (id: string) => setOpened((current) => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
 
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={[styles.fill, { backgroundColor: colors.bg }]}>
       <FlatList
         data={shown}
         keyExtractor={(moment) => moment.id}
+        extraData={{ compact, opened }}
         renderItem={({ item }) => {
           const cardColors = momentColors(item, colors);
-          return (
-            <MomentCard
-              moment={item}
-              actions={
-                <>
-                  {item.visibility === 'share-later' ? <CardAction label="Share now" colors={cardColors} onPress={() => actions.share(item as EditableMoment)} /> : null}
-                  <CardAction label="Edit" colors={cardColors} onPress={() => router.push({ pathname: '/moment', params: { id: item.id } })} />
-                </>
-              }
-            />
+          const cardActions = (
+            <>
+              {item.visibility === 'share-later' ? <CardAction label="Share now" colors={cardColors} onPress={() => actions.share(item as EditableMoment)} /> : null}
+              <CardAction label="Edit" colors={cardColors} onPress={() => router.push({ pathname: '/moment', params: { id: item.id } })} />
+            </>
           );
+          return compact
+            ? <MomentRow moment={item} open={opened.has(item.id)} onToggle={() => toggle(item.id)} actions={cardActions} />
+            : <MomentCard moment={item} actions={cardActions} />;
         }}
         contentContainerStyle={styles.list}
-        ItemSeparatorComponent={() => <View style={styles.gap} />}
+        ItemSeparatorComponent={() => <View style={compact ? styles.rowGap : styles.gap} />}
         refreshControl={<RefreshControl refreshing={journey.refreshing} onRefresh={journey.refresh} tintColor={colors.accent} colors={[colors.accent]} />}
         ListHeaderComponent={
           <View style={styles.header}>
@@ -93,17 +105,24 @@ export default function LedgerScreen() {
               <Text style={[styles.body, { color: colors.muted }]}>{journeyPeriod(snapshot.journey)}</Text>
             </View>
             <GraceBanner journeyId={snapshot.journey.id} grace={snapshot.capacity?.grace} peopleHere={snapshot.capacity?.peopleHere ?? 0} />
-            {journeys.length > 1 ? <JourneyPicker journeys={journeys} activeId={activeId} onSelect={(id) => { setExpanded(false); setFilter('all'); journey.select(id); }} /> : null}
+            {journeys.length > 1 ? <JourneyPicker journeys={journeys} activeId={activeId} onSelect={(id) => { setExpanded(false); setFilter('all'); setOpened(new Set()); journey.select(id); }} /> : null}
             <Button kind="quiet" label="＋ New journey" onPress={() => router.push('/new-journey')} />
             <View style={styles.section}>
               <Text style={[styles.eyebrow, { color: colors.accent }]}>Our shared journey</Text>
-              <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>Recent moments</Text>
+              <Text accessibilityRole="header" style={[styles.sectionTitle, fonts.serif, { color: colors.fg }]}>{momentListHeading(compact)}</Text>
               <Text style={[styles.body, { color: colors.muted }]}>Hold what happened in words that feel true.</Text>
             </View>
             <Button label="＋ Hold a moment" onPress={() => router.push('/moment')} />
             <WaitingMoments activeJourneyId={activeId} />
-            {seeAllShown(recent.length, expanded) ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
-            {expanded && recent.length ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
+            {/* Above "See all" and the filter, so it stays put under the thumb when Compact brings the filter in. */}
+            {recent.length ? (
+              <View style={styles.viewChoice}>
+                <Text accessibilityElementsHidden importantForAccessibility="no" style={[styles.small, { color: colors.muted }]}>{MOMENT_VIEW_LABEL}</Text>
+                <Choices label={MOMENT_VIEW_LABEL} options={MOMENT_VIEWS} selected={momentView.view} onSelect={(value) => momentView.setView(value as MomentView)} />
+              </View>
+            ) : null}
+            {listing.seeAll ? <Button kind="quiet" label={expanded ? 'Show recent' : seeAllLabel(recent.length)} onPress={() => setExpanded(!expanded)} /> : null}
+            {listing.filter ? <Choices label="Moment types" options={filters} selected={currentFilter} onSelect={setFilter} /> : null}
           </View>
         }
         ListEmptyComponent={<EmptyState title="No moments in this view" body="A small truth is enough to begin, or choose another filter to see more." />}
@@ -174,6 +193,8 @@ const styles = StyleSheet.create({
   fill: { flex: 1 },
   list: { padding: 24, gap: 0 },
   gap: { height: 14 },
+  rowGap: { height: 8 },
+  viewChoice: { gap: 8 },
   header: { gap: 16, marginBottom: 16 },
   small: { fontSize: 13, fontWeight: '700' },
   journeyName: { fontSize: 32, lineHeight: 38 },

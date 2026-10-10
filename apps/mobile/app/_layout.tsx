@@ -7,6 +7,7 @@ import { StoreProvider } from '../src/billing/store-provider';
 import { ShellOverlays } from '../src/components/dialogs';
 import { awaitingYourAnswer } from '../src/journey/sharing-view';
 import { JourneyProvider, useJourney } from '../src/journey/use-journey';
+import { MomentViewProvider } from '../src/journey/use-moment-view';
 import { useWaitingMoments, WaitingMomentsProvider } from '../src/journey/use-waiting-moments';
 import { ShellProvider, useShell } from '../src/shell/shell-provider';
 import { CONNECTION_SOURCE, OFFLINE_NOTICE } from '../src/shell/connection';
@@ -103,7 +104,7 @@ export default function RootLayout() {
   // The serif ships inside the app (#177), so nothing is fetched at runtime.
   const [fontsLoaded] = useFonts(fontSources);
   // What the phone remembers (#185), read before the first screen so the saved theme is the first one drawn.
-  const { stored, failure, saveTheme, completeOnboarding } = useStoredPreferences();
+  const { stored, failure, saveTheme, saveMomentView, completeOnboarding } = useStoredPreferences();
   if (!fontsLoaded || !stored) return null;
   return (
     <ThemeProvider initialChoice={stored.theme} onChoiceChange={saveTheme}>
@@ -114,7 +115,10 @@ export default function RootLayout() {
             <WaitingMomentsProvider>
               {/* The App Store or Google Play, while someone is signed in (#272). */}
               <StoreProvider>
-                <ThemedStack />
+                {/* Moments in full or compact (Oct 9), remembered on this phone like the theme. */}
+                <MomentViewProvider initialView={stored.momentView} onViewChange={saveMomentView}>
+                  <ThemedStack />
+                </MomentViewProvider>
               </StoreProvider>
               <ConnectionWatch />
             </WaitingMomentsProvider>
